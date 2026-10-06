@@ -1,0 +1,18 @@
+{
+  "name": "nvts-photomania",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:wasm": "cd packages/engine && bash build.sh && cd ../.. && node tools/copy-wasm.mjs",
+    "dev": "pnpm --filter @nvts/web dev",
+    "build": "pnpm --filter @nvts/web build",
+    "preview": "pnpm --filter @nvts/web preview",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/wicg-file-system-access": "^2023.10.5",
+    "@webgpu/types": "^0.1.40",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0"
+  }
+}

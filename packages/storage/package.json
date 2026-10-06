@@ -1,0 +1,9 @@
+{
+  "name": "@nvts/storage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": { "@nvts/shared": "workspace:*", "@nvts/document-model": "workspace:*", "fflate": "^0.8.2" }
+}
