@@ -9,7 +9,7 @@ mkdir -p "$OUT_DIR"
 # Optimización: -O3 en release, -O0 + símbolos en debug.
 if [ "${1:-}" = "debug" ]; then OPT="-O0 -g"; else OPT="-O3 -flto"; fi
 
-emcc src/*.cpp -Isrc -o "$OUT_DIR/engine.js" \
+em++ src/*.cpp -Isrc -o "$OUT_DIR/engine.js" \
   $OPT -std=c++20 \
   -lembind \
   -msimd128 \
