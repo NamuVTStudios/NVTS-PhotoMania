@@ -1,21 +1,21 @@
-# NVTS Photomania — Documento de diseño (GDD)
+# NVTS Photomania — Game/Product Design Document (GDD)
 
-**Visión:** editor de imágenes por capas que corre en el navegador, rápido y sin instalar, de NamuVT Studios.
+**Vision:** a layer-based image editor that runs in the browser, fast and with no installation, by NamuVT Studios.
 
-## MVP (estado actual)
-- Lienzo con zoom de ajuste; múltiples capas raster con visibilidad, opacidad y modo de fusión.
-- Pincel y borrador redondos, color y tamaño; filtro de brillo.
-- Deshacer/Rehacer ilimitado (por memoria) para pintura y filtros.
-- Guardar/abrir `.nvtsphoto`.
-- Atajos: B, E, Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y, Ctrl+S, Ctrl+Shift+S, Ctrl+O.
+## MVP (current state)
+- Canvas with fit-to-window zoom; multiple raster layers with visibility, opacity and blend mode.
+- Round brush and eraser, with color and size; brightness filter.
+- Unlimited Undo/Redo (bounded by memory) for painting and filters.
+- Save/open `.nvtsphoto`.
+- Shortcuts: B, E, Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y, Ctrl+S, Ctrl+Shift+S, Ctrl+O.
 
-## Siguiente
-| Hito | Contenido |
+## Next
+| Milestone | Content |
 |---|---|
-| 1 | Zoom/desplazamiento, selección rectangular, mover capa, importar PNG/JPEG |
-| 2 | Grupos en la UI, máscaras de capa, deshacer de estructura |
-| 3 | Texto, formas, ajustes (curvas/niveles), filtros en GPU |
-| 4 | Exportar PNG/JPEG/WebP, historial visible, autosave en OPFS |
+| 1 | Zoom/pan, rectangular selection, move layer, import PNG/JPEG |
+| 2 | Groups in the UI, layer masks, structure undo |
+| 3 | Text, shapes, adjustments (curves/levels), GPU filters |
+| 4 | Export PNG/JPEG/WebP, visible history, autosave in OPFS |
 
-## Fuera del alcance por ahora
-Edición RAW, 16/32 bits, perfiles ICC, colaboración en tiempo real, plugins.
+## Out of scope for now
+RAW editing, 16/32-bit depth, ICC profiles, real-time collaboration, plugins.

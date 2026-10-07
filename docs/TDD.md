@@ -1,36 +1,36 @@
-# NVTS Photomania — Documento técnico (TDD)
+# NVTS Photomania — Technical Design Document (TDD)
 
-## Principios
-- **TypeScript posee la estructura; C++ posee los píxeles.** Los píxeles nunca viajan por JSON ni se copian sin necesidad.
-- **Todo es por tiles de 256×256 RGBA8.** Solo se recompone y se sube a la GPU lo que cambió.
-- **La GPU pertenece a TypeScript** (WebGPU principal, WebGL2 fallback, misma interfaz `RendererBackend`).
+## Principles
+- **TypeScript owns the structure; C++ owns the pixels.** Pixels never travel through JSON and are never copied unnecessarily.
+- **Everything is tile-based (256×256 RGBA8).** Only what changed is recomposed and uploaded to the GPU.
+- **The GPU belongs to TypeScript** (WebGPU primary, WebGL2 fallback, same `RendererBackend` interface).
 
-## Módulos
-| Paquete | Rol |
+## Modules
+| Package | Role |
 |---|---|
-| `engine` (C++) | `TiledLayer` (tiles dispersos + dirty), `Compositor` (árbol + modos de fusión), `HistoryManager` (undo/redo por tiles) |
-| `wasm-bindings` | Carga del Wasm, tipos embind, lectura de tiles sucios sin copia |
-| `renderer` | WebGPU / WebGL2, subida por regiones (`writeRegion`) |
-| `document-model` | `DocumentController` (árbol de capas TS ↔ motor), `EditSession` (acciones deshacibles) |
-| `storage` | `.nvtsphoto` (ZIP + manifest) con File System Access API |
-| `ui` | App, panel de capas, Toolbar |
+| `engine` (C++) | `TiledLayer` (sparse tiles + dirty tracking), `Compositor` (tree + blend modes), `HistoryManager` (tile-based undo/redo) |
+| `wasm-bindings` | Wasm loading, embind types, zero-copy reading of dirty tiles |
+| `renderer` | WebGPU / WebGL2, region-based uploads (`writeRegion`) |
+| `document-model` | `DocumentController` (TS layer tree ↔ engine), `EditSession` (undoable actions) |
+| `storage` | `.nvtsphoto` (ZIP + manifest) using the File System Access API |
+| `ui` | App, layers panel, Toolbar |
 
-## Decisiones clave
-- **Alpha:** tiles en RGBA8 *sin premultiplicar*; el compositor acumula en float *premultiplicado* y cuantiza una sola vez al final. El shader sale premultiplicado.
-- **Composición:** de abajo hacia arriba; grupos aislados (máx. 16 niveles). Modos: Normal, Multiplicar, Screen, Overlay.
-- **Undo:** copy-on-write de los tiles tocados + intercambio de punteros al deshacer/rehacer (sin copiar píxeles). Tope de memoria configurable. Solo cubre píxeles.
-- **Flujo de render:** edición → tiles sucios → `composite()` → `output()` → `flushDirtyTiles()` → textura GPU.
-- **Aislamiento:** COOP/COEP activados en Vite para poder usar `SharedArrayBuffer` más adelante.
+## Key decisions
+- **Alpha:** tiles are stored as *non-premultiplied* RGBA8; the compositor accumulates in *premultiplied* float and quantizes only once at the end. The shader outputs premultiplied.
+- **Compositing:** bottom to top; isolated groups (max. 16 levels). Modes: Normal, Multiply, Screen, Overlay.
+- **Undo:** copy-on-write of the touched tiles + pointer swapping on undo/redo (no pixel copies). Configurable memory cap. Covers pixels only.
+- **Render flow:** edit → dirty tiles → `composite()` → `output()` → `flushDirtyTiles()` → GPU texture.
+- **Isolation:** COOP/COEP enabled in Vite so `SharedArrayBuffer` can be used later.
 
-## Formato `.nvtsphoto` 0.1.0
-ZIP con `manifest.json` + `layers/<id>/pixels.rgba` (deflate nivel 1, un blob por capa; las capas vacías se omiten). Versión mayor distinta ⇒ se rechaza. Tiles por archivo llegarán en 1.x.
+## `.nvtsphoto` format 0.1.0
+ZIP containing `manifest.json` + `layers/<id>/pixels.rgba` (deflate level 1, one blob per layer; empty layers are omitted). A different major version ⇒ the file is rejected. Per-tile storage will arrive in 1.x.
 
-## Límites conocidos
-- Motor y UI en el hilo principal (sin Worker).
-- Estructura de capas (añadir/borrar/mover/propiedades) no deshacible; borrar una capa vacía el historial.
-- Textura GPU del tamaño del lienzo (sin atlas disperso).
-- Composición escalar en CPU (sin SIMD ni compute shaders).
-- Guardado/lectura síncronos de lienzo completo por capa.
+## Known limitations
+- Engine and UI run on the main thread (no Worker).
+- Layer structure (add/delete/move/properties) is not undoable; deleting a layer clears the history.
+- GPU texture is the size of the canvas (no sparse atlas).
+- Scalar CPU compositing (no SIMD or compute shaders).
+- Saving/loading is synchronous and works on the full canvas per layer.
 
-## Próximos pasos técnicos
-1. Motor en Worker + `OffscreenCanvas`. 2. Guardado por tiles (1.x). 3. Atlas disperso en GPU. 4. Compositor en compute shaders / SIMD. 5. Deshacer de estructura. 6. `trimEmptyTiles`.
+## Next technical steps
+1. Engine in a Worker + `OffscreenCanvas`. 2. Per-tile saving (1.x). 3. Sparse GPU atlas. 4. Compositor on compute shaders / SIMD. 5. Structure undo. 6. `trimEmptyTiles`.
