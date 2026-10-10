@@ -1,5 +1,7 @@
 node_modules/
 dist/
-packages/wasm-bindings/build/
-apps/web/public/wasm/engine.wasm
 *.log
+
+# OJO: packages/wasm-bindings/build/ y apps/web/public/wasm/engine.wasm SÍ se versionan.
+# Vercel no tiene Emscripten, así que recibe el motor ya compilado.
+# Cuando cambies el C++: `pnpm build:wasm` y haz commit de esos archivos.
