@@ -1,29 +1,34 @@
-#!/usr/bin/env bash
-# build.sh — Compila engine.cpp a WebAssembly (requiere emsdk activado).
-# Uso: ./build.sh [debug]
-set -euo pipefail
+#!/bin/bash
+# packages/engine/build.sh
 
-OUT_DIR="../wasm-bindings/build"
-mkdir -p "$OUT_DIR"
+# Salir inmediatamente si ocurre un error
+set -e
 
-# Optimización: -O3 en release, -O0 + símbolos en debug.
-if [ "${1:-}" = "debug" ]; then OPT="-O0 -g"; else OPT="-O3 -flto"; fi
+echo "🚀 Iniciando compilación de NVTS Photomania Engine a WebAssembly..."
 
-em++ src/*.cpp -Isrc -o "$OUT_DIR/engine.js" \
-  $OPT -std=c++20 \
-  -lembind \
-  -msimd128 \
-  -s MODULARIZE=1 \
-  -s EXPORT_ES6=1 \
-  -s EXPORT_NAME=createNvtsEngine \
-  -s ENVIRONMENT=web,worker \
-  -s ALLOW_MEMORY_GROWTH=1 \
-  -s INITIAL_MEMORY=64MB \
-  -s MAXIMUM_MEMORY=2GB \
-  -s EXPORTED_RUNTIME_METHODS=HEAPU8 \
-  -s NO_EXIT_RUNTIME=1
+# Directorio de salida para los enlaces de Wasm
+OUTPUT_DIR="../wasm-bindings/src"
+mkdir -p $OUTPUT_DIR
 
-echo "OK -> $OUT_DIR/engine.js + engine.wasm"
+# Compilación con Emscripten (emcc)
+emcc src/engine.cpp \
+     src/tiled_layer.cpp \
+     src/compositor.cpp \
+     src/history.cpp \
+     -O3 \
+     -std=c++17 \
+     --bind \
+     -s WASM=1 \
+     -s ALLOW_MEMORY_GROWTH=1 \
+     -s USE_PTHREADS=1 \
+     -s PROXY_TO_PTHREAD=1 \
+     -s EXIT_RUNTIME=0 \
+     -s MODULARIZE=1 \
+     -s EXPORT_NAME="createNVTSEngine" \
+     -o "$OUTPUT_DIR/nvts_engine.js"
+
+echo "✅ ¡Compilación Wasm completada con éxito en $OUTPUT_DIR!"
+
 
 # Notas:
 #  -lembind                 : activa embind.

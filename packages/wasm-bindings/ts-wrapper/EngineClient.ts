@@ -5,20 +5,62 @@ import createNvtsEngine, {
   type NvtsEngineModule,
   type ImageProcessor,
 } from '../build/engine.js';
+import { HeapAccess } from './SafeMemory';
+import { EngineSession } from './EngineSession';
+
+/** Qué ofrece el entorno actual (útil para avisar al usuario o elegir estrategias). */
+export interface EngineCapabilities {
+  /** La página está aislada (COOP/COEP): condición para SharedArrayBuffer y pthreads. */
+  crossOriginIsolated: boolean;
+  /** La memoria de Wasm es compartida (el motor se compiló con -pthread). */
+  sharedMemory: boolean;
+}
 
 export class EngineClient {
-  private constructor(private readonly mod: NvtsEngineModule) {}
+  /** Acceso seguro a la memoria de Wasm (vistas, copias y escritura; con o sin SharedArrayBuffer). */
+  readonly heap: HeapAccess;
+  readonly capabilities: EngineCapabilities;
+
+  private constructor(private readonly mod: NvtsEngineModule) {
+    this.heap = new HeapAccess(mod);
+    this.capabilities = {
+      crossOriginIsolated: globalThis.crossOriginIsolated === true,
+      sharedMemory: this.heap.shared,
+    };
+  }
 
   /** Carga e inicializa el Wasm (una sola vez por worker). */
   static async create(wasmBaseUrl = '/wasm/'): Promise<EngineClient> {
-    const mod = await createNvtsEngine({
-      locateFile: (p) => wasmBaseUrl + p, // dónde servir engine.wasm
-    });
+    let mod: NvtsEngineModule;
+    try {
+      mod = await createNvtsEngine({
+        locateFile: (p) => wasmBaseUrl + p, // dónde servir engine.wasm
+      });
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      if (globalThis.crossOriginIsolated !== true) {
+        throw new Error(
+          'No se pudo iniciar el motor Wasm. Si lo compilaste con -pthread necesita aislamiento de origen ' +
+          'cruzado (COOP/COEP) y esta página no lo tiene (GitHub Pages no permite esos headers). ' +
+          `Detalle: ${detail}`,
+          { cause: e },
+        );
+      }
+      throw e;
+    }
     return new EngineClient(mod);
   }
 
   /** Módulo Wasm crudo: permite crear `new module.Compositor(...)`, `new module.HistoryManager(...)`, etc. */
   get module(): NvtsEngineModule { return this.mod; }
+
+  /**
+   * Abre una sesión de edición: capas, tiles y deshacer/rehacer sobre un lienzo width×height.
+   * Libérala con dispose() (o `using session = ...`) al cerrar el documento.
+   */
+  createSession(width: number, height: number, historyMB = 512): EngineSession {
+    return new EngineSession(this.mod, this.heap, width, height, historyMB);
+  }
 
   /** Crea un procesador de imagen RGBA8 del tamaño dado. */
   createProcessor(width: number, height: number): ImageHandle {
@@ -41,6 +83,8 @@ export class ImageHandle implements Disposable {
   /**
    * Vista de los píxeles SIN copiar. NO la guardes: se invalida si la memoria
    * de Wasm crece. Pídela de nuevo cada vez que la necesites.
+   * Con memoria compartida (-pthread) el buffer es un SharedArrayBuffer: `new ImageData(...)` y otras
+   * APIs web lo rechazan. En ese caso usa EngineClient.heap.copyOut() para obtener una copia segura.
    */
   getPixels(): Uint8ClampedArray {
     this.assertAlive();

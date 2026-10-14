@@ -1,55 +1,59 @@
 # Publica apps/web en GitHub Pages en cada push a main.
 # Requisito: Settings -> Pages -> Source = "GitHub Actions".
-name: Deploy to GitHub Pages
+name: Deploy NVTS Photomania to GitHub Pages
 
 on:
   push:
-    branches: [main]
-  workflow_dispatch:          # permite lanzarlo a mano desde la pestaña Actions
+    branches:
+      - main # O la rama principal que uses (develop/main)
 
 permissions:
   contents: read
   pages: write
   id-token: write
 
-concurrency:
-  group: pages
-  cancel-in-progress: true
-
 jobs:
-  build:
-    runs-on: ubuntu-26.04
+  build-and-deploy:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout código
+        uses: actions/checkout@v4
 
-      # Lee la versión de pnpm del campo "packageManager" del package.json raíz.
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v6
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: pnpm
+          node-size: 20
 
-      - run: pnpm install --frozen-lockfile
-
-      # El motor (engine.js / engine.wasm) NO se compila aquí: va commiteado en el repo.
-      # BASE_PATH = /<nombre-del-repo>/ porque Pages publica en usuario.github.io/<repo>/
-      - run: pnpm build
-        env:
-          BASE_PATH: /${{ github.event.repository.name }}/
-
-      - uses: actions/configure-pages@v5
-
-      - uses: actions/upload-pages-artifact@v3
+      - name: Instalar pnpm
+        uses: pnpm/action-setup@v3
         with:
-          path: apps/web/dist
+          version: 8
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-26.04
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
+      - name: Configurar Emscripten (SDK para Wasm)
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 'latest'
+
+      - name: Instalar dependencias del monorrepo
+        run: pnpm install --frozen-lockfile
+
+      - name: Compilar Motor C++ a WebAssembly
+        run: |
+          cd packages/engine
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Compilar Aplicación Frontend (Vite)
+        run: pnpm --filter @nvts-photomania/web build
+
+      - name: Configurar Entorno de GitHub Pages
+        uses: actions/configure-pages@v4
+
+      - name: Subir Artifact de Producción
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Apunta a la carpeta de salida que configuramos en tu vite.config.ts
+          path: './dist/apps/web'
+
+      - name: Desplegar en GitHub Pages
         uses: actions/deploy-pages@v4
