@@ -5,7 +5,7 @@ name: Deploy NVTS Photomania to GitHub Pages
 on:
   push:
     branches:
-      - main # O la rama principal que uses (develop/main)
+      - main
 
 permissions:
   contents: read
@@ -24,10 +24,10 @@ jobs:
         with:
           node-version: 20
 
-      - name: Instalar y habilitar pnpm de forma nativa
+      - name: Habilitar pnpm
         run: |
           corepack enable
-          corepack prepare pnpm@latest --activate
+          corepack prepare pnpm@12.9.1 --activate
 
       - name: Instalar dependencias del monorrepo
         run: pnpm install --frozen-lockfile
@@ -37,25 +37,17 @@ jobs:
         with:
           version: 'latest'
 
-      - name: Instalar dependencias del monorrepo
-        run: pnpm install --frozen-lockfile
+      - name: Compilar motor C++ a WebAssembly y copiar assets
+        run: pnpm build:wasm
 
-      - name: Compilar Motor C++ a WebAssembly
+      - name: Compilar aplicación frontend (Vite)
+        run: pnpm --filter @nvts/web build
+
+      - name: Verificar carpeta de salida
         run: |
-          cd packages/engine
-          chmod +x build.sh
-          ./build.sh
-
-      - name: Sincronizar assets de WebAssembly locales
-        run: pnpm --filter @nvts-photomania/web run build:wasm || echo "No custom wasm script"
-
-      - name: Pre-compilar paquetes dependientes del monorrepo
-        run: |
-          pnpm --filter @nvts-photomania/wasm-bindings build || echo "No build step required"
-          pnpm --filter @nvts/document-model build || echo "No build step required"
-
-      - name: Compilar Aplicación Frontend Definitiva (Vite)
-        run: pnpm --filter @nvts-photomania/web build
+          test -d apps/web/dist
+          test -f apps/web/dist/index.html
+          ls -la apps/web/dist
 
       - name: Configurar Entorno de GitHub Pages
         uses: actions/configure-pages@v5
@@ -63,8 +55,7 @@ jobs:
       - name: Subir Artifact de Producción
         uses: actions/upload-pages-artifact@v3
         with:
-          # Usamos la ruta absoluta integrada al workspace
-          path: '${{ github.workspace }}/apps/web/dist'
+          path: apps/web/dist
 
       - name: Desplegar en GitHub Pages
         uses: actions/deploy-pages@v4
