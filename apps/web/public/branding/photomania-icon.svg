@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+<title id="title">NVTS PhotoMania icon</title>
+<defs>
+ <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#202945"/><stop offset="1" stop-color="#101426"/></linearGradient>
+ <linearGradient id="pink" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F472D0"/><stop offset="1" stop-color="#A855F7"/></linearGradient>
+ <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#A855F7"/><stop offset="1" stop-color="#38BDF8"/></linearGradient>
+</defs>
+<rect x="24" y="24" width="464" height="464" rx="112" fill="url(#bg)"/>
+<rect x="25" y="25" width="462" height="462" rx="111" fill="none" stroke="#64748B" stroke-opacity=".42" stroke-width="2"/>
+<g transform="translate(256 256)">
+ <path d="M-14-152 C58-164 137-109 140-36 C142 20 98 43 43 43 L-2 43 L-2-10 C-2-67-54-103-14-152Z" fill="url(#pink)"/>
+ <path d="M152-14 C164 58 109 137 36 140 C-20 142-43 98-43 43 L-43-2 L10-2 C67-2 103-54 152-14Z" fill="url(#blue)"/>
+ <path d="M14 152 C-58 164-137 109-140 36 C-142-20-98-43-43-43 L2-43 L2 10 C2 67 54 103 14 152Z" fill="#8B5CF6"/>
+ <path d="M-152 14 C-164-58-109-137-36-140 C20-142 43-98 43-43 L43 2 L-10 2 C-67 2-103 54-152 14Z" fill="#E879F9"/>
+ <circle r="54" fill="#F8FAFC"/><path d="M0-31 L9-9 L31 0 L9 9 L0 31 L-9 9 L-31 0 L-9-9Z" fill="#8B5CF6"/>
+</g></svg>

@@ -12,11 +12,22 @@ import { openFromDisk, saveToDisk } from '@nvts/storage';
 import { createToolbar, type ToolbarApi } from './Toolbar';
 
 type Tool = 'brush' | 'eraser';
+const LOGO_URL =
+  `${import.meta.env.BASE_URL}branding/photomania-logo.svg`;
 
 const TEMPLATE = `
 <header class="bar">
-  <strong>NVTS Photomania</strong>
-  <button id="b-new">Nuevo</button><button id="b-open">Abrir</button><button id="b-save">Guardar</button>
+  <div class="app-brand">
+    <img
+      class="app-logo"
+      src="${LOGO_URL}"
+      alt="NVTS PhotoMania"
+    />
+  </div>
+
+  <button id="b-new">Nuevo</button>
+  <button id="b-open">Abrir</button>
+  <button id="b-save">Guardar</button>
   <span class="sep"></span>
   <button id="t-brush" class="on">Pincel (B)</button><button id="t-eraser">Borrador (E)</button>
   <span class="sep"></span>
