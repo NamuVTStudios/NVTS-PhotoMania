@@ -65,3 +65,8 @@ EMSCRIPTEN_BINDINGS(nvts_engine) {
         .function("loadFromJS",      &ImageProcessor::loadFromJS)
         .function("applyBrightness", &ImageProcessor::applyBrightness);
 }
+
+int main() {
+    // Punto de entrada dummy exigido por -s PROXY_TO_PTHREAD
+    return 0;
+}

@@ -1,21 +1,32 @@
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 
-// COOP/COEP: necesarios para SharedArrayBuffer (hilos Wasm / Workers a futuro).
-// OJO: solo aplican en `pnpm dev` y `pnpm preview`. GitHub Pages no permite configurar headers;
-// si algún día los necesitas en producción, hay que usar coi-serviceworker (o cambiar de hosting).
-const isolation = {
-  'Cross-Origin-Opener-Policy': 'same-origin',
-  'Cross-Origin-Embedder-Policy': 'require-corp',
-};
+export default defineConfig({
+  // Reemplazamos resolve(__dirname) por rutas relativas directas que Vite entiende nativamente
+  root: '.',
+  publicDir: 'public', 
+  
+  server: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
+  },
+  
+  resolve: {
+    alias: {
+      // Usamos URLs relativas web estándar para evitar depender de 'path' de Node
+      '@nvts-photomania/wasm-bindings': new URL('../../packages/wasm-bindings/src', import.meta.url).pathname,
+      '@nvts/document-model': new URL('../../packages/document-model/src', import.meta.url).pathname
+    }
+  },
 
-export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, '.', '');
-  return {
-    // GitHub Pages sirve el sitio en /<repo>/ (el workflow define BASE_PATH).
-    // En local queda '/'. Con dominio propio o repo <usuario>.github.io, también '/'.
-    base: env.BASE_PATH || '/',
-    server: { headers: isolation },
-    preview: { headers: isolation },
-    build: { target: 'es2022' },
-  };
+  optimizeDeps: {
+    exclude: ['@nvts-photomania/wasm-bindings']
+  },
+  
+  build: {
+    outDir: 'dist', 
+    emptyOutDir: true,
+    target: 'esnext'
+  }
 });

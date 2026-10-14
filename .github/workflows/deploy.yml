@@ -22,12 +22,15 @@ jobs:
       - name: Configurar Node.js
         uses: actions/setup-node@v4
         with:
-          node-size: 20
+          node-version: 20
 
-      - name: Instalar pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 8
+      - name: Instalar y habilitar pnpm de forma nativa
+        run: |
+          corepack enable
+          corepack prepare pnpm@latest --activate
+
+      - name: Instalar dependencias del monorrepo
+        run: pnpm install --frozen-lockfile
 
       - name: Configurar Emscripten (SDK para Wasm)
         uses: mymindstorm/setup-emsdk@v14
@@ -43,17 +46,25 @@ jobs:
           chmod +x build.sh
           ./build.sh
 
-      - name: Compilar Aplicación Frontend (Vite)
+      - name: Sincronizar assets de WebAssembly locales
+        run: pnpm --filter @nvts-photomania/web run build:wasm || echo "No custom wasm script"
+
+      - name: Pre-compilar paquetes dependientes del monorrepo
+        run: |
+          pnpm --filter @nvts-photomania/wasm-bindings build || echo "No build step required"
+          pnpm --filter @nvts/document-model build || echo "No build step required"
+
+      - name: Compilar Aplicación Frontend Definitiva (Vite)
         run: pnpm --filter @nvts-photomania/web build
 
       - name: Configurar Entorno de GitHub Pages
-        uses: actions/configure-pages@v4
+        uses: actions/configure-pages@v5
 
       - name: Subir Artifact de Producción
         uses: actions/upload-pages-artifact@v3
         with:
-          # Apunta a la carpeta de salida que configuramos en tu vite.config.ts
-          path: './dist/apps/web'
+          # Usamos la ruta absoluta integrada al workspace
+          path: '${{ github.workspace }}/apps/web/dist'
 
       - name: Desplegar en GitHub Pages
         uses: actions/deploy-pages@v4
