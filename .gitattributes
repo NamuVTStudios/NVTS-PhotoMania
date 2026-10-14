@@ -1,1 +1,2 @@
-pnpm-lock.yaml merge=binary
+* text=auto eol=lf
+pnpm-lock.yaml merge=binary -text
