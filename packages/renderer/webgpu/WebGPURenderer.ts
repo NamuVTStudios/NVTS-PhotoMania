@@ -91,7 +91,7 @@ export class WebGPURenderer implements RendererBackend {
     // writeTexture NO exige bytesPerRow múltiplo de 256 (a diferencia de copyBufferToTexture).
     this.device.queue.writeTexture(
       { texture: this.tex },
-      pixels,
+      toGPUBuffer(pixels),
       { bytesPerRow: width * 4, rowsPerImage: height },
       [width, height],
     );
@@ -121,7 +121,12 @@ export class WebGPURenderer implements RendererBackend {
   /** Sube una región (p. ej. un tile). bytesPerRow = stride del buffer origen (tile completo: 1024). */
   writeRegion(x: number, y: number, w: number, h: number, pixels: Uint8Array, bytesPerRow: number): void {
     if (!this.tex) return;
-    this.device.queue.writeTexture({ texture: this.tex, origin: [x, y] }, pixels, { bytesPerRow }, [w, h]);
+    this.device.queue.writeTexture(
+      { texture: this.tex, origin: [x, y] },
+      toGPUBuffer(pixels),
+      { bytesPerRow },
+      [w, h],
+    );
   }
 
   setOpacity(value: number): void {
@@ -169,6 +174,14 @@ export class WebGPURenderer implements RendererBackend {
     this.uniforms.destroy();
     this.device.destroy();
   }
+}
+
+function toGPUBuffer(
+  pixels: Uint8Array | Uint8ClampedArray,
+): ArrayBuffer {
+  const buffer = new ArrayBuffer(pixels.byteLength);
+  new Uint8Array(buffer).set(pixels);
+  return buffer;
 }
 
 /* Integración con el motor (ejemplo):

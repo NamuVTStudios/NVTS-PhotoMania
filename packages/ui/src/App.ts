@@ -168,10 +168,20 @@ export class App {
         this.scheduleRefresh();
       };
       const name = document.createElement('span');
+      const lock = document.createElement('button');
       name.textContent = l.name; // textContent: los nombres vienen de archivos
-      row.append(vis, name);
+      row.append(vis, name, lock);
       row.onclick = () => { this.activeId = l.id; this.renderLayers(); this.syncToolbarProps(); };
       list.append(row);
+      lock.type = 'button';
+      lock.textContent = l.locked ? '🔒' : '🔓';
+      lock.title = l.locked ? 'Desbloquear capa' : 'Bloquear capa';
+      lock.setAttribute('aria-label', lock.title);
+      lock.onclick = (e) => {
+        e.stopPropagation();
+        this.ctl.setProps(l.id, { locked: !l.locked });
+        this.renderLayers();
+      };
     }
   }
 

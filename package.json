@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
+    "@types/node": "^26.6.5",
     "@types/wicg-file-system-access": "^2023.10.5",
     "@webgpu/types": "^0.1.40",
     "typescript": "^5.6.0",

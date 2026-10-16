@@ -168,3 +168,24 @@ canvas {
 .app-brand strong {
   white-space: nowrap;
 }
+
+.layer {
+  min-width: 0;
+}
+
+.layer span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer input[type="checkbox"] {
+  flex-shrink: 0;
+}
+
+.layer button {
+  flex-shrink: 0;
+  padding: 3px 5px;
+}
