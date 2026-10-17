@@ -96,8 +96,9 @@ export class WebGL2Renderer implements RendererBackend {
     if (!this.tex) return;
 
     const dpr = window.devicePixelRatio || 1;
-    const cw = Math.max(1, Math.floor(this.canvas.clientWidth * dpr));
-    const ch = Math.max(1, Math.floor(this.canvas.clientHeight * dpr));
+    const renderScale = Math.min(4, Math.max(1, Number(this.canvas.dataset.renderScale) || 1));
+    const cw = Math.max(1, Math.floor(this.canvas.clientWidth * dpr * renderScale));
+    const ch = Math.max(1, Math.floor(this.canvas.clientHeight * dpr * renderScale));
     if (this.canvas.width !== cw || this.canvas.height !== ch) { this.canvas.width = cw; this.canvas.height = ch; }
     gl.viewport(0, 0, cw, ch);
 

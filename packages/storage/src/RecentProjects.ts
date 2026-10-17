@@ -1,8 +1,9 @@
 import type { DocumentState } from '@nvts/document-model';
 
 const DB_NAME = 'nvts-photomania-local';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'recent-projects';
+const LINKED_FILE_STORE = 'linked-file-handles';
 const MAX_RECENT = 24;
 
 export interface RecentProjectInfo {
@@ -24,6 +25,7 @@ function openRecentDb(): Promise<IDBDatabase> {
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(LINKED_FILE_STORE)) db.createObjectStore(LINKED_FILE_STORE, { keyPath: 'id' });
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error('No se pudo abrir el almacenamiento local.'));
@@ -130,4 +132,41 @@ export async function clearRecentProjects(): Promise<void> {
   } finally {
     db.close();
   }
+}
+
+
+interface LinkedFileRecord { id: string; handle: FileSystemFileHandle; fileName: string; updatedAt: number }
+
+/** Guarda un handle real del sistema de archivos en IndexedDB; el navegador conserva los permisos según sus reglas. */
+export async function rememberLinkedFile(id: string, handle: FileSystemFileHandle): Promise<void> {
+  const db = await openRecentDb();
+  try {
+    const tx = db.transaction(LINKED_FILE_STORE, 'readwrite');
+    const done = transactionDone(tx);
+    tx.objectStore(LINKED_FILE_STORE).put({ id, handle, fileName: handle.name, updatedAt: Date.now() } satisfies LinkedFileRecord);
+    await done;
+  } finally { db.close(); }
+}
+
+/** Devuelve el handle local asociado al ID de vínculo, o null si se abrió el proyecto en otro perfil/dispositivo. */
+export async function getLinkedFile(id: string): Promise<FileSystemFileHandle | null> {
+  const db = await openRecentDb();
+  try {
+    const tx = db.transaction(LINKED_FILE_STORE, 'readonly');
+    const done = transactionDone(tx);
+    const record = await requestResult(tx.objectStore(LINKED_FILE_STORE).get(id)) as LinkedFileRecord | undefined;
+    await done;
+    return record?.handle ?? null;
+  } finally { db.close(); }
+}
+
+/** Retira un vínculo del almacenamiento local; no borra el archivo original. */
+export async function forgetLinkedFile(id: string): Promise<void> {
+  const db = await openRecentDb();
+  try {
+    const tx = db.transaction(LINKED_FILE_STORE, 'readwrite');
+    const done = transactionDone(tx);
+    tx.objectStore(LINKED_FILE_STORE).delete(id);
+    await done;
+  } finally { db.close(); }
 }

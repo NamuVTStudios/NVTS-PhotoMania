@@ -9,15 +9,15 @@ import type { DocumentState, LayerNode, UnpackedDocument } from './types';
 const BLEND_NAMES: readonly BlendName[] = ['normal', 'multiply', 'screen', 'overlay'];
 export const blendModeToManifest = (v: number): BlendName => BLEND_NAMES[v] ?? 'normal';
 export type LayerPatch = Partial<Pick<LayerNode,
-  'name' | 'visible' | 'locked' | 'opacity' | 'blendMode' | 'fillColor' | 'filterKind' | 'filterStrength' | 'vectorShapes' | 'sourceName'>>;
+  'name' | 'visible' | 'locked' | 'opacity' | 'blendMode' | 'fillColor' | 'filterKind' | 'filterStrength' | 'vectorShapes' | 'sourceName' | 'sourceLinkId' | 'sourceLastModified' | 'sourceFileSize'>>;
 type HistoryAction = { kind: 'pixels'; label: string } | { kind: 'structure'; label: string; undo: () => void; redo: () => void };
 type LayerSnapshot = { node: LayerNode; parentId: string | null; index: number; pixels: Map<string, Uint8Array> };
 
-const cloneShapes = (shapes: VectorShape[] | undefined): VectorShape[] => (shapes ?? []).map((s) => ({ ...s }));
+const cloneShapes = (shapes: VectorShape[] | undefined): VectorShape[] => (shapes ?? []).map((s) => ({ ...s, points: s.points?.map((point) => ({ ...point })) }));
 const clonePatch = (n: LayerNode): LayerPatch => ({
   name: n.name, visible: n.visible, locked: n.locked, opacity: n.opacity, blendMode: n.blendMode,
   fillColor: n.fillColor, filterKind: n.filterKind, filterStrength: n.filterStrength,
-  vectorShapes: cloneShapes(n.vectorShapes), sourceName: n.sourceName,
+  vectorShapes: cloneShapes(n.vectorShapes), sourceName: n.sourceName, sourceLinkId: n.sourceLinkId, sourceLastModified: n.sourceLastModified, sourceFileSize: n.sourceFileSize,
 });
 
 export class DocumentController {
@@ -97,8 +97,8 @@ export class DocumentController {
     return node;
   }
 
-  addFileLayer(name: string, pixels: Uint8Array, sourceName: string): LayerNode {
-    const node = this.add('file', name, undefined, -1, { sourceName });
+  addFileLayer(name: string, pixels: Uint8Array, sourceName: string, sourceLinkId?: string, sourceLastModified?: number, sourceFileSize?: number): LayerNode {
+    const node = this.add('file', name, undefined, -1, { sourceName, sourceLinkId, sourceLastModified, sourceFileSize });
     const surface = this.layerPixels(node);
     if (!surface || !surface.loadFromRGBA(pixels)) {
       this.removeRaw(node.id);
@@ -119,24 +119,33 @@ export class DocumentController {
   }
 
   /** Sustituye la imagen incrustada de una capa de archivo como una sola acción de historial. */
-  replaceFileLayerContent(id: string, pixels: Uint8Array, sourceName: string): boolean {
+  replaceFileLayerContent(id: string, pixels: Uint8Array, sourceName: string, sourceLinkId?: string, sourceLastModified?: number, sourceFileSize?: number): boolean {
     const node = this.nodes.get(id);
     if (!node || node.type !== 'file' || pixels.byteLength !== this.doc.width * this.doc.height * 4) return false;
     const beforePixels = this.readPixels(node) ?? new Uint8Array(this.doc.width * this.doc.height * 4);
     const afterPixels = new Uint8Array(pixels);
     const beforeName = node.sourceName ?? node.name;
-    const apply = (data: Uint8Array, name: string) => {
+    const beforeLinkId = node.sourceLinkId;
+    const beforeLastModified = node.sourceLastModified;
+    const beforeFileSize = node.sourceFileSize;
+    const apply = (data: Uint8Array, name: string, linkId?: string, lastModified?: number, fileSize?: number) => {
       const current = this.nodes.get(id);
       if (!current || current.type !== 'file') return;
       current.sourceName = name;
+      current.sourceLinkId = linkId;
+      current.sourceLastModified = lastModified;
+      current.sourceFileSize = fileSize;
       this.layerPixels(current)?.loadFromRGBA(data);
       this.comp.invalidateAll();
     };
-    apply(afterPixels, sourceName);
+    const equalPixels = beforePixels.byteLength === afterPixels.byteLength && beforePixels.every((value, index) => value === afterPixels[index]);
+    const unchanged = equalPixels && beforeName === sourceName && beforeLinkId === sourceLinkId && beforeLastModified === sourceLastModified && beforeFileSize === sourceFileSize;
+    if (unchanged) return true;
+    apply(afterPixels, sourceName, sourceLinkId, sourceLastModified, sourceFileSize);
     if (!this.replaying) this.recordStructure(
-      `Reemplazar imagen de «${node.name}»`,
-      () => apply(beforePixels, beforeName),
-      () => apply(afterPixels, sourceName),
+      `Actualizar imagen vinculada de «${node.name}»`,
+      () => apply(beforePixels, beforeName, beforeLinkId, beforeLastModified, beforeFileSize),
+      () => apply(afterPixels, sourceName, sourceLinkId, sourceLastModified, sourceFileSize),
     );
     return true;
   }
@@ -404,7 +413,7 @@ export class DocumentController {
     const node = this.add(normalizedType, src.name, parent?.id, -1, {
       visible: src.visible, locked: src.locked, opacity: src.opacity, blendMode: src.blendMode,
       fillColor: src.fillColor, filterKind: src.filterKind, filterStrength: src.filterStrength,
-      vectorShapes: cloneShapes(src.vectorShapes), sourceName: src.sourceName,
+      vectorShapes: cloneShapes(src.vectorShapes), sourceName: src.sourceName, sourceLinkId: src.sourceLinkId, sourceLastModified: src.sourceLastModified, sourceFileSize: src.sourceFileSize,
     });
     this.nodes.delete(node.id); node.id = src.id; this.nodes.set(node.id, node);
     const px = pixels.get(src.id);

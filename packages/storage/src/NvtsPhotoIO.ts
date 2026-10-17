@@ -26,8 +26,11 @@ function layerToManifest(layer: LayerNode, blobs: Zippable, read: PixelReader): 
     ...(layer.fillColor ? { fillColor: layer.fillColor } : {}),
     ...(layer.filterKind ? { filterKind: layer.filterKind } : {}),
     ...(layer.filterStrength !== undefined ? { filterStrength: layer.filterStrength } : {}),
-    ...(layer.vectorShapes ? { vectorShapes: layer.vectorShapes.map((shape) => ({ ...shape })) } : {}),
+    ...(layer.vectorShapes ? { vectorShapes: layer.vectorShapes.map((shape) => ({ ...shape, points: shape.points?.map((point) => ({ ...point })) })) } : {}),
     ...(layer.sourceName ? { sourceName: layer.sourceName } : {}),
+    ...(layer.sourceLinkId ? { sourceLinkId: layer.sourceLinkId } : {}),
+    ...(layer.sourceLastModified !== undefined ? { sourceLastModified: layer.sourceLastModified } : {}),
+    ...(layer.sourceFileSize !== undefined ? { sourceFileSize: layer.sourceFileSize } : {}),
   };
   if (isPixelLayerType(layer.type)) {
     const px = read(layer);
@@ -88,8 +91,8 @@ export function unpackNvtsPhoto(bytes: Uint8Array): UnpackedDocument {
       blendMode: m.blendMode ?? 'normal',
       fillColor: m.fillColor, filterKind: m.filterKind,
       filterStrength: typeof m.filterStrength === 'number' ? Math.min(1, Math.max(0, m.filterStrength)) : undefined,
-      vectorShapes: Array.isArray(m.vectorShapes) ? m.vectorShapes.map((shape) => ({ ...shape })) : undefined,
-      sourceName: m.sourceName, children: [],
+      vectorShapes: Array.isArray(m.vectorShapes) ? m.vectorShapes.map((shape) => ({ ...shape, points: shape.points?.map((point) => ({ ...point })) })) : undefined,
+      sourceName: m.sourceName, sourceLinkId: m.sourceLinkId, sourceLastModified: m.sourceLastModified, sourceFileSize: m.sourceFileSize, children: [],
     };
     if (m.pixelData) {
       const data = files[m.pixelData.path]; // solo búsqueda por clave: nunca se escribe a disco
