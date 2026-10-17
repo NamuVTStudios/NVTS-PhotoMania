@@ -104,3 +104,30 @@ export async function loadRecentProject(id: string): Promise<Uint8Array | null> 
     db.close();
   }
 }
+
+
+/** Elimina de Proyectos recientes una entrada sin tocar el archivo original ni el documento abierto. */
+export async function removeRecentProject(id: string): Promise<void> {
+  const db = await openRecentDb();
+  try {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const done = transactionDone(tx);
+    tx.objectStore(STORE_NAME).delete(id);
+    await done;
+  } finally {
+    db.close();
+  }
+}
+
+/** Borra todas las copias y metadatos guardados para Proyectos recientes. */
+export async function clearRecentProjects(): Promise<void> {
+  const db = await openRecentDb();
+  try {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const done = transactionDone(tx);
+    tx.objectStore(STORE_NAME).clear();
+    await done;
+  } finally {
+    db.close();
+  }
+}

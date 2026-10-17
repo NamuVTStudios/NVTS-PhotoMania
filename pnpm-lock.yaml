@@ -228,6 +228,9 @@ importers:
       '@nvts/renderer':
         specifier: workspace:*
         version: link:../renderer
+      '@nvts/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@nvts/storage':
         specifier: workspace:*
         version: link:../storage

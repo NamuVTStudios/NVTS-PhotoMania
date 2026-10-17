@@ -5,5 +5,11 @@
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
-  "dependencies": { "@nvts/wasm-bindings": "workspace:*", "@nvts/renderer": "workspace:*", "@nvts/document-model": "workspace:*", "@nvts/storage": "workspace:*" }
+  "dependencies": {
+    "@nvts/document-model": "workspace:*",
+    "@nvts/renderer": "workspace:*",
+    "@nvts/shared": "workspace:*",
+    "@nvts/storage": "workspace:*",
+    "@nvts/wasm-bindings": "workspace:*"
+  }
 }

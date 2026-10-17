@@ -5,7 +5,7 @@
 // Nota: zipSync/unzipSync son síncronos; con imágenes grandes conviene moverlos a un Worker.
 
 import { zipSync, unzipSync, strToU8, strFromU8, type Zippable } from 'fflate';
-import { NVTS_FORMAT, NVTS_VERSION, type LayerManifest, type NvtsManifest } from '@nvts/shared';
+import { NVTS_FORMAT, NVTS_VERSION, isPixelLayerType, type LayerManifest, type NvtsManifest, type LayerType } from '@nvts/shared';
 import type { DocumentState, LayerNode, UnpackedDocument } from '@nvts/document-model';
 
 const MAX_ENTRY_BYTES = 1 << 30; // 1 GiB por entrada: defensa básica contra "zip bombs"
@@ -23,12 +23,17 @@ function layerToManifest(layer: LayerNode, blobs: Zippable, read: PixelReader): 
   const m: LayerManifest = {
     id: layer.id, type: layer.type, name: layer.name, visible: layer.visible,
     locked: layer.locked, opacity: layer.opacity, blendMode: layer.blendMode,
+    ...(layer.fillColor ? { fillColor: layer.fillColor } : {}),
+    ...(layer.filterKind ? { filterKind: layer.filterKind } : {}),
+    ...(layer.filterStrength !== undefined ? { filterStrength: layer.filterStrength } : {}),
+    ...(layer.vectorShapes ? { vectorShapes: layer.vectorShapes.map((shape) => ({ ...shape })) } : {}),
+    ...(layer.sourceName ? { sourceName: layer.sourceName } : {}),
   };
-  if (layer.type === 'raster') {
+  if (isPixelLayerType(layer.type)) {
     const px = read(layer);
-    if (px) { // las capas vacías no ocupan espacio en el archivo
+    if (px) {
       const path = `layers/${layer.id}/pixels.rgba`;
-      blobs[path] = [px, { level: 1 }]; // deflate rápido
+      blobs[path] = [px, { level: 1 }];
       m.pixelData = { path, codec: 'deflate', format: 'rgba8' };
     }
   }
@@ -77,11 +82,14 @@ export function unpackNvtsPhoto(bytes: Uint8Array): UnpackedDocument {
 
   const build = (m: LayerManifest): LayerNode => {
     const node: LayerNode = {
-      id: String(m.id), engineId: 0, type: m.type === 'group' ? 'group' : 'raster',
+      id: String(m.id), engineId: 0, type: (m.type === 'raster' ? 'paint' : m.type) as LayerType,
       name: String(m.name ?? 'Capa'), visible: !!m.visible, locked: !!m.locked,
       opacity: Math.min(1, Math.max(0, Number(m.opacity) || 0)),
       blendMode: m.blendMode ?? 'normal',
-      children: [],
+      fillColor: m.fillColor, filterKind: m.filterKind,
+      filterStrength: typeof m.filterStrength === 'number' ? Math.min(1, Math.max(0, m.filterStrength)) : undefined,
+      vectorShapes: Array.isArray(m.vectorShapes) ? m.vectorShapes.map((shape) => ({ ...shape })) : undefined,
+      sourceName: m.sourceName, children: [],
     };
     if (m.pixelData) {
       const data = files[m.pixelData.path]; // solo búsqueda por clave: nunca se escribe a disco
@@ -89,7 +97,7 @@ export function unpackNvtsPhoto(bytes: Uint8Array): UnpackedDocument {
       if (data.byteLength !== expected) throw new Error(`Tamaño de píxeles inválido en "${m.name}"`);
       pixels.set(node.id, data);
     }
-    if (m.type === 'group') node.children = (m.children ?? []).map(build);
+    if (node.type === 'group') node.children = (m.children ?? []).map(build);
     return node;
   };
 
@@ -114,11 +122,9 @@ export async function saveToDisk(
   doc: DocumentState,
   read: PixelReader,
   existing?: FileSystemFileHandle,
-  packedBytes?: Uint8Array,
 ): Promise<FileSystemFileHandle | null> {
-  const data = packedBytes ?? packNvtsPhoto(doc, read);
-
   if (!hasFSA()) { // Firefox/Safari: descarga clásica
+    const data = packNvtsPhoto(doc, read);
     const url = URL.createObjectURL(new Blob([data as BlobPart], { type: 'application/x-nvtsphoto' }));
     const a = Object.assign(document.createElement('a'), { href: url, download: `${doc.name}.nvtsphoto` });
     a.click();
@@ -132,6 +138,11 @@ export async function saveToDisk(
       handle = await window.showSaveFilePicker({ suggestedName: `${doc.name}.nvtsphoto`, types: PICKER_TYPES });
     } catch (e) { if (isAbort(e)) return null; throw e; }
   }
+
+  // El nombre del documento y el manifest deben coincidir con el archivo real elegido.
+  const diskName = handle.name.replace(/\.nvtsphoto$/i, '').trim();
+  if (diskName) doc.name = diskName;
+  const data = packNvtsPhoto(doc, read);
   const writable = await handle.createWritable(); // escribe en temporal; close() lo confirma de forma atómica
   try {
     await writable.write(data as BlobPart);
@@ -141,7 +152,7 @@ export async function saveToDisk(
 }
 
 /** Abre un .nvtsphoto del disco. Devuelve null si el usuario cancela. */
-export async function openFromDisk(): Promise<(UnpackedDocument & { handle: FileSystemFileHandle | null; bytes: Uint8Array }) | null> {
+export async function openFromDisk(): Promise<(UnpackedDocument & { handle: FileSystemFileHandle | null; bytes: Uint8Array; fileName: string }) | null> {
   let handle: FileSystemFileHandle | null = null;
   let file: File;
 
@@ -163,5 +174,8 @@ export async function openFromDisk(): Promise<(UnpackedDocument & { handle: File
 
   const bytes = new Uint8Array(await file.arrayBuffer());
   const unpacked = unpackNvtsPhoto(bytes);
-  return { ...unpacked, handle, bytes };
+  // El nombre del archivo en el sistema tiene prioridad sobre el nombre antiguo del manifest.
+  const fileName = file.name.replace(/\.nvtsphoto$/i, '').trim();
+  if (fileName) unpacked.doc.name = fileName;
+  return { ...unpacked, handle, bytes, fileName: file.name };
 }

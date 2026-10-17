@@ -1,13 +1,16 @@
-// types.ts — Estado en memoria del documento (lo que usa la UI).
-// TS posee la ESTRUCTURA; los píxeles viven en C++ (Compositor/TiledLayer) y se referencian por id numérico.
-
-import type { LayerManifest } from '@nvts/shared';
+// Estado del documento: la estructura y los metadatos viven en TypeScript; los píxeles, en C++.
+import type { FilterKind, LayerManifest, VectorShape } from '@nvts/shared';
 
 export interface LayerNode extends Omit<LayerManifest, 'pixelData' | 'children'> {
-  /** id numérico de la capa en el Compositor C++. 0 = sin asignar (lo asigna DocumentController). */
+  /** ID numérico de la capa de respaldo en el compositor Wasm. 0 está reservado. */
   engineId: number;
   /** Solo grupos. Orden de apilado: índice 0 = abajo. */
   children: LayerNode[];
+  filterKind?: FilterKind;
+  filterStrength?: number;
+  fillColor?: string;
+  vectorShapes?: VectorShape[];
+  sourceName?: string;
 }
 
 export interface DocumentState {
@@ -19,7 +22,7 @@ export interface DocumentState {
   layers: LayerNode[];
 }
 
-/** Resultado de leer un .nvtsphoto: estructura + blobs RGBA8 (width*height*4) por id de capa. */
+/** Resultado de abrir .nvtsphoto: estructura + píxeles RGBA8 de las capas con superficie. */
 export interface UnpackedDocument {
   doc: DocumentState;
   pixels: Map<string, Uint8Array>;
