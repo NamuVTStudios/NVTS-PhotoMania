@@ -102,7 +102,8 @@ export function unpackNvtsPhoto(bytes: Uint8Array): UnpackedDocument {
 
 /* ───────────── 3. DISCO (File System Access API + fallback) ───────────── */
 
-const hasFSA = () => 'showSaveFilePicker' in window && 'showOpenFilePicker' in window;
+export const supportsFileSystemAccess = () => 'showSaveFilePicker' in window && 'showOpenFilePicker' in window;
+const hasFSA = supportsFileSystemAccess;
 const isAbort = (e: unknown) => e instanceof DOMException && e.name === 'AbortError';
 
 /**
@@ -113,8 +114,9 @@ export async function saveToDisk(
   doc: DocumentState,
   read: PixelReader,
   existing?: FileSystemFileHandle,
+  packedBytes?: Uint8Array,
 ): Promise<FileSystemFileHandle | null> {
-  const data = packNvtsPhoto(doc, read);
+  const data = packedBytes ?? packNvtsPhoto(doc, read);
 
   if (!hasFSA()) { // Firefox/Safari: descarga clásica
     const url = URL.createObjectURL(new Blob([data as BlobPart], { type: 'application/x-nvtsphoto' }));
@@ -139,7 +141,7 @@ export async function saveToDisk(
 }
 
 /** Abre un .nvtsphoto del disco. Devuelve null si el usuario cancela. */
-export async function openFromDisk(): Promise<(UnpackedDocument & { handle: FileSystemFileHandle | null }) | null> {
+export async function openFromDisk(): Promise<(UnpackedDocument & { handle: FileSystemFileHandle | null; bytes: Uint8Array }) | null> {
   let handle: FileSystemFileHandle | null = null;
   let file: File;
 
@@ -159,6 +161,7 @@ export async function openFromDisk(): Promise<(UnpackedDocument & { handle: File
     file = picked;
   }
 
-  const unpacked = unpackNvtsPhoto(new Uint8Array(await file.arrayBuffer()));
-  return { ...unpacked, handle };
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const unpacked = unpackNvtsPhoto(bytes);
+  return { ...unpacked, handle, bytes };
 }

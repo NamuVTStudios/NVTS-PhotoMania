@@ -1,5 +1,5 @@
 // Toolbar.ts — Barra de herramientas mínima (DOM puro, sin framework).
-// La UI solo emite eventos; no conoce el motor. Quien la usa decide qué hacer (ver apps/web/src/main.ts).
+// Los comandos de historial se mantienen accesibles mediante Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y.
 
 import { BlendMode } from '@nvts/wasm-bindings';
 
@@ -7,22 +7,9 @@ export interface ToolbarHandlers {
   onBrush(rgb: [number, number, number], size: number): void;
   onBrightness(delta: number): void;
   onLayerProps(opacity: number, blendMode: number): void;
-  onUndo(): void;
-  onRedo(): void;
 }
 
-export interface HistoryUiState {
-  canUndo: boolean;
-  canRedo: boolean;
-  undoLabel: string;
-  redoLabel: string;
-}
-
-export interface ToolbarApi {
-  setHistoryState(s: HistoryUiState): void;
-}
-
-export function createToolbar(root: HTMLElement, h: ToolbarHandlers): ToolbarApi {
+export function createToolbar(root: HTMLElement, h: ToolbarHandlers): void {
   // Marcado estático (sin contenido del usuario), por eso innerHTML es seguro aquí.
   root.innerHTML = `
     <label>Color <input id="tb-color" type="color" value="#e03030"></label>
@@ -37,20 +24,16 @@ export function createToolbar(root: HTMLElement, h: ToolbarHandlers): ToolbarApi
         <option value="${BlendMode.Screen}">Trama (Screen)</option>
         <option value="${BlendMode.Overlay}">Superponer</option>
       </select>
-    </label>
-    <button id="tb-undo">Deshacer</button>
-    <button id="tb-redo">Rehacer</button>`;
+    </label>`;
 
   const $ = <T extends HTMLElement>(id: string) => root.querySelector<T>(`#${id}`)!;
   const color = $<HTMLInputElement>('tb-color');
   const size = $<HTMLInputElement>('tb-size');
   const opacity = $<HTMLInputElement>('tb-opacity');
   const blend = $<HTMLSelectElement>('tb-blend');
-  const undoBtn = $<HTMLButtonElement>('tb-undo');
-  const redoBtn = $<HTMLButtonElement>('tb-redo');
 
   const emitBrush = () => {
-    const v = color.value; // "#rrggbb"
+    const v = color.value;
     h.onBrush(
       [parseInt(v.slice(1, 3), 16), parseInt(v.slice(3, 5), 16), parseInt(v.slice(5, 7), 16)],
       Number(size.value),
@@ -64,18 +47,6 @@ export function createToolbar(root: HTMLElement, h: ToolbarHandlers): ToolbarApi
   blend.onchange = emitProps;
   $('tb-dark').onclick = () => h.onBrightness(-20);
   $('tb-light').onclick = () => h.onBrightness(20);
-  undoBtn.onclick = () => h.onUndo();
-  redoBtn.onclick = () => h.onRedo();
 
-  emitBrush(); // sincroniza el estado inicial del pincel
-  undoBtn.disabled = redoBtn.disabled = true;
-
-  return {
-    setHistoryState(s) {
-      undoBtn.disabled = !s.canUndo;
-      redoBtn.disabled = !s.canRedo;
-      undoBtn.textContent = s.canUndo ? `Deshacer ${s.undoLabel}` : 'Deshacer';
-      redoBtn.textContent = s.canRedo ? `Rehacer ${s.redoLabel}` : 'Rehacer';
-    },
-  };
+  emitBrush();
 }

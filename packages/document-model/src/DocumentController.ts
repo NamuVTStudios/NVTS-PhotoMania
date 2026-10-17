@@ -1,6 +1,6 @@
 // DocumentController.ts — Dueño del documento: árbol de capas (TS) + Compositor e HistoryManager (C++).
 // La estructura vive aquí; los píxeles, en el motor. Cada LayerNode guarda su `engineId` numérico.
-// La estructura (añadir/borrar/mover capas, propiedades) NO es deshacible todavía: solo los píxeles.
+// El historial común registra tanto acciones de píxeles como cambios estructurales de capas.
 
 import type { NvtsEngineModule, Compositor, HistoryManager, TiledLayer } from '@nvts/wasm-bindings';
 import { blendModeFromManifest } from '@nvts/wasm-bindings';
@@ -12,12 +12,17 @@ const BLEND_NAMES: readonly BlendName[] = ['normal', 'multiply', 'screen', 'over
 export const blendModeToManifest = (v: number): BlendName => BLEND_NAMES[v] ?? 'normal';
 
 export type LayerPatch = Partial<Pick<LayerNode, 'name' | 'visible' | 'locked' | 'opacity' | 'blendMode'>>;
+type HistoryAction = { kind: 'pixels'; label: string } | { kind: 'structure'; label: string; undo: () => void; redo: () => void };
+type LayerSnapshot = { node: LayerNode; parentId: string | null; index: number; pixels: Map<string, Uint8Array> };
 
 export class DocumentController {
   readonly comp: Compositor;
   readonly history: HistoryManager;
   private nextEngineId = 1;
   private readonly nodes = new Map<string, LayerNode>();
+  private undoStack: HistoryAction[] = [];
+  private redoStack: HistoryAction[] = [];
+  private replaying = false;
 
   private constructor(readonly mod: NvtsEngineModule, readonly doc: DocumentState, historyMB: number) {
     this.comp = new mod.Compositor(doc.width, doc.height);
@@ -34,6 +39,7 @@ export class DocumentController {
   static fromUnpacked(mod: NvtsEngineModule, u: UnpackedDocument, historyMB = 512) {
     const ctl = new DocumentController(mod, { ...u.doc, layers: [] }, historyMB);
     for (const layer of u.doc.layers) ctl.adopt(layer, null, u.pixels);
+    ctl.undoStack = []; ctl.redoStack = [];
     return ctl;
   }
 
@@ -52,17 +58,28 @@ export class DocumentController {
   }
 
   // ── Estructura ──
-  addRaster(name = 'Capa', parentId?: string, index = -1): LayerNode { return this.add('raster', name, parentId, index); }
-  addGroup(name = 'Grupo', parentId?: string, index = -1): LayerNode { return this.add('group', name, parentId, index); }
+  addRaster(name = 'Capa', parentId?: string, index = -1): LayerNode {
+    const node = this.add('raster', name, parentId, index);
+    if (!this.replaying) this.recordStructure(`Crear ${name}`, () => this.removeRaw(node.id), () => this.restoreRaw({ node: this.cloneNode(node), parentId: parentId ?? null, index: this.siblingsOf(node).indexOf(node), pixels: new Map() }));
+    return node;
+  }
+  addGroup(name = 'Grupo', parentId?: string, index = -1): LayerNode {
+    const node = this.add('group', name, parentId, index);
+    if (!this.replaying) this.recordStructure(`Crear ${name}`, () => this.removeRaw(node.id), () => this.restoreRaw({ node: this.cloneNode(node), parentId: parentId ?? null, index: this.siblingsOf(node).indexOf(node), pixels: new Map() }));
+    return node;
+  }
 
   removeLayer(id: string): boolean {
     const node = this.nodes.get(id);
-    if (!node || !this.comp.removeLayer(node.engineId)) return false;
+    if (!node) return false;
     const siblings = this.siblingsOf(node);
-    siblings.splice(siblings.indexOf(node), 1);
-    const forget = (n: LayerNode) => { this.nodes.delete(n.id); n.children.forEach(forget); };
-    forget(node);
-    this.history.clear(); // el historial podría referirse a capas borradas
+    const snapshot: LayerSnapshot = {
+      node: this.cloneNode(node), parentId: this.parentOf(node)?.id ?? null, index: siblings.indexOf(node), pixels: new Map(),
+    };
+    const capture = (n: LayerNode) => { const px = this.readPixels(n); if (px) snapshot.pixels.set(n.id, px); n.children.forEach(capture); };
+    capture(node);
+    if (!this.removeRaw(id)) return false;
+    if (!this.replaying) this.recordStructure(`Eliminar ${node.name}`, () => this.restoreRaw(snapshot), () => this.removeRaw(id));
     return true;
   }
 
@@ -70,24 +87,51 @@ export class DocumentController {
   moveLayer(id: string, delta: number): boolean {
     const node = this.nodes.get(id);
     if (!node) return false;
-    const siblings = this.siblingsOf(node);
-    const from = siblings.indexOf(node);
+    const siblings = this.siblingsOf(node), from = siblings.indexOf(node);
     const to = Math.max(0, Math.min(siblings.length - 1, from + delta));
     if (to === from) return false;
-    const parentEngine = this.parentOf(node)?.engineId ?? 0;
-    if (!this.comp.moveLayer(node.engineId, parentEngine, to)) return false;
-    siblings.splice(from, 1);
-    siblings.splice(to, 0, node);
+    if (!this.moveRaw(id, to)) return false;
+    if (!this.replaying) this.recordStructure(`Mover ${node.name}`, () => this.moveRaw(id, from), () => this.moveRaw(id, to));
     return true;
   }
 
   setProps(id: string, patch: LayerPatch): boolean {
     const node = this.nodes.get(id);
     if (!node) return false;
+    const before: LayerPatch = { name: node.name, visible: node.visible, locked: node.locked, opacity: node.opacity, blendMode: node.blendMode };
     Object.assign(node, patch);
     this.pushProps(node);
+    if (!this.replaying) {
+      const after: LayerPatch = { name: node.name, visible: node.visible, locked: node.locked, opacity: node.opacity, blendMode: node.blendMode };
+      if (JSON.stringify(before) !== JSON.stringify(after)) this.recordStructure('Propiedades de capa', () => this.applyPatchRaw(id, before), () => this.applyPatchRaw(id, after));
+    }
     return true;
   }
+
+  get canUndo(): boolean { return this.undoStack.length > 0; }
+  get canRedo(): boolean { return this.redoStack.length > 0; }
+  get undoLabel(): string { return this.undoStack.at(-1)?.label ?? ''; }
+  get redoLabel(): string { return this.redoStack.at(-1)?.label ?? ''; }
+  get historyEntries(): Array<{ label: string; current: boolean }> {
+    return [...this.undoStack].reverse().map((a, i) => ({ label: a.label, current: i === 0 }));
+  }
+  recordPixelAction(label: string): void {
+    if (this.replaying) return;
+    this.redoStack = []; this.undoStack.push({ kind: 'pixels', label });
+  }
+  undo(): 'pixels' | 'structure' | null {
+    const action = this.undoStack.pop(); if (!action) return null;
+    if (action.kind === 'pixels') { if (!this.history.undo()) { this.undoStack.push(action); return null; } }
+    else { this.replaying = true; try { action.undo(); } finally { this.replaying = false; } this.comp.invalidateAll(); }
+    this.redoStack.push(action); return action.kind;
+  }
+  redo(): 'pixels' | 'structure' | null {
+    const action = this.redoStack.pop(); if (!action) return null;
+    if (action.kind === 'pixels') { if (!this.history.redo()) { this.redoStack.push(action); return null; } }
+    else { this.replaying = true; try { action.redo(); } finally { this.replaying = false; } this.comp.invalidateAll(); }
+    this.undoStack.push(action); return action.kind;
+  }
+  clearHistory(): void { this.history.clear(); this.undoStack = []; this.redoStack = []; }
 
   /** Libera la memoria C++ (historial primero, luego el compositor). */
   dispose(): void {
@@ -97,6 +141,44 @@ export class DocumentController {
   }
 
   // ── Internos ──
+  private recordStructure(label: string, undo: () => void, redo: () => void): void {
+    this.redoStack = []; this.undoStack.push({ kind: 'structure', label, undo, redo });
+  }
+  private cloneNode(n: LayerNode): LayerNode {
+    return { ...n, children: n.children.map((c) => this.cloneNode(c)) };
+  }
+  private applyPatchRaw(id: string, patch: LayerPatch): void {
+    const n = this.nodes.get(id); if (!n) return; Object.assign(n, patch); this.pushProps(n);
+  }
+  private moveRaw(id: string, index: number): boolean {
+    const n = this.nodes.get(id); if (!n) return false;
+    const siblings = this.siblingsOf(n), from = siblings.indexOf(n);
+    if (from < 0) return false;
+    const parentEngine = this.parentOf(n)?.engineId ?? 0;
+    if (!this.comp.moveLayer(n.engineId, parentEngine, index)) return false;
+    siblings.splice(from, 1); siblings.splice(Math.max(0, Math.min(index, siblings.length)), 0, n);
+    return true;
+  }
+  private removeRaw(id: string): boolean {
+    const n = this.nodes.get(id); if (!n) return false;
+    if (!this.comp.removeLayer(n.engineId)) return false;
+    const siblings = this.siblingsOf(n); siblings.splice(siblings.indexOf(n), 1);
+    const forget = (x: LayerNode) => { this.nodes.delete(x.id); x.children.forEach(forget); }; forget(n); return true;
+  }
+  private restoreRaw(snapshot: LayerSnapshot): void {
+    const parent = snapshot.parentId ? this.nodes.get(snapshot.parentId) ?? null : null;
+    const insert = (src: LayerNode, parentNode: LayerNode | null, index: number): LayerNode => {
+      const n: LayerNode = { ...src, children: [] };
+      const at = Math.max(0, Math.min(index, (parentNode ? parentNode.children : this.doc.layers).length));
+      const ok = n.type === 'group' ? this.comp.addGroup(n.engineId, parentNode?.engineId ?? 0, at) : this.comp.addRaster(n.engineId, parentNode?.engineId ?? 0, at);
+      if (!ok) throw new Error(`No se pudo restaurar la capa ${n.name}`);
+      (parentNode ? parentNode.children : this.doc.layers).splice(at, 0, n); this.nodes.set(n.id, n); this.nextEngineId = Math.max(this.nextEngineId, n.engineId + 1); this.pushProps(n);
+      const px = snapshot.pixels.get(n.id); if (px && n.type === 'raster') this.layerPixels(n)?.loadFromRGBA(px);
+      src.children.forEach((c, i) => { insert(c, n, i); });
+      return n;
+    };
+    insert(snapshot.node, parent, snapshot.index);
+  }
   private add(type: 'raster' | 'group', name: string, parentId: string | undefined, index: number): LayerNode {
     const parent = parentId ? this.nodes.get(parentId) ?? null : null;
     const node: LayerNode = {

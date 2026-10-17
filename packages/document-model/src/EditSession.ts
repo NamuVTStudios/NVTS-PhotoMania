@@ -14,6 +14,8 @@ export interface EngineCtx {
   render: () => void;
   /** Si existe, las pinceladas lo usan para agrupar el refresco en 1 vez por frame (rAF). */
   scheduleRefresh?: () => void;
+  /** Notifica al historial del documento que se confirmó una acción de píxeles. */
+  onPixelHistory?: (label: string) => void;
 }
 
 /** Recompone los tiles sucios, sube a la GPU solo los de salida que cambiaron y dibuja. */
@@ -30,7 +32,8 @@ export function runEdit(
   if (!ctx.history.beginAction(layerId)) return;   // 1) abre la acción (arma la captura)
   try {
     edit(ctx.comp.layer(layerId)!);                // 2) edita: el motor guarda los píxeles previos solo
-    ctx.history.saveState(label);                  // 3) sella: solo los tiles que cambiaron
+    const changed = ctx.history.saveState(label);  // 3) sella: solo los tiles que cambiaron
+    if (changed) ctx.onPixelHistory?.(label);
   } catch (e) {
     ctx.history.cancelAction();                    // si algo falla, revierte lo editado
     throw e;
@@ -59,7 +62,7 @@ export class StrokeSession {
     if (this.ctx.scheduleRefresh) this.ctx.scheduleRefresh(); else refresh(this.ctx);
   }
   end(label = 'Pincel'): void {                    // pointerup
-    if (this.open) this.ctx.history.saveState(label);
+    if (this.open && this.ctx.history.saveState(label)) this.ctx.onPixelHistory?.(label);
     this.open = false;
   }
   cancel(): void {                                 // Escape durante el trazo
