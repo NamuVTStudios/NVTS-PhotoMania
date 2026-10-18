@@ -8,99 +8,151 @@ import {
   DocumentController, blendModeToManifest, StrokeSession, refresh, runEdit,
   type EngineCtx, type LayerNode,
 } from '@nvts/document-model';
-import { isPixelLayerType, type FilterKind, type LayerType, type VectorShape } from '@nvts/shared';
-import { openFromDisk, packNvtsPhoto, saveToDisk, unpackNvtsPhoto, listRecentProjects, loadRecentProject, rememberRecentProject, removeRecentProject, clearRecentProjects, supportsFileSystemAccess, rememberLinkedFile, getLinkedFile, type RecentProjectInfo } from '@nvts/storage';
+import { isPixelLayerType, type BlendMode, type FilterKind, type LayerType, type VectorShape, type TextLayerStyle, type TextLayerAlign } from '@nvts/shared';
+import { ADVANCED_TOOL_OPTIONS_PANEL_TEMPLATE, renderAdvancedToolOptionsPanel } from './panels/AdvancedToolOptionsPanel';
+import { HISTORY_PANEL_TEMPLATE, renderHistoryPanel } from './panels/HistoryPanel';
+import { LAYERS_PANEL_TEMPLATE, renderLayersPanel, wireLayersPanel } from './panels/LayersPanel';
+import { COMIC_MANAGER_PANEL_TEMPLATE, renderComicManagerPanel, type ComicConfig, type ComicPageEntry } from './panels/ComicManagerPanel';
+import { LAYER_EFFECTS_PANEL_TEMPLATE, wireLayerEffectsPanel } from './panels/LayerEffectsPanel';
+import { FILTER_PANEL_TEMPLATE, wireFilterPanel } from './panels/FilterPanel';
+import { VECTOR_EDITOR_PANEL_TEMPLATE, wireVectorEditorPanel, renderVectorEditorPanel } from './panels/VectorEditorPanel';
+import { PLUGINS_PANEL_TEMPLATE, wirePlugins, type PluginApi } from './panels/PluginsPanel';
+import { PREFERENCES_PANEL_TEMPLATE, initializePreferences, readPreferences, wirePreferences, type AppPreferences } from './panels/PreferencesPanel';
+import { openFromDisk, packNvtsPhoto, saveToDisk, unpackNvtsPhoto, listRecentProjects, loadRecentProject, rememberRecentProject, removeRecentProject, supportsFileSystemAccess, rememberLinkedFile, getLinkedFile, type RecentProjectInfo } from '@nvts/storage';
 
-type Tool = 'brush' | 'eraser' | 'eyedropper' | 'line' | 'rectangle' | 'ellipse' | 'fill' | 'hand';
+type Tool = 'brush' | 'eraser' | 'eyedropper' | 'line' | 'rectangle' | 'ellipse' | 'fill' | 'hand' | 'text' | 'vector-select';
 type ToolSettings = { size: number; opacity: number; hardness: number; spacing: number; smoothing: number; tolerance: number; contiguous: boolean; sampleMerged: boolean; shapeFill: boolean; lineCap: CanvasLineCap; lineJoin: CanvasLineJoin };
 const LOGO_URL = `${import.meta.env.BASE_URL}branding/photomania-icon.svg`;
 
-const PREFERENCES_KEY = 'nvts-photomania-preferences';
-type UiTheme = 'dark' | 'light';
-interface AppPreferences { rememberRecentProjects: boolean; theme: UiTheme }
-const DEFAULT_PREFERENCES: AppPreferences = { rememberRecentProjects: false, theme: 'dark' };
+interface TextToolSettings { fontFamily: string; fontSize: number; style: TextLayerStyle; color: string; align: TextLayerAlign; lineHeight: number; letterSpacing: number; strokeColor: string; strokeWidth: number; backgroundColor: string }
 
-function readPreferences(): AppPreferences {
+type WorkspaceId = 'general' | 'digital-illustration' | 'vector-illustration' | 'image-manipulation' | 'comics';
+const WORKSPACE_STORAGE_KEY = 'nvts-photomania-workspace-v1';
+const WORKSPACES: Array<{ id: WorkspaceId; label: string }> = [
+  { id: 'general', label: 'General' },
+  { id: 'digital-illustration', label: 'Ilustración digital' },
+  { id: 'vector-illustration', label: 'Ilustración vectorial' },
+  { id: 'image-manipulation', label: 'Manipulación de imágenes' },
+  { id: 'comics', label: 'Cómics' },
+];
+
+const COMIC_CONFIG_STORAGE_KEY = 'nvts-photomania-comic-config-v1';
+
+function readWorkspace(): WorkspaceId {
   try {
-    const raw = localStorage.getItem(PREFERENCES_KEY);
-    if (!raw) return { ...DEFAULT_PREFERENCES };
-    const parsed = JSON.parse(raw) as Partial<AppPreferences>;
-    return {
-      rememberRecentProjects: parsed.rememberRecentProjects === true,
-      theme: parsed.theme === 'light' ? 'light' : 'dark',
-    };
-  } catch { return { ...DEFAULT_PREFERENCES }; }
+    const value = localStorage.getItem(WORKSPACE_STORAGE_KEY);
+    return WORKSPACES.some((workspace) => workspace.id === value) ? value as WorkspaceId : 'general';
+  } catch { return 'general'; }
 }
-
-function writePreferences(prefs: AppPreferences): void {
-  try { localStorage.setItem(PREFERENCES_KEY, JSON.stringify(prefs)); }
-  catch (error) { console.warn('No se pudieron guardar las preferencias:', error); }
-  document.documentElement.dataset.theme = prefs.theme;
+function writeWorkspace(workspace: WorkspaceId): void {
+  try { localStorage.setItem(WORKSPACE_STORAGE_KEY, workspace); }
+  catch (error) { console.warn('No se pudo guardar el espacio de trabajo:', error); }
 }
-
-async function initializePreferences(): Promise<AppPreferences> {
-  let isFirstRun = false;
-  try { isFirstRun = localStorage.getItem(PREFERENCES_KEY) === null; } catch { /* preferencias predeterminadas */ }
-  const prefs = readPreferences();
-  if (isFirstRun) {
-    writePreferences(prefs);
-    // Las entradas generadas por versiones anteriores no se consideran consentimiento para guardar recientes.
-    await clearRecentProjects().catch((error) => console.warn('No se pudieron limpiar los recientes anteriores:', error));
-  }
-  document.documentElement.dataset.theme = prefs.theme;
-  return prefs;
+function safeComicFolderName(value: string, fallback: string): string {
+  const cleaned = value.trim().replace(/[<>:\"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/g, '').slice(0, 120);
+  return cleaned && cleaned !== '.' && cleaned !== '..' ? cleaned : fallback;
 }
-
-const PREFERENCES_TEMPLATE = `
-<section id="preferences-overlay" class="preferences-overlay" hidden>
-  <div class="preferences-dialog" role="dialog" aria-modal="true" aria-labelledby="preferences-title">
-    <header><div><strong id="preferences-title">Preferencias</strong><p>Personalizá NVTS PhotoMania.</p></div><button type="button" id="preferences-close" class="preferences-close" aria-label="Cerrar preferencias">×</button></header>
-    <div class="preferences-content">
-      <label class="preference-row" for="pref-recent-projects">
-        <span><strong>Guardar proyectos recientes</strong><small>Recordar documentos creados o abiertos en este navegador. Se guardan copias locales para poder recuperarlos.</small></span>
-        <input id="pref-recent-projects" type="checkbox" />
-      </label>
-      <div class="preference-row">
-        <span><strong>Tema de la interfaz</strong><small>Cambiá entre la apariencia oscura y la clara.</small></span>
-        <select id="pref-theme"><option value="dark">Tema oscuro</option><option value="light">Tema claro</option></select>
-      </div>
-      <p class="preferences-note">Al desactivar los proyectos recientes, PhotoMania borra las copias y la lista guardadas para esta función.</p>
-    </div>
-    <footer><button type="button" id="preferences-cancel">Cancelar</button><button type="button" class="primary" id="preferences-save">Guardar preferencias</button></footer>
-  </div>
-</section>`;
-
-function wirePreferences(root: HTMLElement, onSaved?: (next: AppPreferences, previous: AppPreferences) => void | Promise<void>): () => void {
-  const overlay = root.querySelector<HTMLElement>('#preferences-overlay')!;
-  const recent = root.querySelector<HTMLInputElement>('#pref-recent-projects')!;
-  const theme = root.querySelector<HTMLSelectElement>('#pref-theme')!;
-  const close = () => { overlay.hidden = true; };
-  const open = () => {
-    const current = readPreferences();
-    recent.checked = current.rememberRecentProjects;
-    theme.value = current.theme;
-    overlay.hidden = false;
-    root.querySelector<HTMLButtonElement>('#preferences-close')?.focus();
+function safeComicFileName(value: string, fallback = 'comic-page.nvtsphoto'): string {
+  let name = value.trim().replace(/[<>:\"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/g, '').slice(0, 200);
+  if (!name) name = fallback.replace(/\.nvtsphoto$/i, '');
+  if (!/\.nvtsphoto$/i.test(name)) name += '.nvtsphoto';
+  return name;
+}
+function defaultComicConfig(): ComicConfig {
+  return {
+    format: 'nvts-comic-config', version: 1, projectName: 'Mi cómic', projectDirectoryName: '', projectLocation: '',
+    pagesDirectoryName: 'páginas', exportDirectoryName: 'exportación', title: 'Mi cómic', author: '', readingDirection: 'ltr',
+    pageWidth: 1650, pageHeight: 2550, dpi: 300, bleedMm: 3, marginMm: 15, gutterMm: 5,
+    facingPages: true, pages: [], updatedAt: Date.now(),
   };
-  root.querySelector<HTMLButtonElement>('#b-preferences')?.addEventListener('click', open);
-  root.querySelector<HTMLButtonElement>('#home-preferences')?.addEventListener('click', open);
-  root.querySelector<HTMLButtonElement>('#preferences-close')?.addEventListener('click', close);
-  root.querySelector<HTMLButtonElement>('#preferences-cancel')?.addEventListener('click', close);
-  overlay.addEventListener('click', (event) => { if (event.target === overlay) close(); });
-  overlay.addEventListener('keydown', (event) => { if (event.key === 'Escape') close(); });
-  root.querySelector<HTMLButtonElement>('#preferences-save')?.addEventListener('click', () => {
-    const previous = readPreferences();
-    const next: AppPreferences = { rememberRecentProjects: recent.checked, theme: theme.value === 'light' ? 'light' : 'dark' };
-    writePreferences(next);
-    close();
-    void (async () => {
-      if (previous.rememberRecentProjects && !next.rememberRecentProjects) {
-        await clearRecentProjects().catch((error) => console.warn('No se pudieron borrar los proyectos recientes:', error));
-      }
-      await onSaved?.(next, previous);
-    })();
+}
+function normalizeComicConfig(input: unknown): ComicConfig {
+  if (!input || typeof input !== 'object') throw new Error('El archivo no contiene una configuración de cómic válida.');
+  const value = input as Partial<ComicConfig>;
+  if (value.format !== 'nvts-comic-config' || value.version !== 1 || !Array.isArray(value.pages)) {
+    throw new Error('El archivo debe ser una configuración NVTS de cómic (comicConfig.json, versión 1).');
+  }
+  const validDimension = (num: unknown, fallback: number) => Number.isFinite(Number(num)) && Number(num) >= 1 && Number(num) <= 16384 ? Math.round(Number(num)) : fallback;
+  const base = defaultComicConfig();
+  const pages: ComicPageEntry[] = value.pages.slice(0, 1000).map((rawPage, index) => {
+    const page = rawPage && typeof rawPage === 'object' ? rawPage as Partial<ComicPageEntry> : {};
+    const number = validDimension(page.number, index + 1);
+    return {
+      id: typeof page.id === 'string' && page.id ? page.id : crypto.randomUUID(),
+      number, name: typeof page.name === 'string' && page.name.trim() ? page.name.trim().slice(0, 160) : `Página ${number}`,
+      fileName: typeof page.fileName === 'string' ? page.fileName.slice(0, 240) : `comic-page-${String(number).padStart(3, '0')}.nvtsphoto`,
+      width: Math.min(8192, validDimension(page.width, base.pageWidth)), height: Math.min(8192, validDimension(page.height, base.pageHeight)),
+      notes: typeof page.notes === 'string' ? page.notes.slice(0, 4000) : '',
+    };
   });
-  return open;
+  return {
+    ...base,
+    projectName: typeof value.projectName === 'string' && value.projectName.trim() ? value.projectName.trim().slice(0, 160) : base.projectName,
+    projectDirectoryName: typeof value.projectDirectoryName === 'string' ? safeComicFolderName(value.projectDirectoryName, '') : '',
+    projectLocation: typeof value.projectLocation === 'string' ? value.projectLocation.slice(0, 320) : '',
+    pagesDirectoryName: typeof value.pagesDirectoryName === 'string' ? safeComicFolderName(value.pagesDirectoryName, 'páginas') : base.pagesDirectoryName,
+    exportDirectoryName: typeof value.exportDirectoryName === 'string' ? safeComicFolderName(value.exportDirectoryName, 'exportación') : base.exportDirectoryName,
+    title: typeof value.title === 'string' && value.title.trim() ? value.title.trim().slice(0, 160) : base.title,
+    author: typeof value.author === 'string' ? value.author.slice(0, 160) : '',
+    readingDirection: value.readingDirection === 'rtl' ? 'rtl' : 'ltr',
+    pageWidth: Math.min(8192, validDimension(value.pageWidth, base.pageWidth)), pageHeight: Math.min(8192, validDimension(value.pageHeight, base.pageHeight)),
+    dpi: validDimension(value.dpi, base.dpi),
+    bleedMm: Number.isFinite(Number(value.bleedMm)) ? Math.max(0, Math.min(100, Number(value.bleedMm))) : base.bleedMm,
+    marginMm: Number.isFinite(Number(value.marginMm)) ? Math.max(0, Math.min(500, Number(value.marginMm))) : base.marginMm,
+    gutterMm: Number.isFinite(Number(value.gutterMm)) ? Math.max(0, Math.min(500, Number(value.gutterMm))) : base.gutterMm,
+    facingPages: value.facingPages !== false, pages, updatedAt: Date.now(),
+  };
+}
+function readComicConfig(): ComicConfig {
+  try {
+    const raw = localStorage.getItem(COMIC_CONFIG_STORAGE_KEY);
+    return raw ? normalizeComicConfig(JSON.parse(raw)) : defaultComicConfig();
+  } catch { return defaultComicConfig(); }
+}
+
+const COMIC_HANDLE_DB = 'nvts-photomania-comic-project-handles-v1';
+const COMIC_HANDLE_STORE = 'handles';
+type DirectoryPickerWindow = Window & { showDirectoryPicker?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle> };
+
+function openComicHandleDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') { reject(new Error('IndexedDB no está disponible en este navegador.')); return; }
+    const request = indexedDB.open(COMIC_HANDLE_DB, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(COMIC_HANDLE_STORE)) request.result.createObjectStore(COMIC_HANDLE_STORE);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error('No se pudo abrir el almacenamiento del proyecto de cómic.'));
+  });
+}
+async function storeComicProjectDirectoryHandle(handle: FileSystemDirectoryHandle): Promise<void> {
+  const db = await openComicHandleDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(COMIC_HANDLE_STORE, 'readwrite');
+    tx.objectStore(COMIC_HANDLE_STORE).put(handle, 'project-root');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error('No se pudo recordar la carpeta del proyecto.'));
+    tx.onabort = () => reject(tx.error ?? new Error('No se pudo guardar la referencia a la carpeta.'));
+  }).finally(() => db.close());
+}
+async function readStoredComicProjectDirectoryHandle(): Promise<FileSystemDirectoryHandle | null> {
+  const db = await openComicHandleDatabase();
+  try {
+    return await new Promise<FileSystemDirectoryHandle | null>((resolve, reject) => {
+      const tx = db.transaction(COMIC_HANDLE_STORE, 'readonly');
+      const request = tx.objectStore(COMIC_HANDLE_STORE).get('project-root');
+      request.onsuccess = () => resolve((request.result as FileSystemDirectoryHandle | undefined) ?? null);
+      request.onerror = () => reject(request.error ?? new Error('No se pudo recuperar la carpeta del proyecto.'));
+    });
+  } finally { db.close(); }
+}
+async function writeFileHandleBytes(handle: FileSystemFileHandle, data: BlobPart): Promise<void> {
+  const writable = await handle.createWritable();
+  try { await writable.write(data); await writable.close(); }
+  catch (error) { await writable.abort(); throw error; }
+}
+function isNotFoundError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'NotFoundError';
 }
 
 function documentNameFromFile(fileName: string): string {
@@ -110,7 +162,7 @@ function documentNameFromFile(fileName: string): string {
 
 const MAIN_MENU = `<nav class="menus" aria-label="Menú principal">
     <div class="menu-wrap">
-      <button id="menu-file" aria-haspopup="menu" aria-expanded="false" aria-controls="file-menu-dropdown">Archivo</button>
+      <button id="menu-file" aria-haspopup="menu" aria-expanded="false" aria-controls="file-menu-dropdown">Archivo ▾</button>
       <div id="file-menu-dropdown" class="file-menu-dropdown" role="menu" aria-label="Archivo" hidden>
         <button id="b-new" class="menu-item" role="menuitem" type="button"><span>Nuevo proyecto</span><kbd>Ctrl+N</kbd></button>
         <button id="b-open" class="menu-item" role="menuitem" type="button"><span>Abrir archivo…</span><kbd>Ctrl+O</kbd></button>
@@ -120,14 +172,14 @@ const MAIN_MENU = `<nav class="menus" aria-label="Menú principal">
       </div>
     </div>
     <div class="menu-wrap">
-      <button id="menu-edit" aria-haspopup="menu" aria-expanded="false" aria-controls="edit-menu-dropdown">Editar</button>
+      <button id="menu-edit" aria-haspopup="menu" aria-expanded="false" aria-controls="edit-menu-dropdown">Editar ▾</button>
       <div id="edit-menu-dropdown" class="file-menu-dropdown" role="menu" aria-label="Editar" hidden>
         <button id="b-preferences" class="menu-item" role="menuitem" type="button"><span>Preferencias…</span><kbd></kbd></button>
       </div>
     </div>
     <button id="menu-image">Imagen</button><button id="menu-layer">Capa</button><button id="menu-select">Seleccionar</button><button id="menu-filter">Filtro</button>
     <div class="menu-wrap view-menu-wrap">
-      <button id="menu-view" aria-haspopup="menu" aria-expanded="false" aria-controls="view-menu-dropdown">Ver</button>
+      <button id="menu-view" aria-haspopup="menu" aria-expanded="false" aria-controls="view-menu-dropdown">Ver ▾</button>
       <div id="view-menu-dropdown" class="file-menu-dropdown" role="menu" aria-label="Ver" hidden>
         <button id="toggle-panels" class="menu-item" role="menuitem" type="button"><span>Mostrar paneles</span><kbd>Tab</kbd></button>
         <div class="menu-divider" role="separator"></div>
@@ -137,8 +189,28 @@ const MAIN_MENU = `<nav class="menus" aria-label="Menú principal">
             <button id="toggle-panel-advanced" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="true" type="button"><span>Opciones avanzadas de herramienta</span><span class="menu-check">✓</span></button>
             <button id="toggle-panel-history" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="true" type="button"><span>Historial</span><span class="menu-check">✓</span></button>
             <button id="toggle-panel-layers" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="true" type="button"><span>Capas</span><span class="menu-check">✓</span></button>
+            <button id="toggle-panel-comic" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="false" type="button"><span>Gestor de cómics</span><span class="menu-check"></span></button>
           </div>
         </div>
+        <div class="menu-subwrap">
+          <button id="menu-plugins" class="menu-item submenu-trigger" role="menuitem" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="plugins-menu-dropdown"><span>Plugins</span><span class="submenu-arrow">›</span></button>
+          <div id="plugins-menu-dropdown" class="file-menu-dropdown submenu-dropdown" role="menu" aria-label="Plugins" hidden>
+            <button id="plugins-manage" class="menu-item" role="menuitem" type="button"><span>Administrar plugins…</span></button>
+            <button id="plugins-install-menu" class="menu-item" role="menuitem" type="button"><span>Instalar plugin (.js)…</span></button>
+            <div class="menu-divider" role="separator"></div>
+            <div id="plugin-actions" class="plugin-actions"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="menu-wrap workspace-menu-wrap">
+      <button id="menu-workspace" aria-haspopup="menu" aria-expanded="false" aria-controls="workspace-menu-dropdown">Espacio de trabajo ▾</button>
+      <div id="workspace-menu-dropdown" class="file-menu-dropdown workspace-menu-dropdown" role="menu" aria-label="Espacios de trabajo" hidden>
+        <button class="menu-item workspace-menu-item" role="menuitemradio" aria-checked="true" data-workspace="general" type="button"><span>General</span><span class="menu-check">✓</span></button>
+        <button class="menu-item workspace-menu-item" role="menuitemradio" aria-checked="false" data-workspace="digital-illustration" type="button"><span>Ilustración digital</span><span class="menu-check"></span></button>
+        <button class="menu-item workspace-menu-item" role="menuitemradio" aria-checked="false" data-workspace="vector-illustration" type="button"><span>Ilustración vectorial</span><span class="menu-check"></span></button>
+        <button class="menu-item workspace-menu-item" role="menuitemradio" aria-checked="false" data-workspace="image-manipulation" type="button"><span>Manipulación de imágenes</span><span class="menu-check"></span></button>
+        <button class="menu-item workspace-menu-item" role="menuitemradio" aria-checked="false" data-workspace="comics" type="button"><span>Cómics</span><span class="menu-check"></span></button>
       </div>
     </div>
     <button id="menu-help">Ayuda</button>
@@ -152,53 +224,28 @@ const TEMPLATE = `
 </header>
 <div class="tool-options"><strong id="tool-current-label">Pincel</strong><div id="toolbar" class="toolbar"></div><span id="status" role="status"></span></div>
 <main class="workspace">
-  <aside class="tools-rail" aria-label="Herramientas"><button id="rail-hand" title="Mover lienzo (H / barra espaciadora)">✋</button><button id="rail-brush" class="selected" title="Pincel (B)">✎</button><button id="rail-eraser" title="Borrador (E)">⌫</button><button id="rail-line" title="Línea (L)">／</button><button id="rail-rectangle" title="Rectángulo (R)">▱</button><button id="rail-ellipse" title="Elipse (O)">◯</button><button id="rail-fill" title="Relleno (G)">▨</button><button id="rail-eyedropper" title="Cuentagotas (I)">⌁</button><div class="swatches"><span id="foreground-swatch"></span><span></span></div></aside>
-  <section class="canvas-area"><div class="canvas-label"><span id="canvas-name">Sin título</span><span id="canvas-meta">1280 × 720 px · RGB/8</span></div><div class="canvas-stage"><canvas id="canvas"></canvas><canvas id="tool-preview" aria-hidden="true"></canvas></div><div class="zoom-controls"><button id="zoom-out" title="Alejar">−</button><span id="zoom-value">Ajustar</span><button id="zoom-in" title="Acercar">+</button><button id="zoom-fit">⛶ Ajustar</button></div></section>
+  <aside class="tools-rail" aria-label="Herramientas">
+    <button id="rail-hand" aria-label="Mover lienzo" title="Mover lienzo (H / barra espaciadora)"><span class="tool-icon tool-icon--hand" aria-hidden="true"></span></button>
+    <button id="rail-brush" class="selected" aria-label="Pincel" title="Pincel (B)"><span class="tool-icon tool-icon--brush" aria-hidden="true"></span></button>
+    <button id="rail-eraser" aria-label="Borrador" title="Borrador (E)"><span class="tool-icon tool-icon--eraser" aria-hidden="true"></span></button>
+    <button id="rail-line" aria-label="Línea" title="Línea (L)"><span class="tool-icon tool-icon--line" aria-hidden="true"></span></button>
+    <button id="rail-rectangle" aria-label="Rectángulo" title="Rectángulo (R)"><span class="tool-icon tool-icon--rectangle" aria-hidden="true"></span></button>
+    <button id="rail-ellipse" aria-label="Elipse" title="Elipse (O)"><span class="tool-icon tool-icon--ellipse" aria-hidden="true"></span></button>
+    <button id="rail-fill" aria-label="Bote de pintura" title="Relleno (G)"><span class="tool-icon tool-icon--fill" aria-hidden="true"></span></button>
+    <button id="rail-eyedropper" aria-label="Cuentagotas" title="Cuentagotas (I)"><span class="tool-icon tool-icon--eyedropper" aria-hidden="true"></span></button>
+    <button id="rail-text" aria-label="Texto" title="Texto (T)"><span class="tool-icon tool-icon--text" aria-hidden="true"></span></button>
+    <button id="rail-vector-select" aria-label="Seleccionar objeto vectorial" title="Seleccionar objeto vectorial (V)"><span class="tool-icon tool-icon--vector-select" aria-hidden="true"></span></button>
+    <div class="swatches"><span id="foreground-swatch"></span><span></span></div>
+  </aside>
+  <section class="canvas-area"><div class="canvas-label"><span id="canvas-name">Sin título</span><span id="canvas-meta">1280 × 720 px · RGB/8</span></div><div class="canvas-stage"><canvas id="canvas"></canvas><canvas id="tool-preview" aria-hidden="true"></canvas></div><div class="zoom-controls"><button id="zoom-out" title="Alejar" aria-label="Alejar"><span class="tool-icon tool-icon--zoom-out" aria-hidden="true"></span></button><span id="zoom-value">Ajustar</span><button id="zoom-in" title="Acercar" aria-label="Acercar"><span class="tool-icon tool-icon--zoom-in" aria-hidden="true"></span></button><button id="zoom-fit" title="Ajustar al lienzo"><span class="tool-icon tool-icon--zoom-fit" aria-hidden="true"></span><span>Ajustar</span></button></div></section>
   <aside class="right-dock">
-    <section class="dock-panel advanced-tool-panel"><header><strong>Opciones avanzadas de herramienta</strong><div class="panel-spacer"></div></header><div id="advanced-tool-options" class="advanced-tool-options"></div></section>
-    <section class="dock-panel history-panel"><header><span>⌄</span><strong>Historial</strong><span id="history-count" class="count">0</span><div class="panel-spacer"></div></header><div id="history-list" class="history-list"></div></section>
-    <section class="dock-panel layers-panel"><header><strong>Capas</strong><div class="panel-spacer"></div><select id="dock-blend" aria-label="Modo de fusión"><option value="normal">Normal</option><option value="multiply">Multiplicar</option><option value="screen">Trama</option><option value="overlay">Superponer</option></select></header>
-      <div class="layer-props"><label>Opacidad <input id="layer-opacity" type="number" min="0" max="100" value="100"/>%</label><button id="l-fill-color" type="button" hidden>Color de relleno…</button><button id="l-filter-options" type="button" hidden>Configurar filtro…</button><button id="l-vector-add" type="button" hidden>Agregar figura…</button></div>
-      <div id="layers"></div><div class="layer-empty" id="layer-empty">◇<strong>Capas</strong><span>Seleccioná una capa o creá una nueva.</span></div>
-      <footer><button id="l-up" title="Subir capa">↑</button><button id="l-down" title="Bajar capa">↓</button><button id="l-duplicate" title="Duplicar capa">▣+</button><button id="l-del" title="Eliminar capa">▤−</button><button id="l-add" class="primary">＋ Nueva capa</button>
-        <div id="layer-create-menu" class="layer-create-menu" hidden>
-          <button type="button" data-layer-type="paint">✎ &nbsp; Capa de pintura</button>
-          <button type="button" data-layer-type="filter">◐ &nbsp; Capa de filtro</button>
-          <button type="button" data-layer-type="fill">◧ &nbsp; Capa de relleno…</button>
-          <button type="button" data-layer-type="file">▧ &nbsp; Capa de archivo…</button>
-          <button type="button" data-layer-type="vector">◇ &nbsp; Capa vectorial</button>
-          <button type="button" data-layer-type="group">▱ &nbsp; Grupo</button>
-        </div>
-      </footer>
-    </section>
+${ADVANCED_TOOL_OPTIONS_PANEL_TEMPLATE}
+${HISTORY_PANEL_TEMPLATE}
+${LAYERS_PANEL_TEMPLATE}
+${COMIC_MANAGER_PANEL_TEMPLATE}
   </aside>
 </main>
-<section id="effects-panel" class="editor-panel" hidden><header><strong>✧ Estilos de capa</strong><span id="effects-layer-name"></span><button class="panel-close" data-close="effects-panel">×</button></header><div class="editor-content"><aside class="editor-list"><button class="active">□ Trazo</button><button>□ Superposición de colores</button><button>□ Superposición de degradados</button><button>□ Resplandor exterior</button><button>□ Bisel y relieve</button></aside><div class="editor-settings"><strong>Trazo</strong><label>Tamaño <input type="range" min="1" max="40" value="3"/><output>3 px</output></label><label>Opacidad <input type="range" min="0" max="100" value="100"/><output>100%</output></label><label>Posición <select><option>Exterior</option><option>Interior</option><option>Centro</option></select></label><label>Color <input type="color" value="#000000"/></label></div></div><footer><span>Vista previa en vivo</span><button data-close="effects-panel">Cancelar</button><button class="primary" id="effects-apply">Aplicar</button></footer></section>
-<section id="filters-panel" class="editor-panel" hidden><header><strong>⚒ Filtros</strong><span id="filters-layer-name"></span><button class="panel-close" data-close="filters-panel">×</button></header><div class="editor-content"><aside class="editor-list"><button class="active" data-filter="grayscale">Escala de grises</button><button data-filter="invert">Invertir colores</button><button data-filter="sepia">Sepia</button><button data-filter="blur">Desenfoque gaussiano</button><button data-filter="brightness">Brillo</button><button data-filter="contrast">Contraste</button></aside><div class="editor-settings"><strong id="filter-title">Escala de grises</strong><label>Intensidad <input id="filter-radius" type="range" min="1" max="100" value="100"/><output id="filter-radius-value">100%</output></label><p class="hint" id="filter-hint">En una capa de filtro, el ajuste queda editable y afecta a las capas que están debajo.</p></div></div><footer><span id="filter-mode-hint">Ajuste no destructivo</span><button data-close="filters-panel">Cancelar</button><button class="primary" id="filter-apply">Aplicar</button></footer></section>
-<section id="vector-panel" class="editor-panel vector-panel" hidden>
-  <header><strong>◇ Editor vectorial</strong><span id="vector-layer-name"></span><button class="panel-close" id="vector-close" type="button" aria-label="Cerrar editor vectorial">×</button></header>
-  <div class="vector-editor-grid">
-    <aside class="editor-list" id="vector-shape-list" aria-label="Objetos vectoriales"></aside>
-    <div class="editor-settings">
-      <div class="vector-add-row">
-        <button type="button" data-vector-add="rectangle">Rectángulo</button><button type="button" data-vector-add="rounded-rectangle">Rect. redondeado</button><button type="button" data-vector-add="ellipse">Elipse</button><button type="button" data-vector-add="line">Línea</button>
-        <button type="button" data-vector-add="polygon">Polígono</button><button type="button" data-vector-add="polyline">Polilínea</button><button type="button" data-vector-add="bezier">Curva Bézier</button><button type="button" data-vector-add="freehand">Trazo libre</button>
-        <button type="button" data-vector-add="star">Estrella</button><button type="button" data-vector-add="spiral">Espiral</button><button type="button" data-vector-add="text">Texto artístico</button>
-      </div>
-      <p class="hint">Los objetos mantienen sus datos vectoriales editables; el rasterizado se usa como vista previa del compositor. Seleccioná un objeto para editar geometría, nodos, colores, trazo y texto.</p>
-      <div class="vector-fields">
-        <label>Tipo <select id="vector-kind"><option value="rectangle">Rectángulo</option><option value="rounded-rectangle">Rectángulo redondeado</option><option value="ellipse">Elipse</option><option value="line">Línea</option><option value="polygon">Polígono</option><option value="polyline">Polilínea</option><option value="bezier">Curva Bézier</option><option value="freehand">Trazo libre</option><option value="star">Estrella</option><option value="spiral">Espiral</option><option value="text">Texto artístico</option></select></label>
-        <label>X <input id="vector-x" type="number" step="1"/></label><label>Y <input id="vector-y" type="number" step="1"/></label><label>Ancho <input id="vector-width" type="number" min="1" step="1"/></label><label>Alto <input id="vector-height" type="number" min="1" step="1"/></label><label>Rotación (°) <input id="vector-rotation" type="number" min="-360" max="360" step="1"/></label>
-        <label>Relleno <input id="vector-color" type="color" value="#e03030"/></label><label>Trazo <input id="vector-stroke-color" type="color" value="#e03030"/></label><label>Opacidad <input id="vector-opacity" type="range" min="0" max="100" value="100"/><output id="vector-opacity-value">100%</output></label><label>Grosor (px) <input id="vector-stroke" type="number" min="0" max="500" value="4"/></label>
-        <label>Relleno <select id="vector-fill-enabled"><option value="yes">Activado</option><option value="no">Sin relleno</option></select></label><label>Trazo <select id="vector-stroke-enabled"><option value="yes">Activado</option><option value="no">Sin trazo</option></select></label><label>Estilo de trazo <select id="vector-dash"><option value="solid">Continuo</option><option value="dash">Guiones</option><option value="dot">Punteado</option></select></label><label>Extremos de línea <select id="vector-line-cap"><option value="round">Redondeados</option><option value="butt">Rectos</option><option value="square">Cuadrados</option></select></label><label>Unión de línea <select id="vector-line-join"><option value="round">Redondeada</option><option value="miter">En punta</option><option value="bevel">Biselada</option></select></label><label>Radio de esquina <input id="vector-corner-radius" type="number" min="0" max="500" value="20"/></label><label>Puntas de estrella <input id="vector-star-points" type="number" min="3" max="64" value="5"/></label>
-        <label>Texto <input id="vector-text" type="text" value="Texto vectorial" maxlength="500"/></label><label>Familia tipográfica <select id="vector-font-family"><option>Arial</option><option>Inter</option><option>Georgia</option><option>Times New Roman</option><option>Verdana</option><option>monospace</option></select></label><label>Tamaño de letra <input id="vector-font-size" type="number" min="1" max="2000" value="64"/></label><label>Estilo <select id="vector-font-style"><option value="normal">Normal</option><option value="italic">Itálica</option></select></label><label>Grosor tipográfico <select id="vector-font-weight"><option value="normal">Normal</option><option value="bold">Negrita</option></select></label><label>Alineación <select id="vector-text-align"><option value="left">Izquierda</option><option value="center">Centro</option><option value="right">Derecha</option></select></label>
-        <label class="vector-points-field">Nodos / puntos (JSON) <textarea id="vector-points" rows="5" spellcheck="false" placeholder='[{"x":100,"y":100},{"x":300,"y":200}]'></textarea></label>
-      </div>
-      <div class="vector-object-actions"><button type="button" id="vector-duplicate-shape">Duplicar objeto</button><button type="button" id="vector-shape-up">Subir objeto</button><button type="button" id="vector-shape-down">Bajar objeto</button><button type="button" id="vector-export-svg">Exportar SVG…</button><button id="vector-delete-shape" type="button" class="danger-button">Eliminar objeto</button></div>
-    </div>
-  </div>
-  <footer><span>Las modificaciones se registran como una acción de historial al aplicar.</span><button id="vector-cancel" type="button">Cancelar</button><button id="vector-clear" type="button">Vaciar capa</button><button id="vector-apply" class="primary" type="button">Aplicar cambios</button></footer>
-</section>`;
+${LAYER_EFFECTS_PANEL_TEMPLATE}${FILTER_PANEL_TEMPLATE}${VECTOR_EDITOR_PANEL_TEMPLATE}`;
 
 type TemplateDef = { id:string; title:string; category:string; width:number; height:number; icon:string; preview:string };
 const TEMPLATES: TemplateDef[] = [
@@ -262,8 +309,19 @@ export class App {
   private ctl!: DocumentController;
   private ctx!: EngineCtx;
   private fileHandle: FileSystemFileHandle | null = null;
+  private workspace: WorkspaceId = readWorkspace();
+  private comicConfig: ComicConfig = readComicConfig();
+  private comicActivePageId: string | null = this.comicConfig.pages[0]?.id ?? null;
+  private comicParentDirectoryHandle: FileSystemDirectoryHandle | null = null;
+  private comicProjectDirectoryHandle: FileSystemDirectoryHandle | null = null;
+  private comicPagesDirectoryHandle: FileSystemDirectoryHandle | null = null;
+  private comicExportDirectoryHandle: FileSystemDirectoryHandle | null = null;
+  private comicConfigWriteChain: Promise<void> = Promise.resolve();
   private activeId = '';
   private tool: Tool = 'brush';
+  private textSettings: TextToolSettings = { fontFamily: 'Arial', fontSize: 64, style: 'normal', color: '#e03030', align: 'left', lineHeight: 1.2, letterSpacing: 0, strokeColor: '#000000', strokeWidth: 0, backgroundColor: 'transparent' };
+  private vectorDirectSelectedId: string | null = null;
+  private vectorGesture: { layerId: string; shapeId: string; mode: 'move' | 'resize'; startPoint: { x: number; y: number }; original: VectorShape; latest: VectorShape; moved: boolean } | null = null;
   private brush: ToolSettings & { rgb: [number, number, number] } = { rgb: [224, 48, 48], size: 24, opacity: 100, hardness: 80, spacing: 15, smoothing: 0, tolerance: 24, contiguous: true, sampleMerged: false, shapeFill: false, lineCap: 'round', lineJoin: 'round' };
   private stroke: StrokeSession | null = null;
   private strokeLayer: ReturnType<DocumentController['layerPixels']> = null;
@@ -295,7 +353,8 @@ export class App {
     // La pantalla de bienvenida no inicializa el motor Wasm hasta que el usuario abre/crea un documento.
     await initializePreferences();
     root.innerHTML = HOME_TEMPLATE;
-    root.insertAdjacentHTML('beforeend', PREFERENCES_TEMPLATE);
+    root.insertAdjacentHTML('beforeend', PREFERENCES_PANEL_TEMPLATE);
+    root.insertAdjacentHTML('beforeend', PLUGINS_PANEL_TEMPLATE);
     let openPreferences: () => void = () => {};
     let selected = TEMPLATES.find((t) => t.id === 'full-hd')!;
     let width = selected.width;
@@ -396,6 +455,7 @@ export class App {
       }
     };
     openPreferences = wirePreferences(root, async () => { await refreshRecent(); });
+    wirePlugins(root);
     const renderTemplates = () => {
       const cat = category.value;
       const items = TEMPLATES.filter((t) => cat === 'Todas' || t.category === cat);
@@ -425,7 +485,8 @@ export class App {
       homeStatus.textContent = 'Iniciando PhotoMania…';
       try {
         root.innerHTML = TEMPLATE;
-        root.insertAdjacentHTML('beforeend', PREFERENCES_TEMPLATE);
+        root.insertAdjacentHTML('beforeend', PREFERENCES_PANEL_TEMPLATE);
+        root.insertAdjacentHTML('beforeend', PLUGINS_PANEL_TEMPLATE);
         let appInstance: App | null = null;
         wirePreferences(root, async (next, previous) => {
           if (!previous.rememberRecentProjects && next.rememberRecentProjects) appInstance?.queueRecentSnapshot();
@@ -461,6 +522,7 @@ export class App {
     const homeMenus = [
       { button: root.querySelector<HTMLButtonElement>('#menu-file')!, dropdown: root.querySelector<HTMLElement>('#file-menu-dropdown')! },
       { button: root.querySelector<HTMLButtonElement>('#menu-edit')!, dropdown: root.querySelector<HTMLElement>('#edit-menu-dropdown')! },
+      { button: root.querySelector<HTMLButtonElement>('#menu-workspace')!, dropdown: root.querySelector<HTMLElement>('#workspace-menu-dropdown')! },
     ];
     const closeHomeMenu = (menu: typeof homeMenus[number]) => { menu.dropdown.hidden = true; menu.button.setAttribute('aria-expanded', 'false'); };
     for (const menu of homeMenus) {
@@ -472,7 +534,7 @@ export class App {
         menu.button.setAttribute('aria-expanded', String(willOpen));
       });
       menu.dropdown.addEventListener('click', (event) => {
-        if ((event.target as HTMLElement).closest('button[role="menuitem"]')) closeHomeMenu(menu);
+        if ((event.target as HTMLElement).closest('button[role^="menuitem"]')) closeHomeMenu(menu);
       });
       menu.dropdown.addEventListener('keydown', (event) => {
         if (event.key === 'Escape') { closeHomeMenu(menu); menu.button.focus(); }
@@ -484,6 +546,18 @@ export class App {
         if (!menu.dropdown.contains(event.target as Node) && !menu.button.contains(event.target as Node)) closeHomeMenu(menu);
       });
     });
+    const refreshHomeWorkspaceMenu = () => root.querySelectorAll<HTMLButtonElement>('[data-workspace]').forEach((button) => {
+      const active = button.dataset.workspace === readWorkspace();
+      button.setAttribute('aria-checked', String(active));
+      const check = button.querySelector<HTMLElement>('.menu-check'); if (check) check.textContent = active ? '✓' : '';
+    });
+    root.querySelectorAll<HTMLButtonElement>('[data-workspace]').forEach((button) => button.addEventListener('click', () => {
+      const candidate = button.dataset.workspace as WorkspaceId;
+      if (!WORKSPACES.some((entry) => entry.id === candidate)) return;
+      writeWorkspace(candidate); refreshHomeWorkspaceMenu();
+      homeStatus.textContent = `Espacio de trabajo «${WORKSPACES.find((entry) => entry.id === candidate)?.label ?? candidate}» seleccionado. Se aplicará al abrir un documento.`;
+    }));
+    refreshHomeWorkspaceMenu();
     root.querySelector<HTMLButtonElement>('#b-new')!.onclick = () => showSection('new');
     root.querySelector<HTMLButtonElement>('#b-open')!.onclick = () => { showSection('open'); root.querySelector<HTMLInputElement>('#home-file-input')!.click(); };
     root.querySelector<HTMLButtonElement>('#b-save')!.disabled = true;
@@ -582,7 +656,9 @@ export class App {
     }
     return undefined;
   }
-  private active(): LayerNode | undefined { return this.ctl.find(this.activeId); }
+  // Durante el arranque bind() construye la barra antes de crear el documento.
+  // En ese momento todavía no existe ctl; una herramienta puede consultar la capa activa.
+  private active(): LayerNode | undefined { return this.ctl ? this.ctl.find(this.activeId) : undefined; }
 
   // ───────────── Refresco ─────────────
 
@@ -706,6 +782,483 @@ export class App {
     this.renderer.render();
   }
 
+  private applyWorkspace(workspace: WorkspaceId, announce = true): void {
+    if (!WORKSPACES.some((entry) => entry.id === workspace)) workspace = 'general';
+    this.workspace = workspace;
+    writeWorkspace(workspace);
+    const panel = <T extends HTMLElement = HTMLElement>(selector: string): T | null => this.root.querySelector<T>(selector);
+    const advanced = panel('.advanced-tool-panel');
+    const history = panel('.history-panel');
+    const layers = panel('.layers-panel');
+    const comic = panel('.comic-manager-panel');
+    const dock = panel('.right-dock');
+    if (!advanced || !history || !layers || !comic || !dock) return;
+    const presets: Record<WorkspaceId, { visible: { advanced: boolean; history: boolean; layers: boolean; comic: boolean }; order: string[] }> = {
+      general: { visible: { advanced: true, history: true, layers: true, comic: false }, order: ['advanced', 'history', 'layers', 'comic'] },
+      'digital-illustration': { visible: { advanced: true, history: true, layers: true, comic: false }, order: ['advanced', 'layers', 'history', 'comic'] },
+      'vector-illustration': { visible: { advanced: true, history: true, layers: true, comic: false }, order: ['layers', 'advanced', 'history', 'comic'] },
+      'image-manipulation': { visible: { advanced: true, history: true, layers: true, comic: false }, order: ['layers', 'history', 'advanced', 'comic'] },
+      comics: { visible: { advanced: true, history: true, layers: true, comic: true }, order: ['comic', 'layers', 'history', 'advanced'] },
+    };
+    const preset = presets[workspace];
+    advanced.hidden = !preset.visible.advanced;
+    history.hidden = !preset.visible.history;
+    layers.hidden = !preset.visible.layers;
+    comic.hidden = !preset.visible.comic;
+    const panels: Record<string, HTMLElement> = { advanced, history, layers, comic };
+    preset.order.forEach((id, index) => { panels[id].style.order = String(index); });
+    dock.dataset.workspace = workspace;
+    dock.classList.remove('panels-hidden');
+    dock.classList.toggle('panels-empty', !preset.visible.advanced && !preset.visible.history && !preset.visible.layers && !preset.visible.comic);
+    this.root.querySelectorAll<HTMLButtonElement>('[data-workspace]').forEach((button) => {
+      const selected = button.dataset.workspace === workspace;
+      button.setAttribute('aria-checked', String(selected));
+      const check = button.querySelector<HTMLElement>('.menu-check'); if (check) check.textContent = selected ? '✓' : '';
+    });
+    const viewDrop = panel('#view-menu-dropdown');
+    const panelsDrop = panel('#panels-menu-dropdown');
+    if (viewDrop && panelsDrop) {
+      const entries = [
+        ['#toggle-panel-advanced', advanced], ['#toggle-panel-history', history], ['#toggle-panel-layers', layers], ['#toggle-panel-comic', comic],
+      ] as const;
+      for (const [buttonSelector, panelElement] of entries) {
+        const button = panel<HTMLButtonElement>(buttonSelector);
+        if (!button) continue;
+        button.setAttribute('aria-checked', String(!panelElement.hidden));
+        const check = button.querySelector<HTMLElement>('.menu-check'); if (check) check.textContent = !panelElement.hidden ? '✓' : '';
+      }
+      const toggle = panel<HTMLButtonElement>('#toggle-panels');
+      toggle?.setAttribute('aria-pressed', 'true');
+    }
+    if (announce) {
+      const label = WORKSPACES.find((entry) => entry.id === workspace)?.label ?? 'General';
+      const status = panel<HTMLElement>('#status');
+      if (status) status.textContent = `Espacio de trabajo: ${label}`;
+    }
+  }
+
+  private readComicFields(): void {
+    const get = (id: string) => this.root.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`);
+    const projectName = get('comic-project-name') as HTMLInputElement | null;
+    const title = get('comic-title') as HTMLInputElement | null;
+    const author = get('comic-author') as HTMLInputElement | null;
+    const direction = get('comic-direction') as HTMLSelectElement | null;
+    const width = get('comic-page-width') as HTMLInputElement | null;
+    const height = get('comic-page-height') as HTMLInputElement | null;
+    const dpi = get('comic-dpi') as HTMLInputElement | null;
+    const bleed = get('comic-bleed') as HTMLInputElement | null;
+    const margin = get('comic-margin') as HTMLInputElement | null;
+    const gutter = get('comic-gutter') as HTMLInputElement | null;
+    const facing = this.root.querySelector<HTMLInputElement>('#comic-facing-pages');
+    const bounded = (value: string | undefined, fallback: number, min: number, max: number) => {
+      const number = Number(value);
+      return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback;
+    };
+    this.comicConfig.projectName = (projectName?.value.trim() || 'Mi cómic').slice(0, 160);
+    if (!this.comicProjectDirectoryHandle && this.comicParentDirectoryHandle) {
+      this.comicConfig.projectLocation = `${this.comicParentDirectoryHandle.name}/${safeComicFolderName(this.comicConfig.projectName, 'Mi cómic')}`;
+    }
+    this.comicConfig.title = (title?.value.trim() || 'Mi cómic').slice(0, 160);
+    this.comicConfig.author = (author?.value ?? '').slice(0, 160);
+    this.comicConfig.readingDirection = direction?.value === 'rtl' ? 'rtl' : 'ltr';
+    this.comicConfig.pageWidth = Math.round(bounded(width?.value, this.comicConfig.pageWidth, 1, 8192));
+    this.comicConfig.pageHeight = Math.round(bounded(height?.value, this.comicConfig.pageHeight, 1, 8192));
+    this.comicConfig.dpi = Math.round(bounded(dpi?.value, this.comicConfig.dpi, 72, 1200));
+    this.comicConfig.bleedMm = bounded(bleed?.value, this.comicConfig.bleedMm, 0, 100);
+    this.comicConfig.marginMm = bounded(margin?.value, this.comicConfig.marginMm, 0, 500);
+    this.comicConfig.gutterMm = bounded(gutter?.value, this.comicConfig.gutterMm, 0, 500);
+    this.comicConfig.facingPages = facing?.checked ?? this.comicConfig.facingPages;
+    this.comicConfig.updatedAt = Date.now();
+  }
+
+  private persistComicConfig(message = 'Configuración guardada en este navegador.'): void {
+    this.comicConfig.updatedAt = Date.now();
+    try {
+      localStorage.setItem(COMIC_CONFIG_STORAGE_KEY, JSON.stringify(this.comicConfig));
+      const status = this.root.querySelector<HTMLElement>('#comic-config-status');
+      if (status) status.textContent = message;
+    } catch (error) {
+      const status = this.root.querySelector<HTMLElement>('#comic-config-status');
+      if (status) status.textContent = 'No se pudo guardar localmente';
+      console.warn('No se pudo guardar la configuración de cómic:', error);
+    }
+    if (this.comicProjectDirectoryHandle) {
+      const snapshot = JSON.stringify({ ...this.comicConfig, format: 'nvts-comic-config', version: 1 }, null, 2);
+      this.comicConfigWriteChain = this.comicConfigWriteChain
+        .then(async () => {
+          const written = await this.writeComicConfigSnapshot(snapshot, false, false);
+          if (!written) {
+            const status = this.root.querySelector<HTMLElement>('#comic-config-status');
+            if (status) status.textContent = 'Cambios guardados localmente; falta permiso para actualizar comicConfig.json en disco.';
+          }
+        })
+        .catch((error: unknown) => {
+          const status = this.root.querySelector<HTMLElement>('#comic-config-status');
+          if (status) status.textContent = error instanceof Error ? `Error guardando comicConfig.json: ${error.message}` : 'Error guardando comicConfig.json';
+          console.warn('No se pudo actualizar comicConfig.json en disco:', error);
+        });
+    }
+  }
+
+  private async writeComicConfigSnapshot(snapshot: string, requestPermission: boolean, updateStatus: boolean): Promise<boolean> {
+    const root = this.comicProjectDirectoryHandle;
+    if (!root) return false;
+    let permission = await root.queryPermission({ mode: 'readwrite' });
+    if (permission !== 'granted' && requestPermission) permission = await root.requestPermission({ mode: 'readwrite' });
+    if (permission !== 'granted') {
+      if (updateStatus) {
+        const status = this.root.querySelector<HTMLElement>('#comic-config-status');
+        if (status) status.textContent = 'Se requiere volver a autorizar la carpeta del proyecto.';
+      }
+      return false;
+    }
+    const configFile = await root.getFileHandle('comicConfig.json', { create: true });
+    await writeFileHandleBytes(configFile, new Blob([snapshot], { type: 'application/json;charset=utf-8' }));
+    if (updateStatus) {
+      const status = this.root.querySelector<HTMLElement>('#comic-config-status');
+      if (status) status.textContent = `Guardado: ${root.name}/comicConfig.json`;
+    }
+    return true;
+  }
+
+  private async writeComicConfigToProject(requestPermission = false): Promise<boolean> {
+    // Wait for any background autosave queued by persistComicConfig to finish before writing again.
+    await this.comicConfigWriteChain;
+    const snapshot = JSON.stringify({ ...this.comicConfig, format: 'nvts-comic-config', version: 1 }, null, 2);
+    const written = await this.writeComicConfigSnapshot(snapshot, requestPermission, true);
+    if (written) {
+      try { await storeComicProjectDirectoryHandle(this.comicProjectDirectoryHandle!); }
+      catch (error) { console.warn('No se pudo recordar el proyecto de cómic:', error); }
+    }
+    return written;
+  }
+
+  private async activateComicProjectDirectory(root: FileSystemDirectoryHandle, loadFromDisk: boolean, requestPermission: boolean): Promise<void> {
+    let permission = await root.queryPermission({ mode: 'readwrite' });
+    if (permission !== 'granted' && requestPermission) permission = await root.requestPermission({ mode: 'readwrite' });
+    if (permission !== 'granted') throw new Error('El navegador no concedió permiso de lectura y escritura para la carpeta elegida.');
+    this.comicProjectDirectoryHandle = root;
+    if (loadFromDisk) {
+      try {
+        const configHandle = await root.getFileHandle('comicConfig.json');
+        const configFile = await configHandle.getFile();
+        this.comicConfig = normalizeComicConfig(JSON.parse(await configFile.text()) as unknown);
+        this.comicActivePageId = this.comicConfig.pages[0]?.id ?? null;
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
+      }
+    }
+    this.comicConfig.projectDirectoryName = root.name;
+    if (!this.comicConfig.projectName.trim()) this.comicConfig.projectName = root.name;
+    if (!this.comicConfig.projectLocation) this.comicConfig.projectLocation = root.name;
+    this.comicPagesDirectoryHandle = await root.getDirectoryHandle(this.comicConfig.pagesDirectoryName || 'páginas', { create: true });
+    this.comicExportDirectoryHandle = await root.getDirectoryHandle(this.comicConfig.exportDirectoryName || 'exportación', { create: true });
+    await storeComicProjectDirectoryHandle(root).catch((error) => console.warn('No se pudo recordar la carpeta del proyecto:', error));
+    this.renderComicManager();
+    this.persistComicConfig(`Proyecto vinculado: ${root.name}`);
+    await this.writeComicConfigToProject(false);
+  }
+
+  private async restoreComicProjectDirectory(): Promise<void> {
+    try {
+      const root = await readStoredComicProjectDirectoryHandle();
+      if (!root) return;
+      this.comicProjectDirectoryHandle = root;
+      const permission = await root.queryPermission({ mode: 'readwrite' });
+      if (permission === 'granted') {
+        await this.activateComicProjectDirectory(root, true, false);
+      } else {
+        const location = this.root.querySelector<HTMLInputElement>('#comic-project-location');
+        if (location) location.value = `Proyecto recordado: ${root.name} (permiso pendiente)`;
+        const status = this.root.querySelector<HTMLElement>('#comic-config-status');
+        if (status) status.textContent = 'Carpeta recordada. Usá “Vincular proyecto existente…” para volver a autorizarla.';
+      }
+    } catch (error) {
+      console.warn('No se pudo reconectar el directorio del proyecto de cómic:', error);
+    }
+  }
+
+  private async chooseComicParentDirectory(): Promise<void> {
+    const picker = (window as DirectoryPickerWindow).showDirectoryPicker;
+    if (!picker) throw new Error('Este navegador no permite elegir carpetas. Usá una versión reciente de Chrome o Edge en localhost o HTTPS.');
+    this.comicParentDirectoryHandle = await picker.call(window, { mode: 'readwrite' });
+    this.readComicFields();
+    const folderName = safeComicFolderName(this.comicConfig.projectName, 'Mi cómic');
+    this.comicConfig.projectLocation = `${this.comicParentDirectoryHandle.name}/${folderName}`;
+    this.renderComicManager();
+    const status = this.root.querySelector<HTMLElement>('#comic-config-status');
+    if (status) status.textContent = `Ubicación elegida: ${this.comicParentDirectoryHandle.name}. Creá la estructura para continuar.`;
+  }
+
+  private async createComicProjectStructure(): Promise<void> {
+    this.readComicFields();
+    const picker = (window as DirectoryPickerWindow).showDirectoryPicker;
+    if (!picker) throw new Error('Este navegador no permite crear carpetas desde la aplicación. Usá Chrome o Edge actualizado en localhost o HTTPS.');
+    if (!this.comicParentDirectoryHandle) this.comicParentDirectoryHandle = await picker.call(window, { mode: 'readwrite' });
+    const parent = this.comicParentDirectoryHandle;
+    const projectFolderName = safeComicFolderName(this.comicConfig.projectName, 'Mi cómic');
+    let root: FileSystemDirectoryHandle;
+    try {
+      root = await parent.getDirectoryHandle(projectFolderName);
+      let configExists = false;
+      try { await root.getFileHandle('comicConfig.json'); configExists = true; }
+      catch (error) { if (!isNotFoundError(error)) throw error; }
+      if (configExists) {
+        if (!confirm(`Ya existe el proyecto “${projectFolderName}” con comicConfig.json. ¿Querés abrir ese proyecto y cargar su configuración?`)) return;
+        await this.activateComicProjectDirectory(root, true, true);
+        return;
+      }
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+      root = await parent.getDirectoryHandle(projectFolderName, { create: true });
+    }
+    // El permiso de la carpeta base ya fue concedido al elegirla desde el diálogo.
+    this.comicConfig.projectName = projectFolderName;
+    this.comicConfig.projectDirectoryName = projectFolderName;
+    this.comicConfig.projectLocation = `${parent.name}/${projectFolderName}`;
+    this.comicConfig.pagesDirectoryName = 'páginas';
+    this.comicConfig.exportDirectoryName = 'exportación';
+    this.comicProjectDirectoryHandle = root;
+    this.comicPagesDirectoryHandle = await root.getDirectoryHandle(this.comicConfig.pagesDirectoryName, { create: true });
+    this.comicExportDirectoryHandle = await root.getDirectoryHandle(this.comicConfig.exportDirectoryName, { create: true });
+    await storeComicProjectDirectoryHandle(root).catch((error) => console.warn('No se pudo recordar la carpeta del proyecto:', error));
+    this.renderComicManager();
+    this.persistComicConfig(`Estructura creada: ${parent.name}/${projectFolderName}`);
+    const written = await this.writeComicConfigToProject(true);
+    const status = this.root.querySelector<HTMLElement>('#comic-config-status');
+    if (status) status.textContent = written
+      ? `Proyecto creado: ${projectFolderName} · comicConfig.json, páginas/ y exportación/ listos.`
+      : 'Se crearon las carpetas, pero no se pudo escribir comicConfig.json. Volvé a vincular el proyecto.';
+  }
+
+  private async linkExistingComicProject(): Promise<void> {
+    const picker = (window as DirectoryPickerWindow).showDirectoryPicker;
+    if (!picker) throw new Error('Este navegador no permite elegir carpetas. Usá una versión reciente de Chrome o Edge.');
+    const root = await picker.call(window, { mode: 'readwrite' });
+    await this.activateComicProjectDirectory(root, true, true);
+  }
+
+  private async exportComicProjectCopy(): Promise<void> {
+    if (!this.comicProjectDirectoryHandle) {
+      throw new Error('Primero elegí una carpeta base y creá la estructura del proyecto.');
+    }
+    this.readComicFields();
+    this.persistComicConfig('Preparando copia de exportación…');
+    const configWritten = await this.writeComicConfigToProject(true);
+    if (!configWritten) throw new Error('No se pudo escribir comicConfig.json. Volvé a vincular la carpeta del proyecto e intentá nuevamente.');
+    const root = this.comicProjectDirectoryHandle;
+    if (!this.comicPagesDirectoryHandle) this.comicPagesDirectoryHandle = await root.getDirectoryHandle(this.comicConfig.pagesDirectoryName || 'páginas', { create: true });
+    let exportDirectory = this.comicExportDirectoryHandle;
+    if (!exportDirectory) {
+      exportDirectory = await root.getDirectoryHandle(this.comicConfig.exportDirectoryName || 'exportación', { create: true });
+      this.comicExportDirectoryHandle = exportDirectory;
+    }
+    const configSnapshot = JSON.stringify({ ...this.comicConfig, format: 'nvts-comic-config', version: 1 }, null, 2);
+    const exportConfig = await exportDirectory.getFileHandle('comicConfig.json', { create: true });
+    await writeFileHandleBytes(exportConfig, new Blob([configSnapshot], { type: 'application/json;charset=utf-8' }));
+    const exportPages = await exportDirectory.getDirectoryHandle(this.comicConfig.pagesDirectoryName || 'páginas', { create: true });
+    let copied = 0;
+    let missing = 0;
+    if (this.comicPagesDirectoryHandle) {
+      for (const page of this.comicConfig.pages) {
+        const fileName = safeComicFileName(page.fileName, `comic-page-${String(page.number).padStart(3, '0')}.nvtsphoto`);
+        try {
+          const sourceHandle = await this.comicPagesDirectoryHandle.getFileHandle(fileName);
+          const sourceFile = await sourceHandle.getFile();
+          if (!sourceFile.size) { missing++; continue; }
+          const targetHandle = await exportPages.getFileHandle(fileName, { create: true });
+          await writeFileHandleBytes(targetHandle, sourceFile);
+          copied++;
+        } catch (error) {
+          if (isNotFoundError(error)) missing++;
+          else throw error;
+        }
+      }
+    }
+    const status = this.root.querySelector<HTMLElement>('#comic-config-status');
+    if (status) status.textContent = `Copia exportada a ${root.name}/exportación: comicConfig.json y ${copied} página(s)${missing ? `; ${missing} sin guardar se omitieron` : ''}.`;
+  }
+
+  private async prepareComicPageFile(page: ComicPageEntry): Promise<FileSystemFileHandle | null> {
+    const directory = this.comicPagesDirectoryHandle;
+    if (!directory) return null;
+    const fileName = safeComicFileName(page.fileName, `comic-page-${String(page.number).padStart(3, '0')}.nvtsphoto`);
+    try {
+      const existing = await directory.getFileHandle(fileName);
+      const file = await existing.getFile();
+      if (file.size > 0 && !confirm(`Ya existe “${fileName}” en la carpeta de páginas. El próximo guardado lo sobrescribirá. ¿Continuar?`)) return null;
+    } catch (error) { if (!isNotFoundError(error)) throw error; }
+    return directory.getFileHandle(fileName, { create: true });
+  }
+
+  private renderComicManager(): void {
+    const config = this.comicConfig;
+    const projectLocationDisplay = this.comicProjectDirectoryHandle
+      ? (config.projectLocation || this.comicProjectDirectoryHandle.name)
+      : this.comicParentDirectoryHandle
+        ? `${this.comicParentDirectoryHandle.name}/${safeComicFolderName(config.projectName, 'Mi cómic')} (pendiente de crear)`
+        : (config.projectLocation || 'Elegí una carpeta base para crear el proyecto');
+    renderComicManagerPanel(this.root, config, this.comicActivePageId, projectLocationDisplay, {
+      onSelectPage: (pageId) => { this.comicActivePageId = pageId; this.renderComicManager(); },
+      onRenamePage: (page, nextName) => { page.name = nextName; this.persistComicConfig(); this.renderComicManager(); },
+    });
+  }
+
+  private wireComicManager(): void {
+    try { this.comicConfig = readComicConfig(); } catch { this.comicConfig = defaultComicConfig(); }
+    this.comicActivePageId = this.comicConfig.pages[0]?.id ?? null;
+    this.renderComicManager();
+    void this.restoreComicProjectDirectory();
+    const inputIds = ['comic-project-name', 'comic-title', 'comic-author', 'comic-direction', 'comic-page-width', 'comic-page-height', 'comic-dpi', 'comic-bleed', 'comic-margin', 'comic-gutter', 'comic-facing-pages'];
+    inputIds.forEach((id) => {
+      const selector = `#${id}`;
+      const input = this.root.querySelector<HTMLInputElement | HTMLSelectElement>(selector);
+      input?.addEventListener('change', () => { this.readComicFields(); this.persistComicConfig(); this.renderComicManager(); });
+    });
+    this.q<HTMLButtonElement>('#comic-select-location').addEventListener('click', () => {
+      void this.chooseComicParentDirectory().catch((error: unknown) => { const status = this.q<HTMLElement>('#comic-config-status'); status.textContent = error instanceof Error ? error.message : String(error); });
+    });
+    this.q<HTMLButtonElement>('#comic-create-project').addEventListener('click', () => {
+      void this.createComicProjectStructure().catch((error: unknown) => { const status = this.q<HTMLElement>('#comic-config-status'); status.textContent = error instanceof Error ? error.message : String(error); });
+    });
+    this.q<HTMLButtonElement>('#comic-link-project').addEventListener('click', () => {
+      void this.linkExistingComicProject().catch((error: unknown) => { const status = this.q<HTMLElement>('#comic-config-status'); status.textContent = error instanceof Error ? error.message : String(error); });
+    });
+    this.q<HTMLButtonElement>('#comic-export-project').addEventListener('click', () => {
+      void this.exportComicProjectCopy().catch((error: unknown) => { const status = this.q<HTMLElement>('#comic-config-status'); status.textContent = error instanceof Error ? error.message : String(error); });
+    });
+    this.q<HTMLSelectElement>('#comic-preset').addEventListener('change', () => {
+      const preset = this.q<HTMLSelectElement>('#comic-preset').value;
+      const presets: Record<string, { width: number; height: number; direction?: 'ltr' | 'rtl'; facing?: boolean }> = {
+        us: { width: 1650, height: 2550, direction: 'ltr', facing: true },
+        european: { width: 2100, height: 2970, direction: 'ltr', facing: true },
+        manga: { width: 1650, height: 2400, direction: 'rtl', facing: true },
+        manhwa: { width: 1600, height: 2560, direction: 'ltr', facing: false },
+      };
+      const selected = presets[preset];
+      if (selected) {
+        this.comicConfig.pageWidth = selected.width; this.comicConfig.pageHeight = selected.height;
+        if (selected.direction) this.comicConfig.readingDirection = selected.direction;
+        if (selected.facing !== undefined) this.comicConfig.facingPages = selected.facing;
+      }
+      this.renderComicManager(); this.persistComicConfig('Formato actualizado y guardado localmente.');
+    });
+    this.q<HTMLButtonElement>('#comic-add-page').addEventListener('click', () => {
+      this.readComicFields();
+      const number = this.comicConfig.pages.length + 1;
+      const page: ComicPageEntry = {
+        id: crypto.randomUUID(), number, name: `Página ${number}`,
+        fileName: `comic-page-${String(number).padStart(3, '0')}.nvtsphoto`,
+        width: this.comicConfig.pageWidth, height: this.comicConfig.pageHeight, notes: '',
+      };
+      this.comicConfig.pages.push(page); this.comicActivePageId = page.id;
+      this.persistComicConfig('Página añadida. Configuración guardada localmente.'); this.renderComicManager();
+    });
+    this.q<HTMLButtonElement>('#comic-duplicate-page').addEventListener('click', () => {
+      const selected = this.comicConfig.pages.find((page) => page.id === this.comicActivePageId); if (!selected) return;
+      const number = this.comicConfig.pages.length + 1;
+      const copy: ComicPageEntry = { ...selected, id: crypto.randomUUID(), number, name: `${selected.name} (copia)`, fileName: `comic-page-${String(number).padStart(3, '0')}.nvtsphoto` };
+      this.comicConfig.pages.splice(this.comicConfig.pages.indexOf(selected) + 1, 0, copy); this.comicActivePageId = copy.id;
+      this.comicConfig.pages.forEach((page, index) => page.number = index + 1); this.persistComicConfig('Página duplicada.'); this.renderComicManager();
+    });
+    this.q<HTMLButtonElement>('#comic-delete-page').addEventListener('click', () => {
+      const index = this.comicConfig.pages.findIndex((page) => page.id === this.comicActivePageId); if (index < 0) return;
+      const page = this.comicConfig.pages[index]; if (!confirm(`¿Eliminar «${page.name}» de la configuración? No se borrará ningún archivo del disco.`)) return;
+      this.comicConfig.pages.splice(index, 1); this.comicConfig.pages.forEach((entry, i) => entry.number = i + 1);
+      this.comicActivePageId = this.comicConfig.pages[Math.min(index, this.comicConfig.pages.length - 1)]?.id ?? null;
+      this.persistComicConfig('Página eliminada de la configuración.'); this.renderComicManager();
+    });
+    const move = (delta: number) => {
+      const index = this.comicConfig.pages.findIndex((page) => page.id === this.comicActivePageId); const next = index + delta;
+      if (index < 0 || next < 0 || next >= this.comicConfig.pages.length) return;
+      [this.comicConfig.pages[index], this.comicConfig.pages[next]] = [this.comicConfig.pages[next], this.comicConfig.pages[index]];
+      this.comicConfig.pages.forEach((page, i) => page.number = i + 1);
+      this.persistComicConfig('Orden de páginas actualizado.'); this.renderComicManager();
+    };
+    this.q<HTMLButtonElement>('#comic-page-up').addEventListener('click', () => move(-1));
+    this.q<HTMLButtonElement>('#comic-page-down').addEventListener('click', () => move(1));
+    this.q<HTMLButtonElement>('#comic-create-canvas').addEventListener('click', () => {
+      void (async () => {
+        const page = this.comicConfig.pages.find((entry) => entry.id === this.comicActivePageId); if (!page) return;
+        if (!confirm(`Se reemplazará el documento abierto por un lienzo de ${page.width} × ${page.height} px para «${page.name}». Guardá primero el documento actual si querés conservarlo. ¿Continuar?`)) return;
+        this.readComicFields();
+        const safeTitle = this.comicConfig.title.trim() || 'Cómic';
+        const fileName = safeComicFileName(page.fileName, `comic-page-${String(page.number).padStart(3, '0')}.nvtsphoto`);
+        const pageHandle = await this.prepareComicPageFile({ ...page, fileName });
+        if (this.comicPagesDirectoryHandle && !pageHandle) return;
+        this.newDocument(page.width, page.height, `${safeTitle} - ${page.name}`);
+        this.fileHandle = pageHandle;
+        page.fileName = fileName;
+        page.width = this.ctl.doc.width; page.height = this.ctl.doc.height;
+        this.persistComicConfig(this.comicPagesDirectoryHandle
+          ? `Lienzo creado para «${page.name}». Guardar escribirá directamente en páginas/${fileName}.`
+          : `Lienzo creado para «${page.name}». Configurá una carpeta de proyecto para guardar páginas automáticamente.`);
+        this.renderComicManager();
+        this.applyWorkspace('comics', false);
+      })().catch((error: unknown) => { const status = this.q<HTMLElement>('#comic-config-status'); status.textContent = error instanceof Error ? error.message : String(error); });
+    });
+    const pageOpenInput = this.q<HTMLInputElement>('#comic-page-open-input');
+    this.q<HTMLButtonElement>('#comic-page-open-file').addEventListener('click', () => pageOpenInput.click());
+    pageOpenInput.addEventListener('change', () => {
+      const file = pageOpenInput.files?.[0]; if (!file) return;
+      const page = this.comicConfig.pages.find((entry) => entry.id === this.comicActivePageId);
+      if (!page) { pageOpenInput.value = ''; return; }
+      if (!confirm(`Abrir «${file.name}» como «${page.name}» reemplazará el documento actual. Guardá primero lo que necesites conservar. ¿Continuar?`)) { pageOpenInput.value = ''; return; }
+      void (async () => {
+        try {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          const unpacked = unpackNvtsPhoto(bytes);
+          unpacked.doc.name = documentNameFromFile(file.name);
+          this.fileHandle = null;
+          this.setDocument(DocumentController.fromUnpacked(this.engine.module, unpacked));
+          await this.refreshLinkedFileLayers(false);
+          page.fileName = safeComicFileName(this.comicPagesDirectoryHandle ? page.fileName : file.name, `comic-page-${String(page.number).padStart(3, '0')}.nvtsphoto`);
+          if (this.comicPagesDirectoryHandle) {
+            const target = await this.comicPagesDirectoryHandle.getFileHandle(page.fileName, { create: true });
+            await writeFileHandleBytes(target, bytes);
+            this.fileHandle = target;
+          }
+          page.width = this.ctl.doc.width; page.height = this.ctl.doc.height;
+          this.persistComicConfig(this.comicPagesDirectoryHandle
+            ? `Página «${page.name}» copiada a páginas/${page.fileName}. Guardar actualizará esa copia.`
+            : `Página «${page.name}» cargada desde ${file.name}. Configurá una carpeta de proyecto para guardarla allí.`);
+          this.renderComicManager(); this.applyWorkspace('comics', false);
+        } catch (error) {
+          const status = this.q<HTMLElement>('#comic-config-status');
+          status.textContent = error instanceof Error ? error.message : String(error);
+        } finally { pageOpenInput.value = ''; }
+      })();
+    });
+    this.q<HTMLButtonElement>('#comic-config-export').addEventListener('click', () => {
+      this.readComicFields();
+      this.persistComicConfig('Guardando comicConfig.json…');
+      void (async () => {
+        if (this.comicProjectDirectoryHandle) {
+          const written = await this.writeComicConfigToProject(true);
+          if (written) return;
+        }
+        const data = JSON.stringify({ ...this.comicConfig, format: 'nvts-comic-config', version: 1 }, null, 2);
+        const blob = new Blob([data], { type: 'application/json;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a'); link.href = url; link.download = 'comicConfig.json'; link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        const status = this.q<HTMLElement>('#comic-config-status'); status.textContent = 'Descargando copia de comicConfig.json';
+      })().catch((error: unknown) => { const status = this.q<HTMLElement>('#comic-config-status'); status.textContent = error instanceof Error ? error.message : String(error); });
+    });
+    const fileInput = this.q<HTMLInputElement>('#comic-config-file');
+    this.q<HTMLButtonElement>('#comic-config-import').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files?.[0]; if (!file) return;
+      void file.text().then((raw) => {
+        const parsed = normalizeComicConfig(JSON.parse(raw) as unknown);
+        this.comicConfig = parsed; this.comicActivePageId = parsed.pages[0]?.id ?? null;
+        this.renderComicManager(); this.persistComicConfig(`Configuración importada desde ${file.name}.`);
+      }).catch((error: unknown) => {
+        const status = this.q<HTMLElement>('#comic-config-status'); status.textContent = error instanceof Error ? error.message : String(error);
+      }).finally(() => { fileInput.value = ''; });
+    });
+  }
+
   private syncUI(): void {
     this.syncDocumentHeader();
     this.renderLayers();
@@ -728,24 +1281,10 @@ export class App {
   }
 
   private updateHistoryUI(): void {
-    const ctl = this.ctl;
     const list = this.root.querySelector<HTMLElement>('#history-list');
     const count = this.root.querySelector<HTMLElement>('#history-count');
     if (!list || !count) return;
-    list.replaceChildren();
-    const entries = ctl.historyEntries.slice(0, 30);
-    count.textContent = String(entries.length);
-    if (!entries.length) {
-      const empty = document.createElement('div'); empty.className = 'history-empty'; empty.textContent = 'Sin acciones todavía'; list.append(empty);
-    } else {
-      entries.forEach((entry, index) => {
-        const row = document.createElement('div'); row.className = 'history-entry' + (index === 0 ? ' current' : '');
-        const marker = document.createElement('span'); marker.textContent = '▢';
-        const label = document.createElement('span'); label.textContent = entry.label;
-        const number = document.createElement('small'); number.textContent = String(entries.length - index).padStart(2, '0');
-        row.append(marker, label, number); row.title = entry.label; list.append(row);
-      });
-    }
+    renderHistoryPanel(list, count, this.ctl.historyEntries.slice(0, 30));
     this.queueRecentSnapshot();
   }
 
@@ -782,9 +1321,26 @@ export class App {
     const fillButton = this.root.querySelector<HTMLButtonElement>('#l-fill-color');
     const filterButton = this.root.querySelector<HTMLButtonElement>('#l-filter-options');
     const vectorButton = this.root.querySelector<HTMLButtonElement>('#l-vector-add');
+    const textEditButton = this.root.querySelector<HTMLButtonElement>('#l-text-edit');
     if (fillButton) { fillButton.hidden = layer?.type !== 'fill'; if (layer?.type === 'fill') fillButton.textContent = `Color ${layer.fillColor ?? '#ffffff'}…`; }
     if (filterButton) filterButton.hidden = layer?.type !== 'filter';
     if (vectorButton) vectorButton.hidden = layer?.type !== 'vector';
+    if (textEditButton) textEditButton.hidden = layer?.type !== 'text';
+    if (this.tool === 'text' && layer?.type === 'text') {
+      this.textSettings = this.textSettingsFromLayer(layer);
+      const font = this.root.querySelector<HTMLSelectElement>('#tool-text-font'); if (font) font.value = this.textSettings.fontFamily;
+      const style = this.root.querySelector<HTMLSelectElement>('#tool-text-style'); if (style) style.value = this.textSettings.style;
+      const size = this.root.querySelector<HTMLInputElement>('#tool-text-size'); if (size) size.value = String(this.textSettings.fontSize);
+      const color = this.root.querySelector<HTMLInputElement>('#tool-text-color'); if (color) color.value = this.textSettings.color;
+      const align = this.root.querySelector<HTMLSelectElement>('#advanced-text-align'); if (align) align.value = this.textSettings.align;
+      const lineHeight = this.root.querySelector<HTMLInputElement>('#advanced-text-line-height'); if (lineHeight) lineHeight.value = String(this.textSettings.lineHeight);
+      const letterSpacing = this.root.querySelector<HTMLInputElement>('#advanced-text-letter-spacing'); if (letterSpacing) letterSpacing.value = String(this.textSettings.letterSpacing);
+      const strokeColor = this.root.querySelector<HTMLInputElement>('#advanced-text-stroke-color'); if (strokeColor) strokeColor.value = this.textSettings.strokeColor;
+      const strokeWidth = this.root.querySelector<HTMLInputElement>('#advanced-text-stroke-width'); if (strokeWidth) strokeWidth.value = String(this.textSettings.strokeWidth);
+      const background = this.root.querySelector<HTMLSelectElement>('#advanced-text-background'); if (background) background.value = this.textSettings.backgroundColor;
+    }
+    const vectorTool = this.root.querySelector<HTMLButtonElement>('#rail-vector-select');
+    if (vectorTool) vectorTool.disabled = layer?.type !== 'vector' || this.ctl.isEffectivelyLocked(layer.id) || !this.ctl.isEffectivelyVisible(layer.id);
     const duplicate = this.root.querySelector<HTMLButtonElement>('#l-duplicate');
     const remove = this.root.querySelector<HTMLButtonElement>('#l-del');
     if (duplicate) duplicate.disabled = !layer;
@@ -820,18 +1376,23 @@ export class App {
   }
 
   private renderToolOptions(): void {
+    const selectedText = this.active();
+    if (this.tool === 'text' && selectedText?.type === 'text') this.textSettings = this.textSettingsFromLayer(selectedText);
     const host = this.q<HTMLElement>('#toolbar');
-    const labels: Record<Tool, string> = { brush: 'Pincel', eraser: 'Borrador', eyedropper: 'Cuentagotas', line: 'Línea', rectangle: 'Rectángulo', ellipse: 'Elipse', fill: 'Relleno', hand: 'Mover lienzo' };
+    const labels: Record<Tool, string> = { brush: 'Pincel', eraser: 'Borrador', eyedropper: 'Cuentagotas', line: 'Línea', rectangle: 'Rectángulo', ellipse: 'Elipse', fill: 'Relleno', hand: 'Mover lienzo', text: 'Texto', 'vector-select': 'Selección vectorial' };
     this.q<HTMLElement>('#tool-current-label').textContent = labels[this.tool];
     const colorField = `<label class="tool-setting">Color <input id="tool-color" type="color" value="${this.foregroundHex()}" /></label>`;
     const sizeField = `<label class="tool-setting">${this.tool === 'line' || this.tool === 'rectangle' || this.tool === 'ellipse' ? 'Grosor' : 'Tamaño'} <input id="tool-size" type="range" min="1" max="256" value="${this.brush.size}" /><output id="tool-size-value">${this.brush.size}px</output></label>`;
     const opacityField = `<label class="tool-setting">Opacidad <input id="tool-opacity" type="range" min="1" max="100" value="${this.brush.opacity}" /><output id="tool-opacity-value">${this.brush.opacity}%</output></label>`;
+    const fontOptions = ['Arial','Inter','Georgia','Times New Roman','Verdana','Tahoma','Trebuchet MS','Courier New','monospace','serif','sans-serif'].map((name) => `<option value="${name}" ${this.textSettings.fontFamily === name ? 'selected' : ''}>${name}</option>`).join('');
     if (this.tool === 'brush') host.innerHTML = `${colorField}${sizeField}${opacityField}`;
     else if (this.tool === 'eraser') host.innerHTML = `${sizeField}${opacityField}`;
     else if (this.tool === 'line') host.innerHTML = `${colorField}${sizeField}${opacityField}`;
     else if (this.tool === 'rectangle' || this.tool === 'ellipse') host.innerHTML = `${colorField}${sizeField}${opacityField}<label class="tool-setting tool-check"><input id="tool-shape-fill" type="checkbox" ${this.brush.shapeFill ? 'checked' : ''}/> Rellenar figura</label>`;
     else if (this.tool === 'fill') host.innerHTML = `${colorField}<label class="tool-setting">Tolerancia <input id="tool-tolerance" type="range" min="0" max="255" value="${this.brush.tolerance}"/><output id="tool-tolerance-value">${this.brush.tolerance}</output></label><label class="tool-setting">Opacidad <input id="tool-opacity" type="range" min="1" max="100" value="${this.brush.opacity}"/><output id="tool-opacity-value">${this.brush.opacity}%</output></label>`;
+    else if (this.tool === 'text') host.innerHTML = `<label class="tool-setting">Fuente <select id="tool-text-font">${fontOptions}</select></label><label class="tool-setting">Estilo <select id="tool-text-style"><option value="normal" ${this.textSettings.style==='normal'?'selected':''}>Normal</option><option value="bold" ${this.textSettings.style==='bold'?'selected':''}>Negrita</option><option value="italic" ${this.textSettings.style==='italic'?'selected':''}>Cursiva</option><option value="bold-italic" ${this.textSettings.style==='bold-italic'?'selected':''}>Negrita cursiva</option></select></label><label class="tool-setting">Tamaño <input id="tool-text-size" type="number" min="1" max="1000" value="${this.textSettings.fontSize}"/></label><label class="tool-setting">Color <input id="tool-text-color" type="color" value="${this.textSettings.color}"/></label>`;
     else if (this.tool === 'eyedropper') host.innerHTML = '<span class="tool-help">Hacé clic en el lienzo para tomar un color.</span>';
+    else if (this.tool === 'vector-select') host.innerHTML = '<span class="tool-help">Seleccioná un objeto vectorial; arrastralo para moverlo o usá el control inferior derecho para cambiar su tamaño.</span>';
     else host.innerHTML = '<span class="tool-help">Arrastrá el lienzo para desplazarte. Usá − / + o la rueda con Ctrl para cambiar el zoom.</span>';
 
     const color = host.querySelector<HTMLInputElement>('#tool-color');
@@ -844,45 +1405,111 @@ export class App {
     if (shapeFill) shapeFill.onchange = () => { this.brush.shapeFill = shapeFill.checked; };
     const tolerance = host.querySelector<HTMLInputElement>('#tool-tolerance');
     if (tolerance) tolerance.oninput = () => { this.brush.tolerance = Number(tolerance.value); const output = host.querySelector<HTMLOutputElement>('#tool-tolerance-value'); if (output) output.value = tolerance.value; };
+    const font = host.querySelector<HTMLSelectElement>('#tool-text-font');
+    if (font) font.onchange = () => { this.textSettings.fontFamily = font.value; this.applyTextSettingsToSelectedLayer(); };
+    const style = host.querySelector<HTMLSelectElement>('#tool-text-style');
+    if (style) style.onchange = () => { this.textSettings.style = style.value as TextLayerStyle; this.applyTextSettingsToSelectedLayer(); };
+    const fontSize = host.querySelector<HTMLInputElement>('#tool-text-size');
+    if (fontSize) fontSize.onchange = () => { this.textSettings.fontSize = Math.max(1, Math.min(1000, Number(fontSize.value) || 64)); fontSize.value = String(this.textSettings.fontSize); this.applyTextSettingsToSelectedLayer(); };
+    const textColor = host.querySelector<HTMLInputElement>('#tool-text-color');
+    if (textColor) textColor.onchange = () => { this.textSettings.color = textColor.value; this.applyTextSettingsToSelectedLayer(); };
 
-    const toolButtons: Record<Tool, string> = { hand: '#rail-hand', brush: '#rail-brush', eraser: '#rail-eraser', line: '#rail-line', rectangle: '#rail-rectangle', ellipse: '#rail-ellipse', fill: '#rail-fill', eyedropper: '#rail-eyedropper' };
+    const toolButtons: Record<Tool, string> = { hand: '#rail-hand', brush: '#rail-brush', eraser: '#rail-eraser', line: '#rail-line', rectangle: '#rail-rectangle', ellipse: '#rail-ellipse', fill: '#rail-fill', eyedropper: '#rail-eyedropper', text: '#rail-text', 'vector-select': '#rail-vector-select' };
     Object.values(toolButtons).forEach((selector) => this.root.querySelector<HTMLElement>(selector)?.classList.remove('selected'));
     this.root.querySelector<HTMLElement>(toolButtons[this.tool])?.classList.add('selected');
-    this.canvas.style.cursor = this.tool === 'hand' ? 'grab' : this.tool === 'eyedropper' ? 'copy' : 'crosshair';
+    this.canvas.style.cursor = this.tool === 'hand' ? 'grab' : this.tool === 'eyedropper' ? 'copy' : this.tool === 'text' ? 'text' : this.tool === 'vector-select' ? 'default' : 'crosshair';
     this.syncToolbarProps();
   }
 
   private renderAdvancedToolOptions(): void {
-    const host = this.q<HTMLElement>('#advanced-tool-options');
-    if (this.tool === 'brush') {
-      host.innerHTML = `<label class="advanced-setting">Dureza <output id="advanced-hardness-value">${this.brush.hardness}%</output><input id="advanced-hardness" type="range" min="0" max="100" value="${this.brush.hardness}"/></label><label class="advanced-setting">Espaciado <output id="advanced-spacing-value">${this.brush.spacing}%</output><input id="advanced-spacing" type="range" min="1" max="100" value="${this.brush.spacing}"/></label><label class="advanced-setting">Suavizado del trazo <output id="advanced-smoothing-value">${this.brush.smoothing}%</output><input id="advanced-smoothing" type="range" min="0" max="100" value="${this.brush.smoothing}"/></label><p class="hint">La dureza controla el borde del pincel; el espaciado cambia la frecuencia de las pinceladas y el suavizado reduce temblores.</p><div class="advanced-tool-actions"><strong>Ajustes rápidos de la capa</strong><div><button id="advanced-brightness-down" type="button">Brillo −</button><button id="advanced-brightness-up" type="button">Brillo +</button></div><p class="hint">Ajusta los píxeles de la capa de pintura activa y se registra en el historial.</p></div>`;
-    } else if (this.tool === 'eraser') {
-      host.innerHTML = `<label class="advanced-setting">Dureza <output id="advanced-hardness-value">${this.brush.hardness}%</output><input id="advanced-hardness" type="range" min="0" max="100" value="${this.brush.hardness}"/></label><label class="advanced-setting">Espaciado <output id="advanced-spacing-value">${this.brush.spacing}%</output><input id="advanced-spacing" type="range" min="1" max="100" value="${this.brush.spacing}"/></label><p class="hint">Un borde suave permite borrar gradualmente los píxeles.</p>`;
-    } else if (this.tool === 'eyedropper') {
-      host.innerHTML = `<label class="advanced-check"><input id="advanced-sample-merged" type="checkbox" ${this.brush.sampleMerged ? 'checked' : ''}/> Muestrear todas las capas visibles</label><p class="hint">Desactivado: toma el color de la capa activa. Activado: toma el color compuesto visible del documento.</p>`;
-    } else if (this.tool === 'fill') {
-      host.innerHTML = `<label class="advanced-check"><input id="advanced-contiguous" type="checkbox" ${this.brush.contiguous ? 'checked' : ''}/> Solo píxeles contiguos</label><label class="advanced-check"><input id="advanced-sample-merged" type="checkbox" ${this.brush.sampleMerged ? 'checked' : ''}/> Muestrear todas las capas visibles</label><p class="hint">Con contiguos desactivado, se rellenan todas las zonas que coinciden con el color inicial dentro de la tolerancia.</p>`;
-    } else if (this.tool === 'line' || this.tool === 'rectangle' || this.tool === 'ellipse') {
-      host.innerHTML = `<label class="advanced-setting">Extremos de línea<select id="advanced-line-cap"><option value="round" ${this.brush.lineCap === 'round' ? 'selected' : ''}>Redondos</option><option value="butt" ${this.brush.lineCap === 'butt' ? 'selected' : ''}>Rectos</option><option value="square" ${this.brush.lineCap === 'square' ? 'selected' : ''}>Cuadrados</option></select></label><label class="advanced-setting">Uniones<select id="advanced-line-join"><option value="round" ${this.brush.lineJoin === 'round' ? 'selected' : ''}>Redondeadas</option><option value="miter" ${this.brush.lineJoin === 'miter' ? 'selected' : ''}>En punta</option><option value="bevel" ${this.brush.lineJoin === 'bevel' ? 'selected' : ''}>Biseladas</option></select></label><p class="hint">Estas opciones afectan a los extremos y esquinas de las formas que dibujes.</p>`;
-    } else {
-      host.innerHTML = '<p class="hint">El desplazamiento no modifica los píxeles. Ajustá el zoom con los controles de la parte inferior del lienzo.</p>';
-    }
+    renderAdvancedToolOptionsPanel(
+      this.q<HTMLElement>('#advanced-tool-options'),
+      this.tool,
+      this.brush,
+      this.textSettings,
+      {
+        adjustActiveLayerBrightness: (delta) => this.adjustActiveLayerBrightness(delta),
+        applyTextSettingsToSelectedLayer: () => this.applyTextSettingsToSelectedLayer(),
+        editVectorLayer: () => { const layer = this.active(); if (layer?.type === 'vector') this.editVectorLayer(layer); },
+      },
+    );
+  }
 
-    const range = (id: string, key: 'hardness' | 'spacing' | 'smoothing') => {
-      const input = host.querySelector<HTMLInputElement>(`#${id}`);
-      input?.addEventListener('input', () => {
-        this.brush[key] = Number(input.value);
-        const output = host.querySelector<HTMLOutputElement>(`#${id}-value`);
-        if (output) output.value = `${input.value}%`;
-      });
+  private textSettingsFromLayer(layer: LayerNode): TextToolSettings {
+    return {
+      fontFamily: layer.textFontFamily ?? 'Arial', fontSize: layer.textFontSize ?? 64, style: layer.textStyle ?? 'normal', color: layer.textColor ?? '#e03030',
+      align: layer.textAlign ?? 'left', lineHeight: layer.textLineHeight ?? 1.2, letterSpacing: layer.textLetterSpacing ?? 0,
+      strokeColor: layer.textStrokeColor ?? '#000000', strokeWidth: layer.textStrokeWidth ?? 0, backgroundColor: layer.textBackgroundColor ?? 'transparent',
     };
-    range('advanced-hardness', 'hardness'); range('advanced-spacing', 'spacing'); range('advanced-smoothing', 'smoothing');
-    host.querySelector<HTMLInputElement>('#advanced-contiguous')?.addEventListener('change', (event) => { this.brush.contiguous = (event.currentTarget as HTMLInputElement).checked; });
-    host.querySelector<HTMLInputElement>('#advanced-sample-merged')?.addEventListener('change', (event) => { this.brush.sampleMerged = (event.currentTarget as HTMLInputElement).checked; });
-    host.querySelector<HTMLSelectElement>('#advanced-line-cap')?.addEventListener('change', (event) => { this.brush.lineCap = (event.currentTarget as HTMLSelectElement).value as CanvasLineCap; });
-    host.querySelector<HTMLSelectElement>('#advanced-line-join')?.addEventListener('change', (event) => { this.brush.lineJoin = (event.currentTarget as HTMLSelectElement).value as CanvasLineJoin; });
-    host.querySelector<HTMLButtonElement>('#advanced-brightness-down')?.addEventListener('click', () => this.adjustActiveLayerBrightness(-20));
-    host.querySelector<HTMLButtonElement>('#advanced-brightness-up')?.addEventListener('click', () => this.adjustActiveLayerBrightness(20));
+  }
+
+  private textLayerPatch(content: string, x: number, y: number, settings: TextToolSettings): Pick<LayerNode, 'textContent' | 'textX' | 'textY' | 'textFontFamily' | 'textFontSize' | 'textColor' | 'textStyle' | 'textAlign' | 'textLineHeight' | 'textLetterSpacing' | 'textStrokeColor' | 'textStrokeWidth' | 'textBackgroundColor'> {
+    return { textContent: content, textX: x, textY: y, textFontFamily: settings.fontFamily, textFontSize: settings.fontSize, textColor: settings.color, textStyle: settings.style, textAlign: settings.align, textLineHeight: settings.lineHeight, textLetterSpacing: settings.letterSpacing, textStrokeColor: settings.strokeColor, textStrokeWidth: settings.strokeWidth, textBackgroundColor: settings.backgroundColor };
+  }
+
+  private rasterizeText(content: string, x: number, y: number, settings: TextToolSettings): Uint8Array {
+    const canvas = document.createElement('canvas'); canvas.width = this.ctl.doc.width; canvas.height = this.ctl.doc.height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) throw new Error('No se pudo preparar el contenido de texto.');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const fontWeight = settings.style === 'bold' || settings.style === 'bold-italic' ? 'bold' : 'normal';
+    const fontStyle = settings.style === 'italic' || settings.style === 'bold-italic' ? 'italic' : 'normal';
+    ctx.font = `${fontStyle} ${fontWeight} ${Math.max(1, settings.fontSize)}px "${settings.fontFamily.replace(/["\\]/g, '')}"`;
+    ctx.textBaseline = 'top'; ctx.textAlign = settings.align;
+    const spacingCtx = ctx as CanvasRenderingContext2D & { letterSpacing?: string };
+    if ('letterSpacing' in spacingCtx) spacingCtx.letterSpacing = `${settings.letterSpacing}px`;
+    const lines = content.split('\n');
+    const measuredWidths = lines.map((line) => ctx.measureText(line).width + Math.max(0, line.length - 1) * settings.letterSpacing);
+    const maxWidth = Math.max(1, ...measuredWidths);
+    const lineHeight = settings.fontSize * settings.lineHeight;
+    const totalHeight = Math.max(settings.fontSize, lines.length * lineHeight);
+    const bg = settings.backgroundColor;
+    if (bg && bg !== 'transparent') {
+      const rectX = settings.align === 'left' ? x : settings.align === 'center' ? x - maxWidth / 2 : x - maxWidth;
+      ctx.fillStyle = bg; ctx.fillRect(rectX - 6, y - 4, maxWidth + 12, totalHeight + 8);
+    }
+    ctx.lineJoin = 'round'; ctx.lineWidth = settings.strokeWidth; ctx.strokeStyle = settings.strokeColor; ctx.fillStyle = settings.color;
+    lines.forEach((line, index) => {
+      const lineY = y + index * lineHeight;
+      if (settings.strokeWidth > 0) ctx.strokeText(line, x, lineY);
+      ctx.fillText(line, x, lineY);
+    });
+    return new Uint8Array(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
+  }
+
+  private async createTextAt(point: { x: number; y: number }, existing?: LayerNode): Promise<void> {
+    if (existing && (existing.type !== 'text' || this.ctl.isEffectivelyLocked(existing.id))) return;
+    const currentSettings = existing ? this.textSettingsFromLayer(existing) : { ...this.textSettings };
+    const content = prompt(existing ? 'Editar texto de la capa' : 'Texto nuevo (podés usar saltos de línea)', existing?.textContent ?? 'Nuevo texto');
+    if (content === null || !content.length) return;
+    try {
+      if (existing) {
+        const settings = currentSettings;
+        const px = this.rasterizeText(content, existing.textX ?? point.x, existing.textY ?? point.y, settings);
+        this.ctl.replaceTextContent(existing.id, this.textLayerPatch(content, existing.textX ?? point.x, existing.textY ?? point.y, settings), px);
+        this.activeId = existing.id;
+      } else {
+        const layer = this.ctl.addLayer('text', content.split('\n')[0].slice(0, 48) || 'Texto');
+        this.activeId = layer.id;
+        const settings = { ...this.textSettings };
+        const px = this.rasterizeText(content, Math.round(point.x), Math.round(point.y), settings);
+        this.ctl.replaceTextContent(layer.id, this.textLayerPatch(content, Math.round(point.x), Math.round(point.y), settings), px);
+      }
+      this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
+      this.q<HTMLElement>('#status').textContent = 'Texto actualizado en su propia capa editable.';
+    } catch (error) { this.fail(error); }
+  }
+
+  private applyTextSettingsToSelectedLayer(): void {
+    const layer = this.active();
+    if (!layer || layer.type !== 'text' || this.ctl.isEffectivelyLocked(layer.id) || !layer.textContent) return;
+    try {
+      const settings = { ...this.textSettings };
+      const x = layer.textX ?? 0, y = layer.textY ?? 0;
+      const pixels = this.rasterizeText(layer.textContent, x, y, settings);
+      this.ctl.replaceTextContent(layer.id, this.textLayerPatch(layer.textContent, x, y, settings), pixels);
+      this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
+    } catch (error) { this.fail(error); }
   }
 
   private adjustActiveLayerBrightness(delta: number): void {
@@ -935,87 +1562,35 @@ export class App {
   // ───────────── Panel de capas ─────────────
 
   private renderLayers(): void {
-    const list = this.q('#layers');
-    list.replaceChildren();
-    const openLayerEffects = (layer: LayerNode) => {
-      this.q<HTMLElement>('#effects-layer-name').textContent = layer.name;
-      this.q<HTMLElement>('#effects-panel').hidden = false;
-    };
-    let total = 0;
-    const renderTree = (container: HTMLElement, nodes: LayerNode[], depth: number) => {
-      // La interfaz invierte el orden de apilado: la capa superior se muestra primero.
-      for (const layer of [...nodes].reverse()) {
-        total++;
-        const row = document.createElement('div');
-        row.className = 'layer' + (layer.id === this.activeId ? ' active' : '');
-        row.dataset.layerId = layer.id;
-        row.style.paddingLeft = `${5 + depth * 14}px`;
-        row.title = `${this.layerTypeLabel(layer.type)} · ${layer.name}`;
-
-        const visible = Object.assign(document.createElement('input'), { type: 'checkbox', checked: layer.visible });
-        visible.title = 'Visibilidad'; visible.setAttribute('aria-label', `Visibilidad de ${layer.name}`);
-        visible.onclick = (event) => event.stopPropagation();
-        visible.onchange = () => {
-          this.ctl.setProps(layer.id, { visible: visible.checked });
-          this.ctl.comp.invalidateAll(); this.renderLayers(); this.updateHistoryUI(); this.scheduleRefresh();
-        };
-
-        const icon = document.createElement('span');
-        icon.className = 'layer-type-icon';
-        icon.textContent = layer.type === 'group' && layer.children.length ? '▾' : this.layerTypeIcon(layer.type);
-        icon.title = this.layerTypeLabel(layer.type);
-
-        const thumbnail = document.createElement('canvas');
-        thumbnail.className = 'layer-thumbnail'; thumbnail.width = 52; thumbnail.height = 36;
-        thumbnail.setAttribute('aria-label', `Miniatura de ${layer.name}`);
-        this.drawLayerThumbnail(thumbnail, layer);
-
-        const name = document.createElement('span');
-        name.className = 'layer-name'; name.textContent = layer.name;
-        name.title = layer.type === 'file'
-          ? `${layer.sourceName ?? layer.name} · ${layer.sourceLinkId ? 'vínculo externo configurado' : 'imagen incrustada sin vínculo externo'}`
-          : 'Doble clic para renombrar o editar esta capa';
-        name.ondblclick = (event) => { event.stopPropagation(); this.editLayerByType(layer); };
-
-        const effects = document.createElement('button');
-        effects.className = 'layer-effects-hit'; effects.type = 'button'; effects.textContent = 'fx';
-        effects.title = 'Estilos de capa';
-        effects.onclick = (event) => { event.stopPropagation(); this.activeId = layer.id; this.syncUI(); openLayerEffects(layer); };
-
-        const lock = document.createElement('button');
-        lock.type = 'button'; lock.textContent = layer.locked ? '🔒' : '🔓';
-        lock.title = layer.locked ? 'Desbloquear capa' : 'Bloquear capa'; lock.setAttribute('aria-label', lock.title);
-        lock.onclick = (event) => {
-          event.stopPropagation();
-          this.ctl.setProps(layer.id, { locked: !layer.locked });
-          this.syncUI(); this.updateHistoryUI();
-        };
-
-        row.append(visible, icon, thumbnail, name, effects, lock);
-        row.onclick = () => { this.activeId = layer.id; this.syncUI(); };
-        row.oncontextmenu = (event) => { event.preventDefault(); this.activeId = layer.id; this.syncUI(); this.showLayerContextMenu(event.clientX, event.clientY, layer); };
-        container.append(row);
-
-        if (layer.type === 'group' && layer.children.length) {
-          const children = document.createElement('div');
-          children.className = 'layer-children';
-          children.dataset.parentLayerId = layer.id;
-          renderTree(children, layer.children, depth + 1);
-          container.append(children);
-        }
-      }
-    };
-    renderTree(list, this.ctl.doc.layers, 0);
-    const empty = this.root.querySelector<HTMLElement>('#layer-empty');
-    if (empty) empty.hidden = total > 0;
+    renderLayersPanel(this.root, this.ctl.doc.layers, this.activeId, {
+      getTypeLabel: (type) => this.layerTypeLabel(type),
+      getTypeIcon: (type) => this.layerTypeIcon(type),
+      drawThumbnail: (canvas, layer) => this.drawLayerThumbnail(canvas, layer),
+      onVisibilityChange: (layer, visible) => {
+        this.ctl.setProps(layer.id, { visible });
+        this.ctl.comp.invalidateAll(); this.renderLayers(); this.updateHistoryUI(); this.scheduleRefresh();
+      },
+      onRenameOrEdit: (layer) => this.editLayerByType(layer),
+      onOpenEffects: (layer) => {
+        this.activeId = layer.id; this.syncUI();
+        this.q<HTMLElement>('#effects-layer-name').textContent = layer.name;
+        this.q<HTMLElement>('#effects-panel').hidden = false;
+      },
+      onToggleLock: (layer) => {
+        this.ctl.setProps(layer.id, { locked: !layer.locked });
+        this.syncUI(); this.updateHistoryUI();
+      },
+      onSelect: (layer) => { this.activeId = layer.id; this.syncUI(); },
+      onContextMenu: (layer, x, y) => { this.activeId = layer.id; this.syncUI(); this.showLayerContextMenu(x, y, layer); },
+    });
   }
 
   private layerTypeLabel(type: LayerType): string {
-    return ({ paint: 'Capa de pintura', raster: 'Capa de pintura', filter: 'Capa de filtro', fill: 'Capa de relleno', file: 'Capa de archivo', vector: 'Capa vectorial', group: 'Grupo de capas' })[type];
+    return ({ paint: 'Capa de pintura', raster: 'Capa de pintura', filter: 'Capa de filtro', fill: 'Capa de relleno', file: 'Capa de archivo', vector: 'Capa vectorial', text: 'Capa de texto', group: 'Grupo de capas' })[type];
   }
 
   private layerTypeIcon(type: LayerType): string {
-    return ({ paint: '✎', raster: '✎', filter: '◐', fill: '◧', file: '▧', vector: '◇', group: '▱' })[type];
+    return ({ paint: 'paint-layer', raster: 'paint-layer', filter: 'filter-layer', fill: 'fill-layer', file: 'file-layer', vector: 'vector-layer', text: 'text-layer', group: 'group-layer' })[type];
   }
 
   private drawLayerThumbnail(canvas: HTMLCanvasElement, layer: LayerNode): void {
@@ -1068,6 +1643,7 @@ export class App {
     if (layer.type === 'fill') options.push(['Cambiar color de relleno…', () => this.changeFillColor(layer)]);
     if (layer.type === 'filter') options.push(['Configurar filtro…', () => this.openFilterEditor(layer)]);
     if (layer.type === 'vector') options.push(['Editar objetos vectoriales…', () => this.editVectorLayer(layer)]);
+    if (layer.type === 'text') options.push(['Editar texto…', () => { this.activeId = layer.id; void this.createTextAt({ x: layer.textX ?? 0, y: layer.textY ?? 0 }, layer); }]);
     if (layer.type === 'file') {
       options.push([`${layer.sourceLinkId ? 'Vínculo externo configurado' : 'Sin vínculo externo'}: ${layer.sourceName ?? layer.name}`, () => {}]);
       options.push(['Actualizar desde archivo vinculado', () => { void this.refreshLinkedFileLayer(layer, true); }]);
@@ -1130,6 +1706,7 @@ export class App {
     if (layer.type === 'filter') { this.syncUI(); this.openFilterEditor(layer); }
     else if (layer.type === 'fill') this.changeFillColor(layer);
     else if (layer.type === 'vector') this.editVectorLayer(layer);
+    else if (layer.type === 'text') void this.createTextAt({ x: layer.textX ?? 0, y: layer.textY ?? 0 }, layer);
     else this.renameLayer(layer);
   }
 
@@ -1214,6 +1791,7 @@ export class App {
   private async createLayerOfType(type: LayerType): Promise<void> {
     this.q<HTMLElement>('#layer-create-menu').hidden = true;
     if (type === 'file') { await this.createFileLayer(); return; }
+    if (type === 'text') { await this.createTextAt({ x: Math.round(this.ctl.doc.width * 0.25), y: Math.round(this.ctl.doc.height * 0.25) }); return; }
     if (type === 'fill') {
       const color = prompt('Color inicial de la capa de relleno', '#ffffff');
       if (!color) return;
@@ -1221,7 +1799,7 @@ export class App {
       const node = this.ctl.addLayer('fill', 'Relleno', undefined, -1, { fillColor: color.startsWith('#') ? color : `#${color}` });
       this.activeId = node.id;
     } else {
-      const name = ({ paint: `Pintura ${this.ctl.doc.layers.length}`, filter: 'Filtro', vector: 'Vectorial', group: 'Grupo', raster: 'Capa' } as Record<LayerType, string>)[type];
+      const name = ({ paint: `Pintura ${this.ctl.doc.layers.length}`, filter: 'Filtro', vector: 'Vectorial', text: 'Texto', group: 'Grupo', raster: 'Capa', fill: 'Relleno', file: 'Archivo' } as Record<LayerType, string>)[type];
       const node = this.ctl.addLayer(type, name);
       this.activeId = node.id;
       if (type === 'vector') this.editVectorLayer(node);
@@ -1385,58 +1963,13 @@ export class App {
   }
 
   private renderVectorEditor(): void {
-    const host = this.q<HTMLElement>('#vector-shape-list');
-    host.replaceChildren();
-    if (!this.vectorDraft.length) {
-      const empty = document.createElement('p'); empty.className = 'hint'; empty.textContent = 'Todavía no hay objetos. Elegí una herramienta vectorial para crear uno.'; host.append(empty);
-    }
-    for (const shape of this.vectorDraft) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.classList.toggle('active', shape.id === this.vectorSelectedId);
-      const icon = ({ rectangle: '▭', 'rounded-rectangle': '▢', ellipse: '◯', line: '／', polygon: '△', polyline: '⌁', bezier: '∿', freehand: '〰', star: '☆', spiral: '◎', text: 'T' } as const)[shape.kind];
-      button.textContent = `${icon} ${this.vectorKindLabel(shape.kind)} · ${Math.round(shape.x)}, ${Math.round(shape.y)}`;
-      button.onclick = () => { this.vectorSelectedId = shape.id; this.renderVectorEditor(); };
-      host.append(button);
-    }
-    const shape = this.vectorDraft.find((item) => item.id === this.vectorSelectedId);
-    const field = <T extends HTMLElement>(id: string) => this.q<T>(`#${id}`);
-    const ids = [
-      'vector-kind','vector-x','vector-y','vector-width','vector-height','vector-rotation','vector-color','vector-stroke-color',
-      'vector-opacity','vector-stroke','vector-fill-enabled','vector-stroke-enabled','vector-dash','vector-line-cap','vector-line-join',
-      'vector-corner-radius','vector-star-points','vector-text','vector-font-family','vector-font-size','vector-font-style',
-      'vector-font-weight','vector-text-align','vector-points','vector-delete-shape','vector-duplicate-shape','vector-shape-up','vector-shape-down','vector-export-svg',
-    ];
-    ids.forEach((id) => { field<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement>(id).disabled = !shape; });
-    if (!shape) return;
-    field<HTMLSelectElement>('vector-kind').value = shape.kind;
-    field<HTMLInputElement>('vector-x').value = String(Math.round(shape.x));
-    field<HTMLInputElement>('vector-y').value = String(Math.round(shape.y));
-    field<HTMLInputElement>('vector-width').value = String(Math.round(shape.width));
-    field<HTMLInputElement>('vector-height').value = String(Math.round(shape.height));
-    field<HTMLInputElement>('vector-rotation').value = String(Math.round(shape.rotation ?? 0));
-    field<HTMLInputElement>('vector-color').value = /^#[0-9a-f]{6}$/i.test(shape.fillColor ?? shape.color) ? (shape.fillColor ?? shape.color) : '#e03030';
-    field<HTMLInputElement>('vector-stroke-color').value = /^#[0-9a-f]{6}$/i.test(shape.strokeColor ?? shape.color) ? (shape.strokeColor ?? shape.color) : '#e03030';
-    field<HTMLInputElement>('vector-opacity').value = String(Math.round(shape.opacity * 100));
-    field<HTMLElement>('vector-opacity-value').textContent = `${Math.round(shape.opacity * 100)}%`;
-    field<HTMLInputElement>('vector-stroke').value = String(Math.max(0, Math.round(shape.strokeWidth)));
-    const defaultFill = !['line','polyline','bezier','freehand','spiral'].includes(shape.kind);
-    field<HTMLSelectElement>('vector-fill-enabled').value = (shape.fillEnabled ?? defaultFill) ? 'yes' : 'no';
-    field<HTMLSelectElement>('vector-stroke-enabled').value = (shape.strokeEnabled ?? ['line','polyline','bezier','freehand','spiral'].includes(shape.kind)) ? 'yes' : 'no';
-    field<HTMLSelectElement>('vector-dash').value = shape.strokeDash ?? 'solid';
-    field<HTMLSelectElement>('vector-line-cap').value = shape.lineCap ?? 'round';
-    field<HTMLSelectElement>('vector-line-join').value = shape.lineJoin ?? 'round';
-    field<HTMLInputElement>('vector-corner-radius').value = String(shape.cornerRadius ?? 20);
-    field<HTMLInputElement>('vector-star-points').value = String(shape.starPoints ?? 5);
-    field<HTMLInputElement>('vector-text').value = shape.text ?? 'Texto vectorial';
-    field<HTMLSelectElement>('vector-font-family').value = shape.fontFamily ?? 'Arial';
-    field<HTMLInputElement>('vector-font-size').value = String(shape.fontSize ?? 64);
-    field<HTMLSelectElement>('vector-font-style').value = shape.fontStyle ?? 'normal';
-    field<HTMLSelectElement>('vector-font-weight').value = shape.fontWeight ?? 'normal';
-    field<HTMLSelectElement>('vector-text-align').value = shape.textAlign ?? 'left';
-    field<HTMLTextAreaElement>('vector-points').value = shape.points ? JSON.stringify(shape.points, null, 2) : '';
-    field<HTMLButtonElement>('vector-shape-up').disabled = !shape || this.vectorDraft.findIndex((item) => item.id === shape.id) >= this.vectorDraft.length - 1;
-    field<HTMLButtonElement>('vector-shape-down').disabled = !shape || this.vectorDraft.findIndex((item) => item.id === shape.id) <= 0;
+    renderVectorEditorPanel(
+      this.root,
+      this.vectorDraft,
+      this.vectorSelectedId,
+      (kind) => this.vectorKindLabel(kind),
+      (id) => { this.vectorSelectedId = id; this.renderVectorEditor(); },
+    );
   }
 
   private addVectorShape(kind: VectorShape['kind']): void {
@@ -1680,6 +2213,36 @@ export class App {
   // ───────────── Eventos ─────────────
 
   private bind(): void {
+    wirePlugins(this.root, () => this.createPluginApiContext());
+    wireLayersPanel(this.root, {
+      createLayer: (type) => { void this.createLayerOfType(type); },
+      deleteActiveLayer: () => {
+        if (this.stroke || !this.active()) return;
+        this.ctl.removeLayer(this.activeId);
+        this.activeId = this.topRaster()?.id ?? '';
+        this.ctl.comp.invalidateAll(); this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
+      },
+      duplicateActiveLayer: () => {
+        if (this.stroke || !this.active()) return;
+        const copy = this.ctl.duplicateLayer(this.activeId);
+        if (copy) this.activeId = copy.id;
+        this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
+      },
+      moveActiveLayer: (delta) => this.moveActive(delta),
+      changeFillColor: () => { const layer = this.active(); if (layer?.type === 'fill') this.changeFillColor(layer); },
+      configureFilter: () => { const layer = this.active(); if (layer?.type === 'filter') this.openFilterEditor(layer); },
+      editVectorLayer: () => { const layer = this.active(); if (layer?.type === 'vector') this.editVectorLayer(layer); },
+      editTextLayer: () => { const layer = this.active(); if (layer?.type === 'text') void this.createTextAt({ x: layer.textX ?? 0, y: layer.textY ?? 0 }, layer); },
+      setOpacity: (opacity) => {
+        const layer = this.active(); if (!layer) return;
+        this.ctl.setProps(layer.id, { opacity }); this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
+      },
+      setBlendMode: (blendMode) => {
+        const layer = this.active(); if (!layer) return;
+        this.ctl.setProps(layer.id, { blendMode }); this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
+      },
+    });
+    this.wireComicManager();
     this.renderToolOptions();
     this.renderAdvancedToolOptions();
     this.applyCanvasView();
@@ -1691,6 +2254,7 @@ export class App {
       { button: this.q<HTMLButtonElement>('#menu-file'), dropdown: this.q<HTMLElement>('#file-menu-dropdown') },
       { button: this.q<HTMLButtonElement>('#menu-edit'), dropdown: this.q<HTMLElement>('#edit-menu-dropdown') },
       { button: this.q<HTMLButtonElement>('#menu-view'), dropdown: this.q<HTMLElement>('#view-menu-dropdown') },
+      { button: this.q<HTMLButtonElement>('#menu-workspace'), dropdown: this.q<HTMLElement>('#workspace-menu-dropdown') },
     ];
     const closeMenu = (menu: typeof menus[number]) => {
       menu.dropdown.hidden = true;
@@ -1705,7 +2269,7 @@ export class App {
         menu.button.setAttribute('aria-expanded', String(shouldOpen));
       });
       menu.dropdown.addEventListener('click', (e) => {
-        if ((e.target as HTMLElement).closest('button[role="menuitem"]')) closeMenu(menu);
+        if ((e.target as HTMLElement).closest('button[role^="menuitem"]')) closeMenu(menu);
       });
       menu.dropdown.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') { closeMenu(menu); menu.button.focus(); }
@@ -1719,6 +2283,22 @@ export class App {
       });
     });
 
+    const workspaceMenu = menus[3];
+    const refreshWorkspaceMenu = () => this.q<HTMLElement>('#workspace-menu-dropdown').querySelectorAll<HTMLButtonElement>('[data-workspace]').forEach((button) => {
+      const selected = button.dataset.workspace === this.workspace;
+      button.setAttribute('aria-checked', String(selected));
+      const check = button.querySelector<HTMLElement>('.menu-check'); if (check) check.textContent = selected ? '✓' : '';
+    });
+    this.q<HTMLElement>('#workspace-menu-dropdown').querySelectorAll<HTMLButtonElement>('[data-workspace]').forEach((button) => button.addEventListener('click', (event) => {
+      event.preventDefault(); event.stopPropagation();
+      const candidate = button.dataset.workspace as WorkspaceId;
+      if (!WORKSPACES.some((entry) => entry.id === candidate)) return;
+      this.applyWorkspace(candidate);
+      closeMenu(workspaceMenu);
+      refreshWorkspaceMenu();
+    }));
+    refreshWorkspaceMenu();
+
     const viewMenu = menus[2];
     const panelsDropdown = this.q<HTMLElement>('#panels-menu-dropdown');
     const panelsMenuButton = this.q<HTMLButtonElement>('#menu-panels');
@@ -1726,6 +2306,7 @@ export class App {
       { button: this.q<HTMLButtonElement>('#toggle-panel-advanced'), panel: this.q<HTMLElement>('.advanced-tool-panel') },
       { button: this.q<HTMLButtonElement>('#toggle-panel-history'), panel: this.q<HTMLElement>('.history-panel') },
       { button: this.q<HTMLButtonElement>('#toggle-panel-layers'), panel: this.q<HTMLElement>('.layers-panel') },
+      { button: this.q<HTMLButtonElement>('#toggle-panel-comic'), panel: this.q<HTMLElement>('.comic-manager-panel') },
     ];
     const updatePanelMenu = () => {
       for (const entry of panelEntries) {
@@ -1781,12 +2362,14 @@ export class App {
     };
     on('#toggle-panels', toggleAllPanels);
     updatePanelMenu();
+    this.applyWorkspace(this.workspace, false);
 
     on('#menu-filter', () => this.openDestructiveFilterPanel());
     on('#menu-layer', () => openPanel('effects-panel'));
     on('#rail-hand', () => this.setTool('hand'));
     on('#rail-brush', () => this.setTool('brush')); on('#rail-eraser', () => this.setTool('eraser'));
     on('#rail-eyedropper', () => this.setTool('eyedropper')); on('#rail-line', () => this.setTool('line'));
+    on('#rail-text', () => this.setTool('text')); on('#rail-vector-select', () => this.setTool('vector-select'));
     on('#rail-rectangle', () => this.setTool('rectangle')); on('#rail-ellipse', () => this.setTool('ellipse')); on('#rail-fill', () => this.setTool('fill'));
     on('#zoom-out', () => { this.zoom = Math.max(0.25, Math.round((this.zoom / 1.2) * 1000) / 1000); this.applyCanvasView(); });
     on('#zoom-in', () => { this.zoom = Math.min(8, Math.round((this.zoom * 1.2) * 1000) / 1000); this.applyCanvasView(); });
@@ -1794,78 +2377,24 @@ export class App {
     this.root.querySelectorAll<HTMLElement>('[data-close]').forEach((el) => el.addEventListener('click', () => {
       const target = el.dataset.close; if (target) this.q<HTMLElement>('#' + target).hidden = true;
     }));
-    this.q('#filters-panel').querySelectorAll<HTMLButtonElement>('[data-filter]').forEach((button) => button.onclick = () => {
-      this.q('#filters-panel').querySelectorAll('[data-filter]').forEach((entry) => entry.classList.remove('active'));
-      button.classList.add('active');
-      const kind = button.dataset.filter as FilterKind;
-      this.q<HTMLElement>('#filter-title').textContent = this.filterLabel(kind);
+    wireFilterPanel(this.root, { labelForFilter: (kind) => this.filterLabel(kind), applyFilter: () => this.applyFilterDialog() });
+    wireLayerEffectsPanel(this.root);
+    wireVectorEditorPanel(this.root, {
+      addShape: (kind) => this.addVectorShape(kind),
+      deleteShape: () => this.deleteSelectedVectorShape(),
+      duplicateShape: () => this.duplicateSelectedVectorShape(),
+      moveShape: (delta) => this.moveSelectedVectorShape(delta),
+      exportSvg: () => this.exportVectorLayerSvg(),
+      apply: () => this.applyVectorEditor(),
+      cancel: () => this.cancelVectorEditor(),
+      clear: () => { if (confirm('¿Vaciar todos los objetos de esta capa vectorial?')) { this.vectorDraft = []; this.vectorSelectedId = null; this.renderVectorEditor(); } },
+      updateFromFields: () => this.updateVectorShapeFromFields(),
     });
-    this.q<HTMLInputElement>('#filter-radius').oninput = (event) => {
-      this.q('#filter-radius-value').textContent = `${(event.currentTarget as HTMLInputElement).value}%`;
-    };
-    this.q('#effects-apply').onclick = () => { this.q<HTMLElement>('#effects-panel').hidden = true; };
-    this.q('#filter-apply').onclick = () => this.applyFilterDialog();
-    this.q('#vector-panel').addEventListener('keydown', (event) => { if (event.key === 'Escape') this.cancelVectorEditor(); });
 
     on('#b-new', () => this.promptNew());
     on('#b-open', () => void this.open());
     on('#b-save', () => void this.save(false));
     on('#b-save-as', () => void this.save(true));
-    on('#l-add', () => { const menu = this.q<HTMLElement>('#layer-create-menu'); menu.hidden = !menu.hidden; });
-    this.q('#layer-create-menu').querySelectorAll<HTMLButtonElement>('[data-layer-type]').forEach((button) => {
-      button.onclick = () => { void this.createLayerOfType(button.dataset.layerType as LayerType); };
-    });
-    on('#l-del', () => {
-      if (this.stroke || !this.active()) return;
-      this.ctl.removeLayer(this.activeId);
-      this.activeId = this.topRaster()?.id ?? '';
-      this.ctl.comp.invalidateAll(); this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
-    });
-    on('#l-duplicate', () => {
-      if (this.stroke || !this.active()) return;
-      const copy = this.ctl.duplicateLayer(this.activeId);
-      if (copy) this.activeId = copy.id;
-      this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
-    });
-    on('#l-up', () => this.moveActive(+1));
-    on('#l-down', () => this.moveActive(-1));
-    on('#l-fill-color', () => { const layer = this.active(); if (layer?.type === 'fill') this.changeFillColor(layer); });
-    on('#l-filter-options', () => { const layer = this.active(); if (layer?.type === 'filter') this.openFilterEditor(layer); });
-    on('#l-vector-add', () => { const layer = this.active(); if (layer?.type === 'vector') this.editVectorLayer(layer); });
-    this.q<HTMLElement>('#vector-panel').querySelectorAll<HTMLButtonElement>('[data-vector-add]').forEach((button) => {
-      button.onclick = () => this.addVectorShape(button.dataset.vectorAdd as VectorShape['kind']);
-    });
-    on('#vector-delete-shape', () => this.deleteSelectedVectorShape());
-    on('#vector-duplicate-shape', () => this.duplicateSelectedVectorShape());
-    on('#vector-shape-up', () => this.moveSelectedVectorShape(+1));
-    on('#vector-shape-down', () => this.moveSelectedVectorShape(-1));
-    on('#vector-export-svg', () => this.exportVectorLayerSvg());
-    on('#vector-apply', () => this.applyVectorEditor());
-    on('#vector-cancel', () => this.cancelVectorEditor());
-    on('#vector-close', () => this.cancelVectorEditor());
-    on('#vector-clear', () => { if (confirm('¿Vaciar todos los objetos de esta capa vectorial?')) { this.vectorDraft = []; this.vectorSelectedId = null; this.renderVectorEditor(); } });
-    ['vector-kind','vector-x','vector-y','vector-width','vector-height','vector-rotation','vector-color','vector-stroke-color','vector-opacity','vector-stroke',
-      'vector-fill-enabled','vector-stroke-enabled','vector-dash','vector-line-cap','vector-line-join','vector-corner-radius','vector-star-points',
-      'vector-text','vector-font-family','vector-font-size','vector-font-style','vector-font-weight','vector-text-align'].forEach((id) => {
-      const input = this.q<HTMLInputElement | HTMLSelectElement>(`#${id}`);
-      input.addEventListener(id === 'vector-opacity' ? 'input' : 'change', () => this.updateVectorShapeFromFields());
-    });
-    this.q<HTMLTextAreaElement>('#vector-points').addEventListener('change', () => this.updateVectorShapeFromFields());
-    this.q<HTMLInputElement>('#layer-opacity').onchange = (event) => {
-      const layer = this.active(); if (!layer) return;
-      const opacity = Math.max(0, Math.min(100, Number((event.currentTarget as HTMLInputElement).value))) / 100;
-      this.ctl.setProps(layer.id, { opacity }); this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
-    };
-    this.q<HTMLSelectElement>('#dock-blend').onchange = (event) => {
-      const layer = this.active(); if (!layer) return;
-      this.ctl.setProps(layer.id, { blendMode: (event.currentTarget as HTMLSelectElement).value as LayerNode['blendMode'] });
-      this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
-    };
-    document.addEventListener('pointerdown', (event) => {
-      const menu = this.root.querySelector<HTMLElement>('#layer-create-menu');
-      const add = this.root.querySelector<HTMLElement>('#l-add');
-      if (menu && add && !menu.contains(event.target as Node) && !add.contains(event.target as Node)) menu.hidden = true;
-    });
 
     const c = this.canvas;
     c.addEventListener('pointerdown', (e) => this.down(e));
@@ -1905,8 +2434,127 @@ export class App {
       else if (!mod && !typing && k === 'o') this.setTool('ellipse');
       else if (!mod && !typing && k === 'g') this.setTool('fill');
       else if (!mod && !typing && k === 'h') this.setTool('hand');
+      else if (!mod && !typing && k === 't') this.setTool('text');
+      else if (!mod && !typing && k === 'v') this.setTool('vector-select');
     });
     window.addEventListener('keyup', (e) => { if (e.code === 'Space') this.spaceDown = false; });
+  }
+
+  private createPluginApiContext(): Partial<PluginApi> {
+    const collectLayers = (nodes: LayerNode[]): LayerNode[] => nodes.flatMap((node) => [node, ...collectLayers(node.children)]);
+    return {
+      getDocumentInfo: () => this.ctl ? ({ name: this.ctl.doc.name, width: this.ctl.doc.width, height: this.ctl.doc.height, activeLayerId: this.activeId || null }) : null,
+      getLayers: () => this.ctl ? collectLayers(this.ctl.doc.layers).map((layer) => ({ id: layer.id, name: layer.name, type: layer.type, visible: layer.visible, locked: layer.locked, opacity: layer.opacity })) : [],
+      createLayer: (type, name) => {
+        if (!this.ctl) return null;
+        try {
+          const node = this.ctl.addLayer(type, name);
+          this.activeId = node.id; this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
+          return { id: node.id, name: node.name, type: node.type };
+        } catch (error) { this.fail(error); return null; }
+      },
+      renameLayer: (id, name) => {
+        if (!this.ctl || !name.trim()) return false;
+        const done = this.ctl.setProps(id, { name: name.trim().slice(0, 120) });
+        if (done) { this.syncUI(); this.updateHistoryUI(); }
+        return done;
+      },
+      setLayerProperties: (id, properties) => {
+        if (!this.ctl) return false;
+        const patch = { ...properties };
+        if (patch.opacity !== undefined) patch.opacity = Math.max(0, Math.min(1, patch.opacity));
+        const done = this.ctl.setProps(id, patch);
+        if (done) { this.ctl.comp.invalidateAll(); this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh(); }
+        return done;
+      },
+    };
+  }
+
+  private beginVectorGesture(point: { x: number; y: number }, event: PointerEvent): void {
+    const layer = this.active();
+    if (!layer || layer.type !== 'vector') { this.q<HTMLElement>('#status').textContent = 'Seleccioná una capa vectorial.'; return; }
+    if (this.ctl.isEffectivelyLocked(layer.id) || !this.ctl.isEffectivelyVisible(layer.id)) { this.q<HTMLElement>('#status').textContent = 'La capa vectorial está bloqueada u oculta.'; return; }
+    const shapes = layer.vectorShapes ?? [];
+    const hit = [...shapes].reverse().find((shape) => {
+      const x1 = Math.min(shape.x, shape.x + shape.width), x2 = Math.max(shape.x, shape.x + shape.width);
+      const y1 = Math.min(shape.y, shape.y + shape.height), y2 = Math.max(shape.y, shape.y + shape.height);
+      const pad = Math.max(5, shape.strokeWidth / 2);
+      return point.x >= x1 - pad && point.x <= x2 + pad && point.y >= y1 - pad && point.y <= y2 + pad;
+    });
+    if (!hit) {
+      this.vectorDirectSelectedId = null; this.clearToolPreview();
+      this.q<HTMLElement>('#status').textContent = shapes.length ? 'No se encontró un objeto en esa posición.' : 'La capa está vacía. Usá “Editar vectores…” para agregar formas.';
+      return;
+    }
+    const copy: VectorShape = { ...hit, points: hit.points?.map((p) => ({ ...p })) };
+    const handle = Math.abs(point.x - (hit.x + hit.width)) <= 12 && Math.abs(point.y - (hit.y + hit.height)) <= 12;
+    this.vectorDirectSelectedId = hit.id;
+    this.vectorGesture = { layerId: layer.id, shapeId: hit.id, mode: handle ? 'resize' : 'move', startPoint: point, original: copy, latest: { ...copy, points: copy.points?.map((p) => ({ ...p })) }, moved: false };
+    this.canvas.setPointerCapture(event.pointerId);
+    this.drawVectorSelectionOverlay(copy);
+    this.q<HTMLElement>('#status').textContent = `${this.vectorKindLabel(hit.kind)} seleccionado · ${handle ? 'redimensionar' : 'arrastrar para mover'}`;
+  }
+
+  private transformVectorShape(original: VectorShape, dx: number, dy: number, mode: 'move' | 'resize'): VectorShape {
+    const clone: VectorShape = { ...original, points: original.points?.map((point) => ({ ...point })) };
+    if (mode === 'move') {
+      clone.x = original.x + dx; clone.y = original.y + dy;
+      if (clone.points) clone.points = clone.points.map((point) => ({
+        ...point, x: point.x + dx, y: point.y + dy,
+        ...(point.inX !== undefined ? { inX: point.inX + dx } : {}), ...(point.inY !== undefined ? { inY: point.inY + dy } : {}),
+        ...(point.outX !== undefined ? { outX: point.outX + dx } : {}), ...(point.outY !== undefined ? { outY: point.outY + dy } : {}),
+      }));
+      return clone;
+    }
+    const nextWidth = Math.max(1, original.width + dx), nextHeight = Math.max(1, original.height + dy);
+    const sx = nextWidth / Math.max(1, original.width), sy = nextHeight / Math.max(1, original.height);
+    clone.width = nextWidth; clone.height = nextHeight;
+    if (clone.points) clone.points = clone.points.map((point) => ({
+      ...point, x: original.x + (point.x - original.x) * sx, y: original.y + (point.y - original.y) * sy,
+      ...(point.inX !== undefined ? { inX: original.x + (point.inX - original.x) * sx } : {}), ...(point.inY !== undefined ? { inY: original.y + (point.inY - original.y) * sy } : {}),
+      ...(point.outX !== undefined ? { outX: original.x + (point.outX - original.x) * sx } : {}), ...(point.outY !== undefined ? { outY: original.y + (point.outY - original.y) * sy } : {}),
+    }));
+    if (clone.kind === 'text') clone.fontSize = Math.max(1, (original.fontSize ?? 64) * Math.min(sx, sy));
+    return clone;
+  }
+
+  private updateVectorGesture(point: { x: number; y: number }): void {
+    const gesture = this.vectorGesture; if (!gesture) return;
+    const dx = point.x - gesture.startPoint.x, dy = point.y - gesture.startPoint.y;
+    gesture.moved = gesture.moved || Math.hypot(dx, dy) > 1;
+    gesture.latest = this.transformVectorShape(gesture.original, dx, dy, gesture.mode);
+    this.drawVectorSelectionOverlay(gesture.latest);
+  }
+
+  private finishVectorGesture(point: { x: number; y: number }): void {
+    const gesture = this.vectorGesture; if (!gesture) return;
+    this.updateVectorGesture(point);
+    this.vectorGesture = null;
+    const layer = this.ctl.find(gesture.layerId);
+    if (layer?.type === 'vector' && gesture.moved) {
+      const shapes = (layer.vectorShapes ?? []).map((shape) => shape.id === gesture.shapeId ? gesture.latest : { ...shape, points: shape.points?.map((p) => ({ ...p })) });
+      this.commitVectorShapes(layer, shapes);
+    }
+    this.vectorDirectSelectedId = gesture.shapeId;
+    this.drawVectorSelectionOverlay(gesture.latest);
+  }
+
+  private drawVectorSelectionOverlay(shape: VectorShape): void {
+    this.updatePreviewCanvasSize();
+    const preview = this.q<HTMLCanvasElement>('#tool-preview'); const ctx = preview.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, preview.width, preview.height);
+    const dpr = window.devicePixelRatio || 1; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const stageRect = this.q<HTMLElement>('.canvas-stage').getBoundingClientRect();
+    const canvasRect = this.canvas.getBoundingClientRect();
+    const x = canvasRect.left - stageRect.left + shape.x / this.ctl.doc.width * canvasRect.width;
+    const y = canvasRect.top - stageRect.top + shape.y / this.ctl.doc.height * canvasRect.height;
+    const w = shape.width / this.ctl.doc.width * canvasRect.width, h = shape.height / this.ctl.doc.height * canvasRect.height;
+    ctx.save(); ctx.strokeStyle = '#c92334'; ctx.lineWidth = 1.25; ctx.setLineDash([5, 3]); ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = '#c92334'; ctx.lineWidth = 1.25;
+    const points = [[x,y],[x+w,y],[x,y+h],[x+w,y+h]];
+    points.forEach(([px,py]) => { ctx.fillRect(px - 3.5, py - 3.5, 7, 7); ctx.strokeRect(px - 3.5, py - 3.5, 7, 7); });
+    ctx.restore();
   }
 
   private moveActive(delta: number): void {
@@ -1921,13 +2569,18 @@ export class App {
   private setTool(t: Tool): void {
     if (this.stroke || this.isPanning) return;
     const layer = this.active();
-    const needsPaintTarget = !['hand', 'eyedropper'].includes(t);
+    const needsPaintTarget = !['hand', 'eyedropper', 'text', 'vector-select'].includes(t);
+    if (t === 'vector-select' && (!layer || layer.type !== 'vector' || this.ctl.isEffectivelyLocked(layer.id) || !this.ctl.isEffectivelyVisible(layer.id))) {
+      const status = this.root.querySelector<HTMLElement>('#status'); if (status) status.textContent = 'Seleccioná una capa vectorial visible y desbloqueada para editar sus objetos directamente.';
+      return;
+    }
     if (needsPaintTarget && (!layer || (layer.type !== 'paint' && layer.type !== 'raster') || this.ctl.isEffectivelyLocked(layer.id) || !this.ctl.isEffectivelyVisible(layer.id))) {
       const status = this.root.querySelector<HTMLElement>('#status');
       if (status) status.textContent = !layer ? 'Creá o seleccioná una capa de pintura para usar esta herramienta' : layer.locked || this.ctl.isEffectivelyLocked(layer.id) ? 'La capa está bloqueada' : !this.ctl.isEffectivelyVisible(layer.id) ? 'La capa está oculta' : `${this.layerTypeLabel(layer.type)}: seleccioná una capa de pintura para dibujar`;
       return;
     }
     this.tool = t;
+    this.vectorGesture = null; this.vectorDirectSelectedId = null;
     this.renderToolOptions();
     this.renderAdvancedToolOptions();
     this.applyCanvasView();
@@ -2030,6 +2683,8 @@ export class App {
     const point = this.toDoc(e);
     if (!this.onDocument(point)) return;
     if (this.tool === 'eyedropper') { this.pickColorAt(Math.floor(point.x), Math.floor(point.y)); return; }
+    if (this.tool === 'text') { void this.createTextAt({ x: Math.round(point.x), y: Math.round(point.y) }); return; }
+    if (this.tool === 'vector-select') { this.beginVectorGesture(point, e); return; }
     const layer = this.active();
     if (!layer) return;
     if (layer.type !== 'paint' && layer.type !== 'raster') {
@@ -2054,6 +2709,7 @@ export class App {
   }
 
   private onPointerMove(e: PointerEvent, finalPoint = false): void {
+    if (this.vectorGesture) { this.updateVectorGesture(this.toDoc(e)); return; }
     if (this.isPanning && this.panStart) {
       this.panX = this.panStart.x + e.clientX - this.panStart.clientX;
       this.panY = this.panStart.y + e.clientY - this.panStart.clientY;
@@ -2162,6 +2818,7 @@ export class App {
   }
 
   private up(e?: PointerEvent): void {
+    if (this.vectorGesture) { this.finishVectorGesture(e ? this.toDoc(e) : this.vectorGesture.startPoint); return; }
     if (this.isPanning) {
       this.isPanning = false; this.panStart = null; this.applyCanvasView();
       return;
@@ -2173,7 +2830,7 @@ export class App {
       else if (e && this.shapeStart && (tool === 'line' || tool === 'rectangle' || tool === 'ellipse')) {
         this.commitShape(this.shapeStart, this.toDoc(e), tool);
       }
-      const label: Record<Tool, string> = { brush: 'Pincel', eraser: 'Borrador', eyedropper: 'Cuentagotas', line: 'Línea', rectangle: 'Rectángulo', ellipse: 'Elipse', fill: 'Relleno', hand: 'Mover lienzo' };
+      const label: Record<Tool, string> = { brush: 'Pincel', eraser: 'Borrador', eyedropper: 'Cuentagotas', line: 'Línea', rectangle: 'Rectángulo', ellipse: 'Elipse', fill: 'Relleno', hand: 'Mover lienzo', text: 'Texto', 'vector-select': 'Selección vectorial' };
       this.stroke.end(label[tool ?? 'brush']);
     } catch (error) {
       this.stroke.cancel();

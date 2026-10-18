@@ -9,7 +9,7 @@ import type { DocumentState, LayerNode, UnpackedDocument } from './types';
 const BLEND_NAMES: readonly BlendName[] = ['normal', 'multiply', 'screen', 'overlay'];
 export const blendModeToManifest = (v: number): BlendName => BLEND_NAMES[v] ?? 'normal';
 export type LayerPatch = Partial<Pick<LayerNode,
-  'name' | 'visible' | 'locked' | 'opacity' | 'blendMode' | 'fillColor' | 'filterKind' | 'filterStrength' | 'vectorShapes' | 'sourceName' | 'sourceLinkId' | 'sourceLastModified' | 'sourceFileSize'>>;
+  'name' | 'visible' | 'locked' | 'opacity' | 'blendMode' | 'fillColor' | 'filterKind' | 'filterStrength' | 'vectorShapes' | 'sourceName' | 'sourceLinkId' | 'sourceLastModified' | 'sourceFileSize' | 'textContent' | 'textX' | 'textY' | 'textFontFamily' | 'textFontSize' | 'textColor' | 'textStyle' | 'textAlign' | 'textLineHeight' | 'textLetterSpacing' | 'textStrokeColor' | 'textStrokeWidth' | 'textBackgroundColor'>>;
 type HistoryAction = { kind: 'pixels'; label: string } | { kind: 'structure'; label: string; undo: () => void; redo: () => void };
 type LayerSnapshot = { node: LayerNode; parentId: string | null; index: number; pixels: Map<string, Uint8Array> };
 
@@ -18,6 +18,8 @@ const clonePatch = (n: LayerNode): LayerPatch => ({
   name: n.name, visible: n.visible, locked: n.locked, opacity: n.opacity, blendMode: n.blendMode,
   fillColor: n.fillColor, filterKind: n.filterKind, filterStrength: n.filterStrength,
   vectorShapes: cloneShapes(n.vectorShapes), sourceName: n.sourceName, sourceLinkId: n.sourceLinkId, sourceLastModified: n.sourceLastModified, sourceFileSize: n.sourceFileSize,
+  textContent: n.textContent, textX: n.textX, textY: n.textY, textFontFamily: n.textFontFamily, textFontSize: n.textFontSize, textColor: n.textColor,
+  textStyle: n.textStyle, textAlign: n.textAlign, textLineHeight: n.textLineHeight, textLetterSpacing: n.textLetterSpacing, textStrokeColor: n.textStrokeColor, textStrokeWidth: n.textStrokeWidth, textBackgroundColor: n.textBackgroundColor,
 });
 
 export class DocumentController {
@@ -86,8 +88,9 @@ export class DocumentController {
     if (type === 'filter') { defaults.filterKind = 'grayscale'; defaults.filterStrength = 1; }
     if (type === 'fill') defaults.fillColor = '#ffffff';
     if (type === 'vector') defaults.vectorShapes = [];
+    if (type === 'text') Object.assign(defaults, { textContent: '', textX: 0, textY: 0, textFontFamily: 'Arial', textFontSize: 64, textColor: '#e03030', textStyle: 'normal', textAlign: 'left', textLineHeight: 1.2, textLetterSpacing: 0, textStrokeColor: '#000000', textStrokeWidth: 0, textBackgroundColor: 'transparent' });
     Object.assign(defaults, extras);
-    const label = name ?? ({ paint: 'Capa de pintura', filter: 'Capa de filtro', fill: 'Capa de relleno', file: 'Capa de archivo', vector: 'Capa vectorial', raster: 'Capa' }[type]);
+    const label = name ?? ({ paint: 'Capa de pintura', filter: 'Capa de filtro', fill: 'Capa de relleno', file: 'Capa de archivo', vector: 'Capa vectorial', text: 'Capa de texto', raster: 'Capa' }[type]);
     const node = this.add(type, label, parentId, index, defaults);
     if (type === 'fill') this.fillLayerPixelsRaw(node, node.fillColor ?? '#ffffff');
     if (!this.replaying) {
@@ -257,6 +260,25 @@ export class DocumentController {
     return true;
   }
 
+  /** Actualiza el contenido editable y la caché RGBA de una capa de texto como una sola acción. */
+  replaceTextContent(id: string, patch: Pick<LayerNode, 'textContent' | 'textX' | 'textY' | 'textFontFamily' | 'textFontSize' | 'textColor' | 'textStyle' | 'textAlign' | 'textLineHeight' | 'textLetterSpacing' | 'textStrokeColor' | 'textStrokeWidth' | 'textBackgroundColor'>, rasterPixels: Uint8Array): boolean {
+    const node = this.nodes.get(id);
+    if (!node || node.type !== 'text' || rasterPixels.byteLength !== this.doc.width * this.doc.height * 4) return false;
+    const oldProps = clonePatch(node);
+    const oldPixels = this.readPixels(node) ?? new Uint8Array(this.doc.width * this.doc.height * 4);
+    const newProps: LayerPatch = { ...patch };
+    const nextPixels = new Uint8Array(rasterPixels);
+    const apply = (props: LayerPatch, pixels: Uint8Array) => {
+      Object.assign(node, props);
+      this.layerPixels(node)?.loadFromRGBA(pixels);
+      this.comp.invalidateAll();
+    };
+    if (JSON.stringify(oldProps) === JSON.stringify({ ...oldProps, ...newProps }) && oldPixels.every((value, index) => value === nextPixels[index])) return true;
+    apply(newProps, nextPixels);
+    if (!this.replaying) this.recordStructure(`Editar texto de «${node.name}»`, () => apply(oldProps, oldPixels), () => apply(newProps, nextPixels));
+    return true;
+  }
+
   get canUndo(): boolean { return this.undoStack.length > 0; }
   get canRedo(): boolean { return this.redoStack.length > 0; }
   get undoLabel(): string { return this.undoStack.at(-1)?.label ?? ''; }
@@ -307,7 +329,7 @@ export class DocumentController {
 
   // ── Internos ──
   private typeLabel(type: LayerType): string {
-    return ({ paint: 'capa de pintura', raster: 'capa de pintura', filter: 'capa de filtro', fill: 'capa de relleno', file: 'capa de archivo', vector: 'capa vectorial', group: 'grupo' } as const)[type];
+    return ({ paint: 'capa de pintura', raster: 'capa de pintura', filter: 'capa de filtro', fill: 'capa de relleno', file: 'capa de archivo', vector: 'capa vectorial', text: 'capa de texto', group: 'grupo' } as const)[type];
   }
   private recordStructure(label: string, undo: () => void, redo: () => void): void { this.redoStack = []; this.undoStack.push({ kind: 'structure', label, undo, redo }); }
   private cloneNode(n: LayerNode): LayerNode { return { ...n, vectorShapes: cloneShapes(n.vectorShapes), children: n.children.map((c) => this.cloneNode(c)) }; }
@@ -414,6 +436,7 @@ export class DocumentController {
       visible: src.visible, locked: src.locked, opacity: src.opacity, blendMode: src.blendMode,
       fillColor: src.fillColor, filterKind: src.filterKind, filterStrength: src.filterStrength,
       vectorShapes: cloneShapes(src.vectorShapes), sourceName: src.sourceName, sourceLinkId: src.sourceLinkId, sourceLastModified: src.sourceLastModified, sourceFileSize: src.sourceFileSize,
+      textContent: src.textContent, textX: src.textX, textY: src.textY, textFontFamily: src.textFontFamily, textFontSize: src.textFontSize, textColor: src.textColor, textStyle: src.textStyle, textAlign: src.textAlign, textLineHeight: src.textLineHeight, textLetterSpacing: src.textLetterSpacing, textStrokeColor: src.textStrokeColor, textStrokeWidth: src.textStrokeWidth, textBackgroundColor: src.textBackgroundColor,
     });
     this.nodes.delete(node.id); node.id = src.id; this.nodes.set(node.id, node);
     const px = pixels.get(src.id);

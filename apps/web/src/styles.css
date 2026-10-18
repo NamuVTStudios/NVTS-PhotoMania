@@ -2745,3 +2745,995 @@ button.primary {
 :root[data-theme="light"] .file-menu-dropdown .menu-item[aria-checked="false"] .menu-check {
     color: transparent;
 }
+
+/* Texto editable y selección vectorial */
+#rail-text,
+#rail-vector-select {
+    font-weight: 700;
+    letter-spacing: -.03em;
+}
+
+#rail-text.selected,
+#rail-vector-select.selected {
+    background: var(--accent) !important;
+    color: #fff !important;
+    border-color: var(--accent) !important;
+}
+
+#tool-text-size {
+    width: 78px;
+    min-width: 68px;
+}
+
+#tool-text-font {
+    max-width: 145px;
+}
+
+#tool-text-style {
+    max-width: 130px;
+}
+
+/* Extensiones abiertas de la comunidad */
+.plugins-dialog {
+    width: min(700px, calc(100vw - 32px));
+}
+
+.plugins-warning {
+    margin: 0 0 14px;
+    border-left: 3px solid var(--accent);
+    padding: 9px 12px;
+    background: color-mix(in srgb, var(--accent) 9%, transparent);
+    border-radius: 5px;
+    line-height: 1.5;
+}
+
+.plugins-installed-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.plugin-installed-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    justify-content: space-between;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+
+.plugin-installed-info {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.plugin-installed-info strong {
+    overflow-wrap: anywhere;
+}
+
+.plugin-installed-info small {
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+
+.plugins-empty {
+    color: var(--muted);
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+    padding: 18px;
+    text-align: center;
+}
+
+.plugins-dialog details {
+    margin-top: 12px;
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
+}
+
+.plugins-dialog summary {
+    cursor: pointer;
+    font-weight: 650;
+}
+
+.plugins-dialog pre {
+    overflow: auto;
+    padding: 12px;
+    background: var(--panel-2, #171719);
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.plugin-actions {
+    min-width: 210px;
+    max-width: 320px;
+    max-height: 280px;
+    overflow: auto;
+}
+
+.plugin-action-group {
+    padding: 4px 0;
+}
+
+.plugin-action-title {
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    padding: 5px 10px;
+}
+
+.plugin-action-item {
+    width: 100%;
+    text-align: left;
+}
+
+.plugin-menu-empty {
+    padding: 8px 10px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+:root[data-theme="light"] .plugins-dialog pre {
+    background: #f4f4f6;
+    color: #292b34;
+}
+
+:root[data-theme="light"] .plugins-warning {
+    color: #54242b;
+}
+
+/* Espacios de trabajo guardados y seleccionables. */
+.workspace-menu-wrap>#menu-workspace[aria-expanded="true"] {
+    background: var(--panel2);
+    border-color: var(--line);
+}
+
+.workspace-menu-dropdown {
+    min-width: 245px;
+}
+
+.workspace-menu-item {
+    gap: 14px !important;
+}
+
+.workspace-menu-item>span:first-child {
+    flex: 1;
+}
+
+.workspace-menu-item[aria-checked="true"] {
+    background: #3b2023;
+    border-color: #6b3038 !important;
+}
+
+:root[data-theme="light"] .workspace-menu-item[aria-checked="true"] {
+    background: #fff0f1;
+    border-color: #c92334 !important;
+}
+
+/* Gestor de cómics: configuración de publicación y lista ordenable de páginas. */
+.comic-manager-panel {
+    flex: 1 1 320px;
+    min-height: 320px;
+    display: flex;
+    flex-direction: column;
+}
+
+.comic-manager-panel[hidden] {
+    display: none !important;
+}
+
+.comic-manager-panel>header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    min-height: 38px;
+}
+
+.comic-status {
+    color: var(--muted);
+    font-size: 9px;
+    max-width: 92px;
+    text-align: right;
+    line-height: 1.3;
+}
+
+.comic-manager-content {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 10px;
+    overflow: auto;
+    min-height: 0;
+}
+
+.comic-project-setup {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 9px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--panel, #1b1515) 88%, transparent);
+}
+
+.comic-project-section-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.comic-project-section-title strong {
+    color: var(--text, #eee);
+    font-size: 11px;
+}
+
+.comic-project-section-title span {
+    color: var(--muted);
+    font: 10px ui-monospace, monospace;
+}
+
+.comic-project-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.comic-project-actions button {
+    flex: 1 1 120px;
+    min-width: 0;
+    font-size: 10px;
+    white-space: normal;
+}
+
+.comic-folder-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.comic-create-project,
+#comic-export-project {
+    width: 100%;
+    white-space: normal;
+}
+
+.comic-project-setup .comic-note {
+    font-size: 9px;
+}
+
+.comic-field input[readonly] {
+    opacity: .85;
+}
+
+:root[data-theme="light"] .comic-project-setup {
+    background: #faf7f8;
+    border-color: #d9dbe3;
+}
+
+:root[data-theme="light"] .comic-project-section-title strong {
+    color: #30323b;
+}
+
+.comic-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    font-size: 10px;
+    color: var(--muted);
+}
+
+.comic-field input,
+.comic-field select {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    padding: 6px 7px;
+    background: #151010;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    color: var(--text, #eee);
+    font: inherit;
+    font-size: 11px;
+}
+
+.comic-field-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.comic-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    font-size: 10px;
+    line-height: 1.45;
+    color: var(--muted);
+}
+
+.comic-check input {
+    flex-shrink: 0;
+    accent-color: var(--accent);
+}
+
+.comic-pages-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: center;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+}
+
+.comic-pages-heading strong {
+    color: var(--text, #eee);
+    font-size: 11px;
+}
+
+.comic-pages-heading span {
+    font-size: 10px;
+    color: var(--muted);
+}
+
+.comic-pages-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-height: 42px;
+    max-height: 240px;
+    overflow: auto;
+}
+
+.comic-pages-list:empty::after {
+    content: "Todavía no hay páginas. Usá + Página para empezar.";
+    display: block;
+    padding: 12px 8px;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.45;
+}
+
+.comic-page-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    padding: 3px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: #191313;
+}
+
+.comic-page-row.selected {
+    background: #381b20;
+    border-color: var(--accent);
+}
+
+.comic-page-select {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
+    border: 0;
+    background: transparent;
+    text-align: left;
+    padding: 5px;
+}
+
+.comic-page-select:hover {
+    background: transparent;
+}
+
+.comic-page-thumb {
+    flex: 0 0 32px;
+    height: 42px;
+    display: grid;
+    place-items: center;
+    background: #f1e8e3;
+    color: #422b2b;
+    border: 1px solid #a8928c;
+    border-radius: 2px;
+    font-weight: 700;
+    font-size: 10px;
+}
+
+.comic-page-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.comic-page-detail strong {
+    font-size: 10px;
+    color: var(--text, #eee);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.comic-page-detail small {
+    font-size: 9px;
+    color: var(--muted);
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+}
+
+.comic-page-rename {
+    flex: 0 0 auto;
+    padding: 5px 7px;
+    background: transparent;
+    border-color: transparent;
+}
+
+.comic-page-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.comic-page-actions button {
+    flex: 1;
+    min-width: 33px;
+    padding: 6px 5px;
+    font-size: 10px;
+}
+
+.comic-create-canvas {
+    width: 100%;
+    white-space: normal;
+}
+
+.comic-note {
+    margin: 0;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.45;
+}
+
+.comic-note code {
+    color: var(--accent);
+}
+
+.comic-manager-footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px;
+    border-top: 1px solid var(--line);
+}
+
+.comic-manager-footer button {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: normal;
+    font-size: 10px;
+}
+
+:root[data-theme="light"] .comic-manager-panel>header {
+    background: #f5f5f8;
+    border-color: #e0e2e9;
+}
+
+:root[data-theme="light"] .comic-field {
+    color: #606473;
+}
+
+:root[data-theme="light"] .comic-field input,
+:root[data-theme="light"] .comic-field select {
+    background: #fff;
+    border-color: #d0d3dd;
+    color: #282a33;
+}
+
+:root[data-theme="light"] .comic-page-row {
+    background: #f7f7fa;
+}
+
+:root[data-theme="light"] .comic-page-row.selected {
+    background: #fff0f1;
+    border-color: #c92334;
+}
+
+:root[data-theme="light"] .comic-page-detail strong,
+:root[data-theme="light"] .comic-pages-heading strong {
+    color: #30323b;
+}
+
+:root[data-theme="light"] .comic-page-detail small,
+:root[data-theme="light"] .comic-status {
+    color: #686b78;
+}
+
+:root[data-theme="light"] .comic-manager-footer {
+    border-color: #e0e2e9;
+}
+
+.right-dock[data-workspace="comics"] .comic-manager-panel {
+    order: 0 !important;
+}
+
+.right-dock[data-workspace="comics"] .layers-panel {
+    order: 1 !important;
+}
+
+@media (max-width: 1100px) {
+    .comic-field-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .workspace-menu-dropdown {
+        left: auto;
+        right: 0;
+    }
+}
+
+.comic-page-open-file {
+    width: 100%;
+    white-space: normal;
+}
+
+
+/* Corrección de paneles acoplados: el atributo hidden debe prevalecer sobre display:flex. */
+[hidden] {
+    display: none !important;
+}
+
+/* Las acciones de capa quedan contenidas en el panel Capas y no invaden Historial. */
+.layers-panel {
+    position: relative;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.layers-panel footer {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    min-width: 0;
+    padding: 8px;
+}
+
+.layers-panel .layer-action-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    width: 100%;
+    min-width: 0;
+}
+
+.layers-panel .layer-action-row button {
+    min-width: 0;
+    width: 100%;
+    padding: 6px 2px;
+    white-space: nowrap;
+}
+
+.layers-panel footer #l-add {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+    white-space: normal;
+}
+
+.layers-panel>.layer-create-menu {
+    right: 8px;
+    bottom: 82px;
+    max-width: calc(100% - 16px);
+    max-height: min(230px, calc(100% - 120px));
+    overflow-y: auto;
+    box-sizing: border-box;
+    z-index: 5;
+}
+
+
+/* Capas: el panel debe mostrar completo el botón de creación incluso sin capas.
+   El contenedor #layers vacío no necesita reservar altura; antes su min-height
+   sumaba espacio innecesario y empujaba el pie fuera del panel. */
+.right-dock {
+    min-height: 0;
+    align-items: stretch;
+}
+
+.right-dock>.dock-panel {
+    width: 100%;
+    min-width: 0;
+    flex-shrink: 0;
+}
+
+.layers-panel {
+    flex: 1 0 300px;
+    min-height: 300px;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.layers-panel>header,
+.layers-panel>.layer-props,
+.layers-panel>.layer-empty,
+.layers-panel>footer {
+    flex: 0 0 auto;
+    min-width: 0;
+}
+
+.layers-panel #layers:empty {
+    display: none;
+}
+
+.layers-panel #layers:not(:empty) {
+    flex: 1 1 auto;
+    min-height: 80px;
+}
+
+.layers-panel>.layer-empty {
+    min-height: 88px;
+    padding: 16px 12px;
+    justify-content: center;
+    box-sizing: border-box;
+}
+
+.layers-panel footer {
+    flex-shrink: 0;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.layers-panel footer #l-add {
+    box-sizing: border-box;
+    min-height: 36px;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+
+/* SVG propios para herramientas y acciones. Las máscaras toman el color actual,
+   por lo que se adaptan al tema y al estado seleccionado sin duplicar archivos. */
+.tool-icon {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    flex: 0 0 20px;
+    background-color: currentColor;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    vertical-align: middle;
+    pointer-events: none;
+}
+
+.tool-icon--hand {
+    -webkit-mask-image: url("./icons/tools/hand.svg");
+    mask-image: url("./icons/tools/hand.svg");
+}
+
+.tool-icon--brush {
+    -webkit-mask-image: url("./icons/tools/brush.svg");
+    mask-image: url("./icons/tools/brush.svg");
+}
+
+.tool-icon--eraser {
+    -webkit-mask-image: url("./icons/tools/eraser.svg");
+    mask-image: url("./icons/tools/eraser.svg");
+}
+
+.tool-icon--line {
+    -webkit-mask-image: url("./icons/tools/line.svg");
+    mask-image: url("./icons/tools/line.svg");
+}
+
+.tool-icon--rectangle {
+    -webkit-mask-image: url("./icons/tools/rectangle.svg");
+    mask-image: url("./icons/tools/rectangle.svg");
+}
+
+.tool-icon--ellipse {
+    -webkit-mask-image: url("./icons/tools/ellipse.svg");
+    mask-image: url("./icons/tools/ellipse.svg");
+}
+
+.tool-icon--fill {
+    -webkit-mask-image: url("./icons/tools/fill.svg");
+    mask-image: url("./icons/tools/fill.svg");
+}
+
+.tool-icon--eyedropper {
+    -webkit-mask-image: url("./icons/tools/eyedropper.svg");
+    mask-image: url("./icons/tools/eyedropper.svg");
+}
+
+.tool-icon--text {
+    -webkit-mask-image: url("./icons/tools/text.svg");
+    mask-image: url("./icons/tools/text.svg");
+}
+
+.tool-icon--vector-select {
+    -webkit-mask-image: url("./icons/tools/vector-select.svg");
+    mask-image: url("./icons/tools/vector-select.svg");
+}
+
+.tool-icon--zoom-in {
+    -webkit-mask-image: url("./icons/tools/zoom-in.svg");
+    mask-image: url("./icons/tools/zoom-in.svg");
+}
+
+.tool-icon--zoom-out {
+    -webkit-mask-image: url("./icons/tools/zoom-out.svg");
+    mask-image: url("./icons/tools/zoom-out.svg");
+}
+
+.tool-icon--zoom-fit {
+    -webkit-mask-image: url("./icons/tools/zoom-fit.svg");
+    mask-image: url("./icons/tools/zoom-fit.svg");
+}
+
+.tool-icon--paint-layer {
+    -webkit-mask-image: url("./icons/tools/paint-layer.svg");
+    mask-image: url("./icons/tools/paint-layer.svg");
+}
+
+.tool-icon--filter-layer {
+    -webkit-mask-image: url("./icons/tools/filter-layer.svg");
+    mask-image: url("./icons/tools/filter-layer.svg");
+}
+
+.tool-icon--fill-layer {
+    -webkit-mask-image: url("./icons/tools/fill-layer.svg");
+    mask-image: url("./icons/tools/fill-layer.svg");
+}
+
+.tool-icon--file-layer {
+    -webkit-mask-image: url("./icons/tools/file-layer.svg");
+    mask-image: url("./icons/tools/file-layer.svg");
+}
+
+.tool-icon--vector-layer {
+    -webkit-mask-image: url("./icons/tools/vector-layer.svg");
+    mask-image: url("./icons/tools/vector-layer.svg");
+}
+
+.tool-icon--text-layer {
+    -webkit-mask-image: url("./icons/tools/text-layer.svg");
+    mask-image: url("./icons/tools/text-layer.svg");
+}
+
+.tool-icon--group-layer {
+    -webkit-mask-image: url("./icons/tools/group-layer.svg");
+    mask-image: url("./icons/tools/group-layer.svg");
+}
+
+.tool-icon--layers {
+    -webkit-mask-image: url("./icons/tools/layers.svg");
+    mask-image: url("./icons/tools/layers.svg");
+}
+
+.tool-icon--move-up {
+    -webkit-mask-image: url("./icons/tools/move-up.svg");
+    mask-image: url("./icons/tools/move-up.svg");
+}
+
+.tool-icon--move-down {
+    -webkit-mask-image: url("./icons/tools/move-down.svg");
+    mask-image: url("./icons/tools/move-down.svg");
+}
+
+.tool-icon--duplicate {
+    -webkit-mask-image: url("./icons/tools/duplicate.svg");
+    mask-image: url("./icons/tools/duplicate.svg");
+}
+
+.tool-icon--delete {
+    -webkit-mask-image: url("./icons/tools/delete.svg");
+    mask-image: url("./icons/tools/delete.svg");
+}
+
+.tool-icon--lock {
+    -webkit-mask-image: url("./icons/tools/lock.svg");
+    mask-image: url("./icons/tools/lock.svg");
+}
+
+.tool-icon--unlock {
+    -webkit-mask-image: url("./icons/tools/unlock.svg");
+    mask-image: url("./icons/tools/unlock.svg");
+}
+
+.tool-icon--plus {
+    -webkit-mask-image: url("./icons/tools/plus.svg");
+    mask-image: url("./icons/tools/plus.svg");
+}
+
+.tool-icon--shape-rectangle {
+    -webkit-mask-image: url("./icons/tools/shape-rectangle.svg");
+    mask-image: url("./icons/tools/shape-rectangle.svg");
+}
+
+.tool-icon--shape-rounded-rectangle {
+    -webkit-mask-image: url("./icons/tools/shape-rounded-rectangle.svg");
+    mask-image: url("./icons/tools/shape-rounded-rectangle.svg");
+}
+
+.tool-icon--shape-ellipse {
+    -webkit-mask-image: url("./icons/tools/shape-ellipse.svg");
+    mask-image: url("./icons/tools/shape-ellipse.svg");
+}
+
+.tool-icon--shape-line {
+    -webkit-mask-image: url("./icons/tools/shape-line.svg");
+    mask-image: url("./icons/tools/shape-line.svg");
+}
+
+.tool-icon--shape-polygon {
+    -webkit-mask-image: url("./icons/tools/shape-polygon.svg");
+    mask-image: url("./icons/tools/shape-polygon.svg");
+}
+
+.tool-icon--shape-polyline {
+    -webkit-mask-image: url("./icons/tools/shape-polyline.svg");
+    mask-image: url("./icons/tools/shape-polyline.svg");
+}
+
+.tool-icon--shape-bezier {
+    -webkit-mask-image: url("./icons/tools/shape-bezier.svg");
+    mask-image: url("./icons/tools/shape-bezier.svg");
+}
+
+.tool-icon--shape-freehand {
+    -webkit-mask-image: url("./icons/tools/shape-freehand.svg");
+    mask-image: url("./icons/tools/shape-freehand.svg");
+}
+
+.tool-icon--shape-star {
+    -webkit-mask-image: url("./icons/tools/shape-star.svg");
+    mask-image: url("./icons/tools/shape-star.svg");
+}
+
+.tool-icon--shape-spiral {
+    -webkit-mask-image: url("./icons/tools/shape-spiral.svg");
+    mask-image: url("./icons/tools/shape-spiral.svg");
+}
+
+.tool-icon--shape-text {
+    -webkit-mask-image: url("./icons/tools/shape-text.svg");
+    mask-image: url("./icons/tools/shape-text.svg");
+}
+
+.tools-rail button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.tools-rail button .tool-icon {
+    width: 21px;
+    height: 21px;
+    flex-basis: 21px;
+}
+
+.zoom-controls button .tool-icon {
+    width: 16px;
+    height: 16px;
+    flex-basis: 16px;
+}
+
+.zoom-controls #zoom-fit {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.layer-type-icon.tool-icon {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+}
+
+.layer-create-menu button {
+    gap: 9px;
+}
+
+.layer-create-menu button .tool-icon {
+    width: 18px;
+    height: 18px;
+    flex-basis: 18px;
+}
+
+.layers-panel footer #l-add {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+}
+
+.layers-panel footer #l-add .tool-icon {
+    width: 17px;
+    height: 17px;
+    flex-basis: 17px;
+}
+
+.layers-panel .layer-action-row button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.layers-panel .layer-action-row .tool-icon {
+    width: 17px;
+    height: 17px;
+    flex-basis: 17px;
+}
+
+.layer .layer-lock-toggle {
+    width: 25px;
+    min-width: 25px;
+    padding: 3px !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.layer .tool-icon--lock,
+.layer .tool-icon--unlock {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 15px;
+    min-width: 15px;
+}
+
+.layer-empty>.tool-icon {
+    width: 26px;
+    height: 26px;
+    flex-basis: 26px;
+    color: var(--accent);
+}
+
+.vector-add-row button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 7px;
+}
+
+.vector-add-row .tool-icon {
+    width: 18px;
+    height: 18px;
+    flex-basis: 18px;
+}
+
+.vector-editor-grid #vector-shape-list button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.vector-editor-grid #vector-shape-list .tool-icon {
+    width: 17px;
+    height: 17px;
+    flex-basis: 17px;
+    flex-shrink: 0;
+}
+
+.vector-editor-grid #vector-shape-list button>span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.vector-panel>header>.tool-icon {
+    width: 19px;
+    height: 19px;
+    flex-basis: 19px;
+}
+
+.tool-icon--group-layer-open {
+    -webkit-mask-image: url("./icons/tools/group-layer-open.svg");
+    mask-image: url("./icons/tools/group-layer-open.svg");
+}

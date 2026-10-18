@@ -3,7 +3,9 @@
 export const NVTS_FORMAT = 'nvtsphoto' as const;
 export const NVTS_VERSION = '0.1.0';
 
-export type LayerType = 'paint' | 'filter' | 'fill' | 'file' | 'vector' | 'group' | 'raster';
+export type LayerType = 'paint' | 'filter' | 'fill' | 'file' | 'vector' | 'text' | 'group' | 'raster';
+export type TextLayerStyle = 'normal' | 'bold' | 'italic' | 'bold-italic';
+export type TextLayerAlign = 'left' | 'center' | 'right';
 export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay';
 export type FilterKind = 'grayscale' | 'invert' | 'sepia' | 'blur' | 'brightness' | 'contrast';
 export type VectorKind =
@@ -69,6 +71,20 @@ export interface LayerManifest {
   filterStrength?: number; // [0..1]
   /** Metadatos de objetos vectoriales; la previsualización actual también se rasteriza. */
   vectorShapes?: VectorShape[];
+  /** Datos editables de una capa de texto; pixelData es su previsualización rasterizada. */
+  textContent?: string;
+  textX?: number;
+  textY?: number;
+  textFontFamily?: string;
+  textFontSize?: number;
+  textColor?: string;
+  textStyle?: TextLayerStyle;
+  textAlign?: TextLayerAlign;
+  textLineHeight?: number;
+  textLetterSpacing?: number;
+  textStrokeColor?: string;
+  textStrokeWidth?: number;
+  textBackgroundColor?: string;
   /** Nombre del archivo fuente de la capa de archivo. */
   sourceName?: string;
   /** ID local que vincula la capa con un FileSystemFileHandle guardado en IndexedDB. */
@@ -97,4 +113,4 @@ export interface NvtsManifest {
 }
 
 export const isPixelLayerType = (type: LayerType): boolean =>
-  type === 'paint' || type === 'raster' || type === 'fill' || type === 'file' || type === 'vector';
+  type === 'paint' || type === 'raster' || type === 'fill' || type === 'file' || type === 'vector' || type === 'text';

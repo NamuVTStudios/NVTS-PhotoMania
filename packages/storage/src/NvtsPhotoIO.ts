@@ -31,6 +31,12 @@ function layerToManifest(layer: LayerNode, blobs: Zippable, read: PixelReader): 
     ...(layer.sourceLinkId ? { sourceLinkId: layer.sourceLinkId } : {}),
     ...(layer.sourceLastModified !== undefined ? { sourceLastModified: layer.sourceLastModified } : {}),
     ...(layer.sourceFileSize !== undefined ? { sourceFileSize: layer.sourceFileSize } : {}),
+    ...(layer.textContent !== undefined ? { textContent: layer.textContent } : {}),
+    ...(layer.textX !== undefined ? { textX: layer.textX } : {}), ...(layer.textY !== undefined ? { textY: layer.textY } : {}),
+    ...(layer.textFontFamily ? { textFontFamily: layer.textFontFamily } : {}), ...(layer.textFontSize !== undefined ? { textFontSize: layer.textFontSize } : {}),
+    ...(layer.textColor ? { textColor: layer.textColor } : {}), ...(layer.textStyle ? { textStyle: layer.textStyle } : {}), ...(layer.textAlign ? { textAlign: layer.textAlign } : {}),
+    ...(layer.textLineHeight !== undefined ? { textLineHeight: layer.textLineHeight } : {}), ...(layer.textLetterSpacing !== undefined ? { textLetterSpacing: layer.textLetterSpacing } : {}),
+    ...(layer.textStrokeColor ? { textStrokeColor: layer.textStrokeColor } : {}), ...(layer.textStrokeWidth !== undefined ? { textStrokeWidth: layer.textStrokeWidth } : {}), ...(layer.textBackgroundColor ? { textBackgroundColor: layer.textBackgroundColor } : {}),
   };
   if (isPixelLayerType(layer.type)) {
     const px = read(layer);
@@ -92,7 +98,8 @@ export function unpackNvtsPhoto(bytes: Uint8Array): UnpackedDocument {
       fillColor: m.fillColor, filterKind: m.filterKind,
       filterStrength: typeof m.filterStrength === 'number' ? Math.min(1, Math.max(0, m.filterStrength)) : undefined,
       vectorShapes: Array.isArray(m.vectorShapes) ? m.vectorShapes.map((shape) => ({ ...shape, points: shape.points?.map((point) => ({ ...point })) })) : undefined,
-      sourceName: m.sourceName, sourceLinkId: m.sourceLinkId, sourceLastModified: m.sourceLastModified, sourceFileSize: m.sourceFileSize, children: [],
+      sourceName: m.sourceName, sourceLinkId: m.sourceLinkId, sourceLastModified: m.sourceLastModified, sourceFileSize: m.sourceFileSize,
+      textContent: m.textContent, textX: m.textX, textY: m.textY, textFontFamily: m.textFontFamily, textFontSize: m.textFontSize, textColor: m.textColor, textStyle: m.textStyle, textAlign: m.textAlign, textLineHeight: m.textLineHeight, textLetterSpacing: m.textLetterSpacing, textStrokeColor: m.textStrokeColor, textStrokeWidth: m.textStrokeWidth, textBackgroundColor: m.textBackgroundColor, children: [],
     };
     if (m.pixelData) {
       const data = files[m.pixelData.path]; // solo búsqueda por clave: nunca se escribe a disco
