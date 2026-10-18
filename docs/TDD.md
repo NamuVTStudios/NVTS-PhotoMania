@@ -23,8 +23,15 @@ This document describes the current repository implementation. It is not a promi
 | `packages/shared` | Shared document-format constants and types | `nvtsphoto.ts` |
 | `packages/document-model` | Layer/document tree, pixel bridge, structural actions, integrated undo/redo | `DocumentController.ts`, `EditSession.ts`, `types.ts` |
 | `packages/storage` | `.nvtsphoto` serialization, file open/save, recent projects, linked-image handles | `NvtsPhotoIO.ts`, `RecentProjects.ts` |
-| `packages/ui` | Application coordinator, toolbar, modular panels, preferences and plugins | `App.ts`, `Toolbar.ts`, `panels/*.ts` |
+| `packages/templates` | UI-independent, reusable document preset definitions for NVTS programs | `src/types.ts`, individual preset modules, `src/index.ts` |
+| `packages/ui` | Application coordinator, toolbar, modular panels, preferences and plugins; consumes `@nvts/templates` | `App.ts`, `Toolbar.ts`, `panels/*.ts` |
 | `apps/web` | Vite entry point, index HTML, global styles, public assets/Wasm runtime | `src/main.ts`, `src/styles.css`, `vite.config.ts` |
+
+## Shared template package
+
+`@nvts/templates` is a workspace package intentionally kept separate from `@nvts/ui` so other NVTS applications can reuse document presets without importing PhotoMania's UI. The package has no runtime dependencies: its public API is TypeScript data only. `TemplateDef` defines a stable ID, title, category, default pixel dimensions, icon token, and gallery preview shape. Each preset lives in a separate module under `packages/templates/src/`; `index.ts` exports both the complete read-only `TEMPLATES` catalog and individual named definitions.
+
+When adding a preset, create a module conforming to `TemplateDef`, export the definition from the package index, and add it to the catalog. A consuming workspace package should declare `@nvts/templates` as a `workspace:*` dependency. Vite and the root TypeScript paths are configured to resolve the package in this monorepo.
 
 ## Runtime data model
 
@@ -150,8 +157,11 @@ Each substantial panel has its own TypeScript file in `packages/ui/src/panels/`:
 - `VectorEditorPanel.ts`
 - `PluginsPanel.ts`
 - `PreferencesPanel.ts`
+- `DockLayoutManager.ts` — floating, docking, reordering and resize logic for workspace panels
 
 `App.ts` owns document/motor instances, event wiring, canvas gestures, command callbacks, workspace layout, keyboard shortcuts and interactions with browser storage. Global styling and theme tokens remain in `apps/web/src/styles.css`.
+
+`DockLayoutManager.ts` turns each panel into a docking slot, supports header-drag reordering, a floating-window mode with move/resize controls, resizing between docked panels, and a draggable splitter for the overall side-dock width. It stores per-workspace layout state in local storage (panel visibility, order, float position/size, docked heights, dock width and global panel visibility). The panel DOM nodes are moved rather than recreated so their tool and document event handlers remain attached.
 
 ### Plugin loading
 

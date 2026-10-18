@@ -39,6 +39,7 @@ export interface LayersPanelCallbacks {
   onToggleLock(layer: LayerNode): void;
   onSelect(layer: LayerNode): void;
   onContextMenu(layer: LayerNode, x: number, y: number): void;
+  getDeleteBlockReason(layer: LayerNode): string | null;
 }
 
 /** Owns the layer-tree DOM: rows, nesting, thumbnails and layer-specific controls. */
@@ -122,6 +123,27 @@ export function renderLayersPanel(
   renderTree(list, layers, 0);
   const empty = root.querySelector<HTMLElement>('#layer-empty');
   if (empty) empty.hidden = total > 0;
+
+  // El botón refleja la regla del documento en cada render, incluyendo el bloqueo
+  // heredado de un grupo y el caso en que borrar dejaría cero capas.
+  const findLayer = (nodes: LayerNode[], id: string): LayerNode | null => {
+    for (const node of nodes) {
+      if (node.id === id) return node;
+      const nested = findLayer(node.children, id);
+      if (nested) return nested;
+    }
+    return null;
+  };
+  const deleteButton = root.querySelector<HTMLButtonElement>('#l-del');
+  if (deleteButton) {
+    const selected = findLayer(layers, activeLayerId);
+    const reason = selected
+      ? callbacks.getDeleteBlockReason(selected)
+      : 'Seleccioná una capa para eliminar.';
+    deleteButton.disabled = Boolean(reason);
+    deleteButton.title = reason ?? 'Eliminar capa';
+    deleteButton.setAttribute('aria-label', reason ? `Eliminar capa. ${reason}` : 'Eliminar capa');
+  }
 }
 
 

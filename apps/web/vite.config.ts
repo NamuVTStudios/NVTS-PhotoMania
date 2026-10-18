@@ -32,6 +32,9 @@ export default defineConfig({
       '@nvts/storage': fileURLToPath(
         new URL('../../packages/storage/src/index.ts', import.meta.url)
       ),
+      '@nvts/templates': fileURLToPath(
+        new URL('../../packages/templates/src/index.ts', import.meta.url)
+      ),
     }
   },
 

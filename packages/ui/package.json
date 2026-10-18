@@ -10,6 +10,7 @@
     "@nvts/renderer": "workspace:*",
     "@nvts/shared": "workspace:*",
     "@nvts/storage": "workspace:*",
+    "@nvts/templates": "workspace:*",
     "@nvts/wasm-bindings": "workspace:*"
   }
 }

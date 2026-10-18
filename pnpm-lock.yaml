@@ -220,6 +220,8 @@ importers:
         specifier: ^0.8.2
         version: 0.8.3
 
+  packages/templates: {}
+
   packages/ui:
     dependencies:
       '@nvts/document-model':
@@ -234,6 +236,9 @@ importers:
       '@nvts/storage':
         specifier: workspace:*
         version: link:../storage
+      '@nvts/templates':
+        specifier: workspace:*
+        version: link:../templates
       '@nvts/wasm-bindings':
         specifier: workspace:*
         version: link:../wasm-bindings

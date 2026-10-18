@@ -17,6 +17,10 @@ The current repository is an active prototype. This document distinguishes imple
 
 ## Implemented product scope
 
+### Document templates
+
+The new-project selector currently offers 20 presets for social media content, screen/video sizes, A4 print, US and European comics, manga/manhwa, animation, and UV/2D textures. Their definitions live in the shared `@nvts/templates` package rather than inside the UI, allowing future NVTS programs to reuse the same presets. The current presets define default canvas dimensions and selector metadata; they do not yet encode complete print profiles, animation timelines, UV layouts, or application-specific setup procedures.
+
 ### Document and layers
 
 - Create, open, save, and save-as native `.nvtsphoto` documents.
@@ -47,7 +51,8 @@ The current repository is an active prototype. This document distinguishes imple
 - Workspaces: General, Digital Illustration, Vector Illustration, Image Manipulation, and Comics.
 - Light and dark themes; a Preferences setting controls whether recent-project data is kept.
 - Modular panels include Layers, History, Advanced Tool Options, Comic Manager, and supporting filter, vector, layer-effects, plugin, and preferences UI.
-- `View → Panels` controls panel visibility. `Tab` toggles the panel dock while avoiding normal text-field and menu interaction.
+- `View → Panels` controls panel visibility. `Tab` toggles the whole panel zone while avoiding normal text-field and menu interaction.
+- Panel headers can be dragged to reorder docked panels or pulled out into floating windows; each panel can be re-docked with its header control. Drag dividers to resize individual panel heights and the overall right-side panel zone. Layouts are persisted independently per workspace.
 - Main file operations are available from the File menu with keyboard shortcuts.
 
 ### Comic Manager

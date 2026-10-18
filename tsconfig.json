@@ -15,6 +15,7 @@
       "@nvts/renderer": ["./packages/renderer/index.ts"],
       "@nvts/document-model": ["./packages/document-model/src/index.ts"],
       "@nvts/storage": ["./packages/storage/src/index.ts"],
+      "@nvts/templates": ["./packages/templates/src/index.ts"],
       "@nvts/ui": ["./packages/ui/src/index.ts"]
     }
   },

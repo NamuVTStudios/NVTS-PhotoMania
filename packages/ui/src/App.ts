@@ -18,7 +18,9 @@ import { FILTER_PANEL_TEMPLATE, wireFilterPanel } from './panels/FilterPanel';
 import { VECTOR_EDITOR_PANEL_TEMPLATE, wireVectorEditorPanel, renderVectorEditorPanel } from './panels/VectorEditorPanel';
 import { PLUGINS_PANEL_TEMPLATE, wirePlugins, type PluginApi } from './panels/PluginsPanel';
 import { PREFERENCES_PANEL_TEMPLATE, initializePreferences, readPreferences, wirePreferences, type AppPreferences } from './panels/PreferencesPanel';
+import { createDockLayoutManager, type DockLayoutController } from './panels/DockLayoutManager';
 import { openFromDisk, packNvtsPhoto, saveToDisk, unpackNvtsPhoto, listRecentProjects, loadRecentProject, rememberRecentProject, removeRecentProject, supportsFileSystemAccess, rememberLinkedFile, getLinkedFile, type RecentProjectInfo } from '@nvts/storage';
+import { TEMPLATES } from '@nvts/templates';
 
 type Tool = 'brush' | 'eraser' | 'eyedropper' | 'line' | 'rectangle' | 'ellipse' | 'fill' | 'hand' | 'text' | 'vector-select';
 type ToolSettings = { size: number; opacity: number; hardness: number; spacing: number; smoothing: number; tolerance: number; contiguous: boolean; sampleMerged: boolean; shapeFill: boolean; lineCap: CanvasLineCap; lineJoin: CanvasLineJoin };
@@ -247,29 +249,6 @@ ${COMIC_MANAGER_PANEL_TEMPLATE}
 </main>
 ${LAYER_EFFECTS_PANEL_TEMPLATE}${FILTER_PANEL_TEMPLATE}${VECTOR_EDITOR_PANEL_TEMPLATE}`;
 
-type TemplateDef = { id:string; title:string; category:string; width:number; height:number; icon:string; preview:string };
-const TEMPLATES: TemplateDef[] = [
-  {id:'instagram-post',title:'Instagram Post',category:'Redes sociales',width:1080,height:1080,icon:'◎',preview:'square'},
-  {id:'instagram-story',title:'Instagram Story',category:'Redes sociales',width:1080,height:1920,icon:'▯',preview:'portrait'},
-  {id:'youtube-thumb',title:'Miniatura YouTube',category:'Redes sociales',width:1280,height:720,icon:'▶',preview:'landscape'},
-  {id:'full-hd',title:'Full HD',category:'Pantallas',width:1920,height:1080,icon:'▱',preview:'landscape'},
-  {id:'4k-uhd',title:'4K UHD',category:'Pantallas',width:3840,height:2160,icon:'▱',preview:'landscape'},
-  {id:'a4',title:'A4 (300 ppp)',category:'Impresión',width:2480,height:3508,icon:'▤',preview:'portrait'},
-  {id:'comic-us',title:'Cómic USA',category:'Cómic e ilustración',width:1650,height:2550,icon:'▤',preview:'portrait'},
-  {id:'comic-eu',title:'Cómic europeo',category:'Cómic e ilustración',width:2100,height:2970,icon:'▤',preview:'portrait'},
-  {id:'manga',title:'Manga',category:'Cómic e ilustración',width:1600,height:2400,icon:'▤',preview:'portrait'},
-  {id:'manhwa',title:'Manhwa / Webtoon',category:'Cómic e ilustración',width:800,height:1280,icon:'▥',preview:'portrait'},
-  {id:'facebook-post',title:'Facebook Post',category:'Redes sociales',width:1200,height:630,icon:'f',preview:'landscape'},
-  {id:'facebook-story',title:'Facebook Story',category:'Redes sociales',width:1080,height:1920,icon:'▯',preview:'portrait'},
-  {id:'tiktok-post',title:'TikTok Post',category:'Redes sociales',width:1080,height:1350,icon:'♪',preview:'portrait'},
-  {id:'tiktok-story',title:'TikTok Story',category:'Redes sociales',width:1080,height:1920,icon:'♪',preview:'portrait'},
-  {id:'animation-web',title:'Animación web',category:'Animación 2D',width:1280,height:720,icon:'▷',preview:'landscape'},
-  {id:'animation-2d',title:'Animación 2D',category:'Animación 2D',width:1920,height:1080,icon:'◉',preview:'landscape'},
-  {id:'texture-uv',title:'Textura UV (cuadrada)',category:'Texturas',width:2048,height:2048,icon:'▦',preview:'square'},
-  {id:'texture-uv-4k',title:'Textura UV 4K',category:'Texturas',width:4096,height:4096,icon:'▦',preview:'square'},
-  {id:'texture-2d',title:'Textura 2D / Tileable',category:'Texturas',width:1024,height:1024,icon:'▦',preview:'square'},
-  {id:'texture-2d-wide',title:'Textura 2D panorámica',category:'Texturas',width:2048,height:1024,icon:'▦',preview:'landscape'},
-];
 const HOME_TEMPLATE = `
 <div class="home-shell">
   <header class="home-topbar"><button class="home-back" title="Volver al selector" aria-label="Volver al selector">←</button><div class="home-mini-brand"><img src="${LOGO_URL}" alt=""/><strong>PhotoMania</strong></div><span class="home-top-divider"></span>${MAIN_MENU}</header>
@@ -310,6 +289,7 @@ export class App {
   private ctx!: EngineCtx;
   private fileHandle: FileSystemFileHandle | null = null;
   private workspace: WorkspaceId = readWorkspace();
+  private dockLayout: DockLayoutController | null = null;
   private comicConfig: ComicConfig = readComicConfig();
   private comicActivePageId: string | null = this.comicConfig.pages[0]?.id ?? null;
   private comicParentDirectoryHandle: FileSystemDirectoryHandle | null = null;
@@ -784,6 +764,8 @@ export class App {
 
   private applyWorkspace(workspace: WorkspaceId, announce = true): void {
     if (!WORKSPACES.some((entry) => entry.id === workspace)) workspace = 'general';
+    // Preserve the user's current panel arrangement before the workspace preset is applied.
+    this.dockLayout?.saveCurrentWorkspace();
     this.workspace = workspace;
     writeWorkspace(workspace);
     const panel = <T extends HTMLElement = HTMLElement>(selector: string): T | null => this.root.querySelector<T>(selector);
@@ -806,7 +788,11 @@ export class App {
     layers.hidden = !preset.visible.layers;
     comic.hidden = !preset.visible.comic;
     const panels: Record<string, HTMLElement> = { advanced, history, layers, comic };
-    preset.order.forEach((id, index) => { panels[id].style.order = String(index); });
+    preset.order.forEach((id, index) => {
+      const slot = panels[id].closest<HTMLElement>('.dock-panel-slot');
+      if (slot) slot.style.order = String(index);
+      else panels[id].style.order = String(index);
+    });
     dock.dataset.workspace = workspace;
     dock.classList.remove('panels-hidden');
     dock.classList.toggle('panels-empty', !preset.visible.advanced && !preset.visible.history && !preset.visible.layers && !preset.visible.comic);
@@ -830,6 +816,22 @@ export class App {
       const toggle = panel<HTMLButtonElement>('#toggle-panels');
       toggle?.setAttribute('aria-pressed', 'true');
     }
+    this.dockLayout?.applyWorkspace(workspace);
+    // Workspace-specific custom layouts may override preset visibility; refresh the menu checks afterwards.
+    const visibilityItems = [
+      ['#toggle-panel-advanced', advanced], ['#toggle-panel-history', history],
+      ['#toggle-panel-layers', layers], ['#toggle-panel-comic', comic],
+    ] as const;
+    for (const [selector, panelElement] of visibilityItems) {
+      const button = panel<HTMLButtonElement>(selector);
+      if (!button) continue;
+      button.setAttribute('aria-checked', String(!panelElement.hidden));
+      const check = button.querySelector<HTMLElement>('.menu-check');
+      if (check) check.textContent = !panelElement.hidden ? '✓' : '';
+    }
+    const allPanelsToggle = panel<HTMLButtonElement>('#toggle-panels');
+    allPanelsToggle?.setAttribute('aria-pressed', String(!dock.classList.contains('panels-hidden') && !panel<HTMLElement>('.workspace')?.classList.contains('panels-hidden')));
+    dock.classList.toggle('panels-empty', visibilityItems.every(([, panelElement]) => panelElement.hidden || !panelElement.closest('.dock-panel-slot')));
     if (announce) {
       const label = WORKSPACES.find((entry) => entry.id === workspace)?.label ?? 'General';
       const status = panel<HTMLElement>('#status');
@@ -1582,6 +1584,7 @@ export class App {
       },
       onSelect: (layer) => { this.activeId = layer.id; this.syncUI(); },
       onContextMenu: (layer, x, y) => { this.activeId = layer.id; this.syncUI(); this.showLayerContextMenu(x, y, layer); },
+      getDeleteBlockReason: (layer) => this.ctl.getLayerDeletionBlockReason(layer.id),
     });
   }
 
@@ -1653,11 +1656,17 @@ export class App {
         this.syncUI(); this.updateHistoryUI();
       }]);
     }
-    options.push(['Eliminar capa', () => { if (this.ctl.removeLayer(layer.id)) { this.activeId = this.topRaster()?.id ?? ''; this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh(); } }]);
+    options.push(['Eliminar capa', () => { if (this.ctl.removeLayer(layer.id)) { this.activeId = this.topRaster()?.id ?? this.ctl.doc.layers.at(-1)?.id ?? ''; this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh(); } }]);
     let dismiss: (event: PointerEvent) => void;
     for (const [label, action] of options) {
       const button = document.createElement('button'); button.type = 'button'; button.textContent = label; button.setAttribute('role', 'menuitem');
+      if (label === 'Eliminar capa') {
+        const reason = this.ctl.getLayerDeletionBlockReason(layer.id);
+        button.disabled = Boolean(reason);
+        if (reason) button.title = reason;
+      }
       button.onclick = () => {
+        if (button.disabled) return;
         menu.remove(); document.removeEventListener('pointerdown', dismiss);
         if (this.layerContextMenu === menu) this.layerContextMenu = null;
         action();
@@ -2217,9 +2226,18 @@ export class App {
     wireLayersPanel(this.root, {
       createLayer: (type) => { void this.createLayerOfType(type); },
       deleteActiveLayer: () => {
-        if (this.stroke || !this.active()) return;
-        this.ctl.removeLayer(this.activeId);
-        this.activeId = this.topRaster()?.id ?? '';
+        if (this.stroke) return;
+        const layer = this.active();
+        if (!layer) return;
+        const reason = this.ctl.getLayerDeletionBlockReason(layer.id);
+        if (reason) {
+          this.syncUI();
+          const status = this.root.querySelector<HTMLElement>('#status');
+          if (status) status.textContent = reason;
+          return;
+        }
+        if (!this.ctl.removeLayer(layer.id)) return;
+        this.activeId = this.topRaster()?.id ?? this.ctl.doc.layers.at(-1)?.id ?? '';
         this.ctl.comp.invalidateAll(); this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
       },
       duplicateActiveLayer: () => {
@@ -2316,8 +2334,8 @@ export class App {
         if (check) check.textContent = visible ? '✓' : '';
       }
       const dock = this.q<HTMLElement>('.right-dock');
-      dock.classList.toggle('panels-empty', panelEntries.every((entry) => entry.panel.hidden));
-      const allHidden = dock.classList.contains('panels-hidden');
+      dock.classList.toggle('panels-empty', panelEntries.every((entry) => entry.panel.hidden || !entry.panel.closest('.dock-panel-slot')));
+      const allHidden = dock.classList.contains('panels-hidden') || this.q<HTMLElement>('.workspace').classList.contains('panels-hidden');
       this.q<HTMLButtonElement>('#toggle-panels').setAttribute('aria-pressed', String(!allHidden));
       panelsMenuButton.setAttribute('aria-expanded', String(!panelsDropdown.hidden));
     };
@@ -2343,26 +2361,33 @@ export class App {
         panelsDropdown.hidden = true;
         closeMenu(viewMenu);
         updatePanelMenu();
+        this.dockLayout?.refreshVisibility();
       });
     });
     const toggleAllPanels = () => {
       const dock = this.q<HTMLElement>('.right-dock');
       const everyPanelIndividuallyHidden = panelEntries.every((entry) => entry.panel.hidden);
-      if (dock.classList.contains('panels-hidden')) {
+      const workspace = this.q<HTMLElement>('.workspace');
+      if (dock.classList.contains('panels-hidden') || workspace.classList.contains('panels-hidden')) {
         dock.classList.remove('panels-hidden');
+        workspace.classList.remove('panels-hidden');
         if (everyPanelIndividuallyHidden) panelEntries.forEach((entry) => { entry.panel.hidden = false; });
       } else if (everyPanelIndividuallyHidden) {
         panelEntries.forEach((entry) => { entry.panel.hidden = false; });
       } else {
         dock.classList.add('panels-hidden');
+        workspace.classList.add('panels-hidden');
       }
       panelsDropdown.hidden = true;
       closeMenu(viewMenu);
       updatePanelMenu();
+      this.dockLayout?.refreshVisibility();
     };
     on('#toggle-panels', toggleAllPanels);
     updatePanelMenu();
     this.applyWorkspace(this.workspace, false);
+    this.dockLayout = createDockLayoutManager(this.root, this.workspace);
+    updatePanelMenu();
 
     on('#menu-filter', () => this.openDestructiveFilterPanel());
     on('#menu-layer', () => openPanel('effects-panel'));

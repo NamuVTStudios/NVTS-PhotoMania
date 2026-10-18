@@ -176,7 +176,48 @@ export class DocumentController {
     return duplicated;
   }
 
+  /** Devuelve el motivo por el que una capa no se puede eliminar, o null si se permite. */
+  getLayerDeletionBlockReason(id: string): string | null {
+    const node = this.nodes.get(id);
+    if (!node) return 'La capa seleccionada ya no existe.';
+
+    // Un grupo bloqueado también protege a todas sus capas descendientes.
+    if (this.isEffectivelyLocked(id)) {
+      return 'No se puede eliminar una capa bloqueada. Desbloqueá la capa y su grupo, si corresponde.';
+    }
+
+    // No permitir borrar un grupo que contiene capas bloqueadas: eso eliminaría
+    // indirectamente capas que el usuario protegió de manera explícita.
+    let containsLockedDescendant = false;
+    const findLockedDescendant = (current: LayerNode): void => {
+      for (const child of current.children) {
+        if (child.locked) containsLockedDescendant = true;
+        findLockedDescendant(child);
+      }
+    };
+    findLockedDescendant(node);
+    if (containsLockedDescendant) {
+      return 'No se puede eliminar este grupo porque contiene capas bloqueadas. Desbloquealas primero.';
+    }
+
+    // Contar todo el subárbol: eliminar el único grupo también eliminaría sus hijos.
+    let subtreeCount = 0;
+    const countSubtree = (current: LayerNode): void => {
+      subtreeCount++;
+      current.children.forEach(countSubtree);
+    };
+    countSubtree(node);
+    if (this.nodes.size - subtreeCount < 1) {
+      return 'El documento debe conservar al menos una capa.';
+    }
+
+    return null;
+  }
+
   removeLayer(id: string): boolean {
+    // La regla vive en el controlador para proteger la operación desde todos los accesos
+    // (botón del panel, menú contextual y futuras acciones/plugins), no solo desde la UI.
+    if (this.getLayerDeletionBlockReason(id)) return false;
     const node = this.nodes.get(id);
     if (!node) return false;
     const snapshot = this.snapshot(node);

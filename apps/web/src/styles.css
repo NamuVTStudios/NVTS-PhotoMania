@@ -3737,3 +3737,301 @@ button.primary {
     -webkit-mask-image: url("./icons/tools/group-layer-open.svg");
     mask-image: url("./icons/tools/group-layer-open.svg");
 }
+
+/* ───────── Interfaz personalizable: paneles acoplables, flotantes y redimensionables ───────── */
+.workspace {
+    --right-dock-width: 280px;
+    overflow: hidden;
+}
+
+.right-dock {
+    width: var(--right-dock-width, 280px);
+    flex: 0 0 var(--right-dock-width, 280px);
+    min-width: 0;
+    min-height: 0;
+    max-width: 60vw;
+    box-sizing: border-box;
+    overflow: auto;
+    align-items: stretch;
+    gap: 0;
+    padding: 7px;
+}
+
+.dock-width-resizer {
+    position: relative;
+    z-index: 22;
+    flex: 0 0 6px;
+    width: 6px;
+    min-width: 6px;
+    cursor: col-resize;
+    touch-action: none;
+    user-select: none;
+    background: transparent;
+}
+
+.dock-width-resizer::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 2px;
+    width: 2px;
+    background: var(--line);
+    opacity: .65;
+    transition: background .12s, opacity .12s;
+}
+
+.dock-width-resizer:hover::after,
+.dock-width-resizer:focus-visible::after {
+    background: var(--accent);
+    opacity: 1;
+}
+
+.dock-width-resizer[hidden] {
+    display: none !important;
+}
+
+.dock-panel-slot {
+    position: relative;
+    flex: 0 0 auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    box-sizing: border-box;
+}
+
+.dock-panel-slot[hidden] {
+    display: none !important;
+}
+
+.dock-panel-slot>.dock-panel {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    max-height: none;
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.dock-panel-slot>.history-panel,
+.dock-panel-slot>.layers-panel,
+.dock-panel-slot>.comic-manager-panel {
+    min-height: 0;
+    max-height: none;
+    flex: 0 0 auto;
+}
+
+.dock-panel-slot>.dock-panel>header {
+    flex: 0 0 auto;
+    min-width: 0;
+}
+
+.dock-panel-slot .advanced-tool-options {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+}
+
+.dock-panel-slot .history-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow: auto;
+}
+
+.dock-panel-slot .layers-panel #layers,
+.dock-panel-slot #layers:not(:empty) {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+}
+
+.dock-panel-slot .comic-manager-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+}
+
+.dock-panel-resizer {
+    position: relative;
+    z-index: 3;
+    flex: 0 0 7px;
+    height: 7px;
+    min-height: 7px;
+    margin: 0 3px;
+    cursor: ns-resize;
+    touch-action: none;
+    user-select: none;
+    border-radius: 4px;
+}
+
+.dock-panel-resizer::after {
+    content: "";
+    position: absolute;
+    left: calc(50% - 18px);
+    top: 3px;
+    width: 36px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--line);
+    opacity: .45;
+}
+
+.dock-panel-resizer:hover::after,
+.dock-panel-resizer:focus-visible::after {
+    background: var(--accent);
+    opacity: 1;
+}
+
+.dock-panel-drag-handle {
+    cursor: grab;
+    user-select: none;
+    touch-action: pan-y;
+}
+
+.dock-panel-drag-handle:active {
+    cursor: grabbing;
+}
+
+.panel-float-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 25px;
+    width: 25px;
+    height: 24px;
+    margin-left: 3px;
+    padding: 0 !important;
+    border: 1px solid var(--line) !important;
+    border-radius: 5px;
+    color: var(--muted);
+    background: transparent;
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.panel-float-toggle:hover,
+.panel-float-toggle[aria-pressed="true"] {
+    color: #fff;
+    background: var(--accent) !important;
+    border-color: var(--accent) !important;
+}
+
+.floating-panels-layer {
+    position: absolute;
+    z-index: 60;
+    inset: 0;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.workspace.panels-hidden .floating-panels-layer {
+    display: none !important;
+}
+
+.floating-panel-window {
+    position: absolute;
+    z-index: 41;
+    display: flex;
+    min-width: 260px;
+    min-height: 130px;
+    max-width: calc(100% - 8px);
+    max-height: calc(100% - 8px);
+    box-sizing: border-box;
+    pointer-events: auto;
+    background: var(--panel, #211b1b);
+    border: 1px solid var(--accent);
+    border-radius: 9px;
+    box-shadow: 0 15px 44px #0007;
+    overflow: hidden;
+}
+
+.floating-panel-window[hidden] {
+    display: none !important;
+}
+
+.floating-panel-window>.dock-panel {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    max-height: none;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    border: 0;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.floating-panel-window>.dock-panel>header {
+    flex: 0 0 auto;
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+}
+
+.floating-panel-window>.dock-panel>header:active {
+    cursor: grabbing;
+}
+
+.floating-panel-resize {
+    position: absolute;
+    z-index: 5;
+    right: 0;
+    bottom: 0;
+    width: 17px;
+    height: 17px;
+    cursor: nwse-resize;
+    touch-action: none;
+}
+
+.floating-panel-resize::after {
+    content: "";
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--accent);
+    border-bottom: 2px solid var(--accent);
+    opacity: .85;
+}
+
+.floating-panel-window .layers-panel,
+.floating-panel-window .history-panel,
+.floating-panel-window .advanced-tool-panel,
+.floating-panel-window .comic-manager-panel {
+    min-height: 0;
+    max-height: none;
+    flex: 1 1 auto;
+}
+
+.floating-panel-window .layer-create-menu {
+    z-index: 130;
+}
+
+:root[data-theme="light"] .panel-float-toggle:hover,
+:root[data-theme="light"] .panel-float-toggle[aria-pressed="true"] {
+    color: #fff;
+}
+
+:root[data-theme="light"] .floating-panel-window {
+    box-shadow: 0 12px 36px #28304430;
+}
+
+@media (max-width: 850px) {
+    .right-dock {
+        max-width: 58vw;
+    }
+
+    .floating-panel-window {
+        max-width: calc(100% - 12px);
+    }
+}
