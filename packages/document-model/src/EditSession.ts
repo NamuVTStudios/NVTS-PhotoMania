@@ -25,6 +25,10 @@ export function refresh(ctx: EngineCtx): void {
   ctx.render();
 }
 
+function notifyPixelHistory(ctx: EngineCtx, label: string, changed: number): void {
+  if (changed > 0) ctx.onPixelHistory?.(label);
+}
+
 /** Edición puntual (filtro, relleno, pegado...): una llamada = un paso de undo. */
 export function runEdit(
   ctx: EngineCtx, layerId: number, label: string, edit: (layer: TiledLayer) => void,
@@ -33,7 +37,7 @@ export function runEdit(
   try {
     edit(ctx.comp.layer(layerId)!);                // 2) edita: el motor guarda los píxeles previos solo
     const changed = ctx.history.saveState(label);  // 3) sella: solo los tiles que cambiaron
-    if (changed) ctx.onPixelHistory?.(label);
+    notifyPixelHistory(ctx, label, changed);
   } catch (e) {
     ctx.history.cancelAction();                    // si algo falla, revierte lo editado
     throw e;

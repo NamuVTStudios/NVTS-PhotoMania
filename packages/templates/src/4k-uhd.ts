@@ -1,6 +1,6 @@
 import type { TemplateDef } from './types';
 
-/** 4K UHD: 3840 × 2160 px. */
+/* 4K UHD: 3840 × 2160 px. */
 export const fourKUhdTemplate: TemplateDef = {
   id: '4k-uhd',
   title: '4K UHD',

@@ -46,10 +46,25 @@ export interface VectorEditorPanelCallbacks {
 export function wireVectorEditorPanel(root: HTMLElement, callbacks: VectorEditorPanelCallbacks): void {
   const panel = root.querySelector<HTMLElement>('#vector-panel');
   if (!panel) return;
-  panel.addEventListener('keydown', (event) => { if (event.key === 'Escape') callbacks.cancel(); });
+  bindVectorPanelKeyboard(panel, callbacks);
+  bindVectorCreationButtons(panel, callbacks);
+  bindVectorActionButtons(root, callbacks);
+  bindVectorFieldChanges(root, callbacks);
+}
+
+function bindVectorPanelKeyboard(panel: HTMLElement, callbacks: VectorEditorPanelCallbacks): void {
+  panel.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') callbacks.cancel();
+  });
+}
+
+function bindVectorCreationButtons(panel: HTMLElement, callbacks: VectorEditorPanelCallbacks): void {
   panel.querySelectorAll<HTMLButtonElement>('[data-vector-add]').forEach((button) => {
     button.onclick = () => callbacks.addShape(button.dataset.vectorAdd as VectorShape['kind']);
   });
+}
+
+function bindVectorActionButtons(root: HTMLElement, callbacks: VectorEditorPanelCallbacks): void {
   root.querySelector<HTMLButtonElement>('#vector-delete-shape')?.addEventListener('click', () => callbacks.deleteShape());
   root.querySelector<HTMLButtonElement>('#vector-duplicate-shape')?.addEventListener('click', () => callbacks.duplicateShape());
   root.querySelector<HTMLButtonElement>('#vector-shape-up')?.addEventListener('click', () => callbacks.moveShape(+1));
@@ -59,16 +74,22 @@ export function wireVectorEditorPanel(root: HTMLElement, callbacks: VectorEditor
   root.querySelector<HTMLButtonElement>('#vector-cancel')?.addEventListener('click', () => callbacks.cancel());
   root.querySelector<HTMLButtonElement>('#vector-close')?.addEventListener('click', () => callbacks.cancel());
   root.querySelector<HTMLButtonElement>('#vector-clear')?.addEventListener('click', () => callbacks.clear());
+}
 
-  [
-    'vector-kind','vector-x','vector-y','vector-width','vector-height','vector-rotation','vector-color','vector-stroke-color','vector-opacity','vector-stroke',
-    'vector-fill-enabled','vector-stroke-enabled','vector-dash','vector-line-cap','vector-line-join','vector-corner-radius','vector-star-points',
-    'vector-text','vector-font-family','vector-font-size','vector-font-style','vector-font-weight','vector-text-align',
-  ].forEach((id) => {
-    const input = root.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`);
-    input?.addEventListener(id === 'vector-opacity' ? 'input' : 'change', () => callbacks.updateFromFields());
-  });
+function bindVectorFieldChanges(root: HTMLElement, callbacks: VectorEditorPanelCallbacks): void {
+  const inputIds = [
+    'vector-kind','vector-x','vector-y','vector-width','vector-height','vector-rotation','vector-color','vector-stroke-color',
+    'vector-opacity','vector-stroke','vector-fill-enabled','vector-stroke-enabled','vector-dash','vector-line-cap','vector-line-join',
+    'vector-corner-radius','vector-star-points','vector-text','vector-font-family','vector-font-size','vector-font-style',
+    'vector-font-weight','vector-text-align',
+  ];
+  inputIds.forEach((id) => bindVectorFieldChange(root, id, callbacks));
   root.querySelector<HTMLTextAreaElement>('#vector-points')?.addEventListener('change', () => callbacks.updateFromFields());
+}
+
+function bindVectorFieldChange(root: HTMLElement, id: string, callbacks: VectorEditorPanelCallbacks): void {
+  const input = root.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`);
+  input?.addEventListener(id === 'vector-opacity' ? 'input' : 'change', () => callbacks.updateFromFields());
 }
 
 /** Renders the editable vector object list and selected-object fields. */
@@ -81,60 +102,130 @@ export function renderVectorEditorPanel(
 ): void {
   const host = root.querySelector<HTMLElement>('#vector-shape-list');
   if (!host) return;
+  renderVectorShapeList(host, shapes, selectedId, labelForKind, onSelectShape);
+  syncSelectedVectorShape(root, shapes, selectedId);
+}
+
+function renderVectorShapeList(
+  host: HTMLElement,
+  shapes: VectorShape[],
+  selectedId: string | null,
+  labelForKind: (kind: VectorShape['kind']) => string,
+  onSelectShape: (id: string) => void,
+): void {
   host.replaceChildren();
   if (!shapes.length) {
-    const empty = document.createElement('p'); empty.className = 'hint';
+    const empty = document.createElement('p');
+    empty.className = 'hint';
     empty.textContent = 'Todavía no hay objetos. Elegí una herramienta vectorial para crear uno.';
     host.append(empty);
+    return;
   }
-  for (const shape of shapes) {
-    const button = document.createElement('button'); button.type = 'button';
-    button.classList.toggle('active', shape.id === selectedId);
-    const iconName = ({ rectangle: 'shape-rectangle', 'rounded-rectangle': 'shape-rounded-rectangle', ellipse: 'shape-ellipse', line: 'shape-line', polygon: 'shape-polygon', polyline: 'shape-polyline', bezier: 'shape-bezier', freehand: 'shape-freehand', star: 'shape-star', spiral: 'shape-spiral', text: 'shape-text' } as const)[shape.kind];
-    const icon = document.createElement('span'); icon.className = `tool-icon tool-icon--${iconName}`; icon.setAttribute('aria-hidden', 'true');
-    const label = document.createElement('span'); label.textContent = `${labelForKind(shape.kind)} · ${Math.round(shape.x)}, ${Math.round(shape.y)}`;
-    button.replaceChildren(icon, label);
-    button.onclick = () => onSelectShape(shape.id);
-    host.append(button);
-  }
+  shapes.forEach((shape) => host.append(createVectorShapeButton(shape, selectedId, labelForKind, onSelectShape)));
+}
 
+function createVectorShapeButton(
+  shape: VectorShape,
+  selectedId: string | null,
+  labelForKind: (kind: VectorShape['kind']) => string,
+  onSelectShape: (id: string) => void,
+): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.classList.toggle('active', shape.id === selectedId);
+  const icon = document.createElement('span');
+  icon.className = `tool-icon tool-icon--${getVectorShapeIconName(shape.kind)}`;
+  icon.setAttribute('aria-hidden', 'true');
+  const label = document.createElement('span');
+  label.textContent = `${labelForKind(shape.kind)} · ${Math.round(shape.x)}, ${Math.round(shape.y)}`;
+  button.replaceChildren(icon, label);
+  button.onclick = () => onSelectShape(shape.id);
+  return button;
+}
+
+function getVectorShapeIconName(kind: VectorShape['kind']): string {
+  return ({
+    rectangle: 'shape-rectangle', 'rounded-rectangle': 'shape-rounded-rectangle', ellipse: 'shape-ellipse',
+    line: 'shape-line', polygon: 'shape-polygon', polyline: 'shape-polyline', bezier: 'shape-bezier',
+    freehand: 'shape-freehand', star: 'shape-star', spiral: 'shape-spiral', text: 'shape-text',
+  } as const)[kind];
+}
+
+function syncSelectedVectorShape(root: HTMLElement, shapes: VectorShape[], selectedId: string | null): void {
   const shape = shapes.find((item) => item.id === selectedId);
-  const field = <T extends HTMLElement>(id: string): T | null => root.querySelector<T>(`#${id}`);
+  updateVectorFieldAvailability(root, Boolean(shape));
+  if (!shape) return;
+  setVectorGeometryFields(root, shape);
+  setVectorPaintFields(root, shape);
+  setVectorTextFields(root, shape);
+  updateVectorStackControls(root, shapes, shape);
+}
+
+function updateVectorFieldAvailability(root: HTMLElement, hasSelection: boolean): void {
   const ids = [
     'vector-kind','vector-x','vector-y','vector-width','vector-height','vector-rotation','vector-color','vector-stroke-color',
     'vector-opacity','vector-stroke','vector-fill-enabled','vector-stroke-enabled','vector-dash','vector-line-cap','vector-line-join',
     'vector-corner-radius','vector-star-points','vector-text','vector-font-family','vector-font-size','vector-font-style',
-    'vector-font-weight','vector-text-align','vector-points','vector-delete-shape','vector-duplicate-shape','vector-shape-up','vector-shape-down','vector-export-svg',
+    'vector-font-weight','vector-text-align','vector-points','vector-delete-shape','vector-duplicate-shape','vector-shape-up',
+    'vector-shape-down','vector-export-svg',
   ];
-  ids.forEach((id) => { const element = field<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement>(id); if (element) element.disabled = !shape; });
-  if (!shape) return;
-  field<HTMLSelectElement>('vector-kind')!.value = shape.kind;
-  field<HTMLInputElement>('vector-x')!.value = String(Math.round(shape.x));
-  field<HTMLInputElement>('vector-y')!.value = String(Math.round(shape.y));
-  field<HTMLInputElement>('vector-width')!.value = String(Math.round(shape.width));
-  field<HTMLInputElement>('vector-height')!.value = String(Math.round(shape.height));
-  field<HTMLInputElement>('vector-rotation')!.value = String(Math.round(shape.rotation ?? 0));
-  field<HTMLInputElement>('vector-color')!.value = /^#[0-9a-f]{6}$/i.test(shape.fillColor ?? shape.color) ? (shape.fillColor ?? shape.color) : '#e03030';
-  field<HTMLInputElement>('vector-stroke-color')!.value = /^#[0-9a-f]{6}$/i.test(shape.strokeColor ?? shape.color) ? (shape.strokeColor ?? shape.color) : '#e03030';
-  field<HTMLInputElement>('vector-opacity')!.value = String(Math.round(shape.opacity * 100));
-  const opacityOutput = field<HTMLElement>('vector-opacity-value'); if (opacityOutput) opacityOutput.textContent = `${Math.round(shape.opacity * 100)}%`;
-  field<HTMLInputElement>('vector-stroke')!.value = String(Math.max(0, Math.round(shape.strokeWidth)));
+  ids.forEach((id) => {
+    const element = getVectorField<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | HTMLButtonElement>(root, id);
+    if (element) element.disabled = !hasSelection;
+  });
+}
+
+function setVectorGeometryFields(root: HTMLElement, shape: VectorShape): void {
+  getVectorField<HTMLSelectElement>(root, 'vector-kind')!.value = shape.kind;
+  getVectorField<HTMLInputElement>(root, 'vector-x')!.value = String(Math.round(shape.x));
+  getVectorField<HTMLInputElement>(root, 'vector-y')!.value = String(Math.round(shape.y));
+  getVectorField<HTMLInputElement>(root, 'vector-width')!.value = String(Math.round(shape.width));
+  getVectorField<HTMLInputElement>(root, 'vector-height')!.value = String(Math.round(shape.height));
+  getVectorField<HTMLInputElement>(root, 'vector-rotation')!.value = String(Math.round(shape.rotation ?? 0));
+  getVectorField<HTMLInputElement>(root, 'vector-corner-radius')!.value = String(shape.cornerRadius ?? 20);
+  getVectorField<HTMLInputElement>(root, 'vector-star-points')!.value = String(shape.starPoints ?? 5);
+  getVectorField<HTMLTextAreaElement>(root, 'vector-points')!.value = shape.points ? JSON.stringify(shape.points, null, 2) : '';
+}
+
+function setVectorPaintFields(root: HTMLElement, shape: VectorShape): void {
+  const fillColor = shape.fillColor ?? shape.color;
+  const strokeColor = shape.strokeColor ?? shape.color;
+  getVectorField<HTMLInputElement>(root, 'vector-color')!.value = isVectorColor(fillColor) ? fillColor : '#e03030';
+  getVectorField<HTMLInputElement>(root, 'vector-stroke-color')!.value = isVectorColor(strokeColor) ? strokeColor : '#e03030';
+  getVectorField<HTMLInputElement>(root, 'vector-opacity')!.value = String(Math.round(shape.opacity * 100));
+  const opacityOutput = getVectorField<HTMLElement>(root, 'vector-opacity-value');
+  if (opacityOutput) opacityOutput.textContent = `${Math.round(shape.opacity * 100)}%`;
+  getVectorField<HTMLInputElement>(root, 'vector-stroke')!.value = String(Math.max(0, Math.round(shape.strokeWidth)));
   const defaultFill = !['line','polyline','bezier','freehand','spiral'].includes(shape.kind);
-  field<HTMLSelectElement>('vector-fill-enabled')!.value = (shape.fillEnabled ?? defaultFill) ? 'yes' : 'no';
-  field<HTMLSelectElement>('vector-stroke-enabled')!.value = (shape.strokeEnabled ?? ['line','polyline','bezier','freehand','spiral'].includes(shape.kind)) ? 'yes' : 'no';
-  field<HTMLSelectElement>('vector-dash')!.value = shape.strokeDash ?? 'solid';
-  field<HTMLSelectElement>('vector-line-cap')!.value = shape.lineCap ?? 'round';
-  field<HTMLSelectElement>('vector-line-join')!.value = shape.lineJoin ?? 'round';
-  field<HTMLInputElement>('vector-corner-radius')!.value = String(shape.cornerRadius ?? 20);
-  field<HTMLInputElement>('vector-star-points')!.value = String(shape.starPoints ?? 5);
-  field<HTMLInputElement>('vector-text')!.value = shape.text ?? 'Texto vectorial';
-  field<HTMLSelectElement>('vector-font-family')!.value = shape.fontFamily ?? 'Arial';
-  field<HTMLInputElement>('vector-font-size')!.value = String(shape.fontSize ?? 64);
-  field<HTMLSelectElement>('vector-font-style')!.value = shape.fontStyle ?? 'normal';
-  field<HTMLSelectElement>('vector-font-weight')!.value = shape.fontWeight ?? 'normal';
-  field<HTMLSelectElement>('vector-text-align')!.value = shape.textAlign ?? 'left';
-  field<HTMLTextAreaElement>('vector-points')!.value = shape.points ? JSON.stringify(shape.points, null, 2) : '';
-  const index = shapes.findIndex((item) => item.id === shape.id);
-  const up = field<HTMLButtonElement>('vector-shape-up'); if (up) up.disabled = index >= shapes.length - 1;
-  const down = field<HTMLButtonElement>('vector-shape-down'); if (down) down.disabled = index <= 0;
+  getVectorField<HTMLSelectElement>(root, 'vector-fill-enabled')!.value = (shape.fillEnabled ?? defaultFill) ? 'yes' : 'no';
+  const defaultStroke = ['line','polyline','bezier','freehand','spiral'].includes(shape.kind);
+  getVectorField<HTMLSelectElement>(root, 'vector-stroke-enabled')!.value = (shape.strokeEnabled ?? defaultStroke) ? 'yes' : 'no';
+  getVectorField<HTMLSelectElement>(root, 'vector-dash')!.value = shape.strokeDash ?? 'solid';
+  getVectorField<HTMLSelectElement>(root, 'vector-line-cap')!.value = shape.lineCap ?? 'round';
+  getVectorField<HTMLSelectElement>(root, 'vector-line-join')!.value = shape.lineJoin ?? 'round';
+}
+
+function setVectorTextFields(root: HTMLElement, shape: VectorShape): void {
+  getVectorField<HTMLInputElement>(root, 'vector-text')!.value = shape.text ?? 'Texto vectorial';
+  getVectorField<HTMLSelectElement>(root, 'vector-font-family')!.value = shape.fontFamily ?? 'Arial';
+  getVectorField<HTMLInputElement>(root, 'vector-font-size')!.value = String(shape.fontSize ?? 64);
+  getVectorField<HTMLSelectElement>(root, 'vector-font-style')!.value = shape.fontStyle ?? 'normal';
+  getVectorField<HTMLSelectElement>(root, 'vector-font-weight')!.value = shape.fontWeight ?? 'normal';
+  getVectorField<HTMLSelectElement>(root, 'vector-text-align')!.value = shape.textAlign ?? 'left';
+}
+
+function updateVectorStackControls(root: HTMLElement, shapes: VectorShape[], selectedShape: VectorShape): void {
+  const index = shapes.findIndex((item) => item.id === selectedShape.id);
+  const up = getVectorField<HTMLButtonElement>(root, 'vector-shape-up');
+  const down = getVectorField<HTMLButtonElement>(root, 'vector-shape-down');
+  if (up) up.disabled = index >= shapes.length - 1;
+  if (down) down.disabled = index <= 0;
+}
+
+function getVectorField<T extends HTMLElement>(root: HTMLElement, id: string): T | null {
+  return root.querySelector<T>(`#${id}`);
+}
+
+function isVectorColor(value: string): boolean {
+  return /^#[0-9a-f]{6}$/i.test(value);
 }

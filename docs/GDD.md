@@ -19,7 +19,7 @@ The current repository is an active prototype. This document distinguishes imple
 
 ### Document templates
 
-The new-project selector currently offers 20 presets for social media content, screen/video sizes, A4 print, US and European comics, manga/manhwa, animation, and UV/2D textures. Their definitions live in the shared `@nvts/templates` package rather than inside the UI, allowing future NVTS programs to reuse the same presets. The current presets define default canvas dimensions and selector metadata; they do not yet encode complete print profiles, animation timelines, UV layouts, or application-specific setup procedures.
+The new-project selector currently offers 23 presets for social media content, screen/video sizes, A4 print, US and European comics, manga/manhwa, animation, and UV/2D textures. Their definitions live in the shared `@nvts/templates` package rather than inside the UI, allowing future NVTS programs to reuse the same presets. The current presets define default canvas dimensions and selector metadata; they do not yet encode complete print profiles, animation timelines, UV layouts, or application-specific setup procedures.
 
 ### Document and layers
 
@@ -48,7 +48,7 @@ The new-project selector currently offers 20 presets for social media content, s
 
 ### User interface
 
-- Workspaces: General, Digital Illustration, Vector Illustration, Image Manipulation, and Comics.
+- Workspaces: General, Digital Illustration, Vector Illustration, Image Manipulation, Comics, Storyboarding, and Animation.
 - Light and dark themes; a Preferences setting controls whether recent-project data is kept.
 - Modular panels include Layers, History, Advanced Tool Options, Comic Manager, and supporting filter, vector, layer-effects, plugin, and preferences UI.
 - `View → Panels` controls panel visibility. `Tab` toggles the whole panel zone while avoiding normal text-field and menu interaction.
@@ -120,3 +120,8 @@ The new-project selector currently offers 20 presets for social media content, s
 - Recent projects are only retained when the preference is enabled; deleting a recent entry does not delete the source file.
 - In a supported browser, Comic Manager creates or links the project directory and writes `comicConfig.json` and saved page files under the expected folders.
 - A plugin installation is explicit and its security warning is visible before users install arbitrary code.
+
+
+## Storyboarding and animation
+
+Dedicated Storyboarding and Animation workspaces are available. Storyboarding provides a panel for organizing shots, descriptions, and durations, with JSON export, and places the animation timeline at the bottom of the right dock. Animation also keeps the timeline at the bottom. Each workspace configuration is maintained in its own TypeScript file. These features are an initial production-planning foundation and are not yet equivalent to a complete animation system such as Krita's animation tools.

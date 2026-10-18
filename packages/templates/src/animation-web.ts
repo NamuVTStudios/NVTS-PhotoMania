@@ -1,6 +1,6 @@
 import type { TemplateDef } from './types';
 
-/** Animación web: 1280 × 720 px. */
+/* Animación web: 1280 × 720 px. */
 export const animationWebTemplate: TemplateDef = {
   id: 'animation-web',
   title: 'Animación web',

@@ -1,6 +1,6 @@
 import type { TemplateDef } from './types';
 
-/** Facebook Post: 1200 × 630 px. */
+/* Facebook Post: 1200 × 630 px. */
 export const facebookPostTemplate: TemplateDef = {
   id: 'facebook-post',
   title: 'Facebook Post',

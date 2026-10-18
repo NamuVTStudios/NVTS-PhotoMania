@@ -15,6 +15,9 @@ import { tiktokPostTemplate } from './tiktok-post';
 import { tiktokStoryTemplate } from './tiktok-story';
 import { animationWebTemplate } from './animation-web';
 import { animation2DTemplate } from './animation-2d';
+import { storyboardHorizontalTemplate } from './storyboard-horizontal';
+import { storyboardVerticalTemplate } from './storyboard-vertical';
+import { animationVerticalTemplate } from './animation-vertical';
 import { textureUvTemplate } from './texture-uv';
 import { textureUv4KTemplate } from './texture-uv-4k';
 import { texture2DTemplate } from './texture-2d';
@@ -22,8 +25,7 @@ import { texture2DWideTemplate } from './texture-2d-wide';
 
 export type { TemplateDef } from './types';
 
-// Export individual definitions so other NVTS applications can import only
-// the presets they need, without depending on PhotoMania's UI.
+// Export individual definitions so other NVTS applications can import only the presets they need, without depending on PhotoMania's UI.
 export {
   instagramPostTemplate,
   instagramStoryTemplate,
@@ -41,6 +43,9 @@ export {
   tiktokStoryTemplate,
   animationWebTemplate,
   animation2DTemplate,
+  storyboardHorizontalTemplate,
+  storyboardVerticalTemplate,
+  animationVerticalTemplate,
   textureUvTemplate,
   textureUv4KTemplate,
   texture2DTemplate,
@@ -65,6 +70,9 @@ export const TEMPLATES: readonly TemplateDef[] = [
   tiktokStoryTemplate,
   animationWebTemplate,
   animation2DTemplate,
+  storyboardHorizontalTemplate,
+  storyboardVerticalTemplate,
+  animationVerticalTemplate,
   textureUvTemplate,
   textureUv4KTemplate,
   texture2DTemplate,

@@ -1,4 +1,4 @@
-// tiled_layer.cpp — Implementación del sistema de tiles + bindings embind.
+// tiled_layer.cpp — Tiled storage, drawing operations, and embind bindings.
 
 #include "tiled_layer.h"
 #include <emscripten/bind.h>
@@ -9,82 +9,117 @@
 using namespace emscripten;
 
 namespace nvts {
+namespace {
+
+bool alphaRowIsTransparent(const uint8_t* src, uint32_t width) {
+    bool transparent = true;
+    for (uint32_t x = 0; x < width; ++x) transparent = transparent && src[x * 4 + 3] == 0;
+    return transparent;
+}
+
+bool regionIsTransparent(const uint8_t* src, size_t stride, uint32_t width, uint32_t height) {
+    bool transparent = true;
+    for (uint32_t y = 0; y < height; ++y) {
+        transparent = transparent && alphaRowIsTransparent(src + y * stride, width);
+    }
+    return transparent;
+}
+
+uint8_t clamp8(int value) {
+    return static_cast<uint8_t>(value < 0 ? 0 : (value > 255 ? 255 : value));
+}
+
+uint8_t to8(float value) {
+    return static_cast<uint8_t>(std::min(255.f, std::max(0.f, value)) + 0.5f);
+}
+
+} // namespace
 
 TiledLayer::TiledLayer(uint32_t width, uint32_t height)
     : width_(width), height_(height),
-      tilesX_((width  + TILE_SIZE - 1) / TILE_SIZE),
+      tilesX_((width + TILE_SIZE - 1) / TILE_SIZE),
       tilesY_((height + TILE_SIZE - 1) / TILE_SIZE) {}
 
-// ── Internos ──────────────────────────────────────────────────────────────
+TiledLayer::ClippedRect TiledLayer::clipRect(int32_t x, int32_t y, uint32_t w, uint32_t h) const {
+    return {
+        std::max<int64_t>(0, x),
+        std::max<int64_t>(0, y),
+        std::min<int64_t>(width_, static_cast<int64_t>(x) + w),
+        std::min<int64_t>(height_, static_cast<int64_t>(y) + h)
+    };
+}
 
 Tile& TiledLayer::getOrCreate(int32_t tx, int32_t ty) {
-    // try_emplace construye el Tile in situ solo si no existe (sin copias ni movimientos).
     return tiles_.try_emplace(key(tx, ty), tx, ty).first->second;
 }
 
-// Marca un tile como sucio y lo añade a la lista una sola vez (sin duplicados).
-void TiledLayer::markDirty(Tile& t) {
-    if (!t.dirty) {
-        t.dirty = true;
-        dirtyList_.push_back(&t);  // seguro: los nodos de unordered_map no se mueven
-    }
+void TiledLayer::markDirty(Tile& tile) {
+    if (tile.dirty) return;
+    tile.dirty = true;
+    dirtyList_.push_back(&tile);
 }
 
-static bool regionIsTransparent(const uint8_t* src, size_t stride, uint32_t w, uint32_t h) {
-    for (uint32_t row = 0; row < h; ++row) {
-        const uint8_t* p = src + row * stride;
-        for (uint32_t i = 0; i < w; ++i) if (p[i * 4 + 3] != 0) return false;
-    }
-    return true;
-}
-
-// ── Escritura ─────────────────────────────────────────────────────────────
+// ── Region writes ─────────────────────────────────────────────────────────
 
 void TiledLayer::writeRect(int32_t x, int32_t y, uint32_t w, uint32_t h,
                            const uint8_t* src, size_t srcStride) {
-    // 1) Recorta la región a los límites del lienzo.
-    const int64_t x0 = std::max<int64_t>(0, x),  y0 = std::max<int64_t>(0, y);
-    const int64_t x1 = std::min<int64_t>(width_,  static_cast<int64_t>(x) + w);
-    const int64_t y1 = std::min<int64_t>(height_, static_cast<int64_t>(y) + h);
-    if (x0 >= x1 || y0 >= y1) return;
+    const ClippedRect rect = clipRect(x, y, w, h);
+    if (rect.empty()) return;
+    writeTileRows(rect, x, y, src, srcStride);
+}
 
-    const int64_t T = TILE_SIZE;
-    // 2) Recorre solo los tiles que intersectan la región.
-    for (int64_t ty = y0 / T; ty <= (y1 - 1) / T; ++ty) {
-        for (int64_t tx = x0 / T; tx <= (x1 - 1) / T; ++tx) {
-            // Intersección región ∩ tile, en coordenadas de lienzo.
-            const int64_t px0 = std::max(x0, tx * T), px1 = std::min(x1, (tx + 1) * T);
-            const int64_t py0 = std::max(y0, ty * T), py1 = std::min(y1, (ty + 1) * T);
-            const uint8_t* s0 = src + (py0 - y) * srcStride + (px0 - x) * 4;
+void TiledLayer::writeTileRows(const ClippedRect& rect, int32_t x, int32_t y, const uint8_t* src, size_t stride) {
+    const int64_t first = rect.y0 / TILE_SIZE;
+    const int64_t last = (rect.y1 - 1) / TILE_SIZE;
+    for (int64_t ty = first; ty <= last; ++ty) writeTileColumns(rect, ty, x, y, src, stride);
+}
 
-            // Un tile inexistente ya es transparente: escribir transparencia sería no-op.
-            // Esto evita reservar 256 KiB para zonas vacías.
-            auto it = tiles_.find(key(static_cast<int32_t>(tx), static_cast<int32_t>(ty)));
-            if (it == tiles_.end() &&
-                regionIsTransparent(s0, srcStride, static_cast<uint32_t>(px1 - px0),
-                                    static_cast<uint32_t>(py1 - py0))) continue;
+void TiledLayer::writeTileColumns(const ClippedRect& rect, int64_t ty, int32_t x, int32_t y,
+                                  const uint8_t* src, size_t stride) {
+    const int64_t first = rect.x0 / TILE_SIZE;
+    const int64_t last = (rect.x1 - 1) / TILE_SIZE;
+    for (int64_t tx = first; tx <= last; ++tx) writeTileRect(rect, tx, ty, x, y, src, stride);
+}
 
-            // Aviso previo al historial: guarda los píxeles anteriores (copy-on-write).
-            if (observer_) observer_->onBeforeTileWrite(*this, static_cast<int32_t>(tx), static_cast<int32_t>(ty),
-                                                         it != tiles_.end() ? &it->second : nullptr);
+void TiledLayer::writeTileRect(const ClippedRect& rect, int64_t tx, int64_t ty, int32_t x, int32_t y,
+                               const uint8_t* src, size_t stride) {
+    const int64_t tileOriginX = tx * TILE_SIZE;
+    const int64_t tileOriginY = ty * TILE_SIZE;
+    const int64_t px0 = std::max(rect.x0, tileOriginX);
+    const int64_t px1 = std::min(rect.x1, tileOriginX + TILE_SIZE);
+    const int64_t py0 = std::max(rect.y0, tileOriginY);
+    const int64_t py1 = std::min(rect.y1, tileOriginY + TILE_SIZE);
+    const uint8_t* srcStart = src + (py0 - y) * stride + (px0 - x) * 4;
+    auto it = tiles_.find(key(static_cast<int32_t>(tx), static_cast<int32_t>(ty)));
+    const bool missingTransparent = it == tiles_.end() &&
+        regionIsTransparent(srcStart, stride, static_cast<uint32_t>(px1 - px0),
+                            static_cast<uint32_t>(py1 - py0));
+    if (missingTransparent) return;
+    if (observer_) observer_->onBeforeTileWrite(*this, static_cast<int32_t>(tx), static_cast<int32_t>(ty),
+                                                 it == tiles_.end() ? nullptr : &it->second);
+    Tile& tile = it == tiles_.end()
+        ? getOrCreate(static_cast<int32_t>(tx), static_cast<int32_t>(ty))
+        : it->second;
+    copyWriteRows(tile, tx, ty, px0, px1, py0, py1, x, y, src, stride);
+    markDirty(tile);
+}
 
-            Tile& t = (it != tiles_.end()) ? it->second
-                                           : getOrCreate(static_cast<int32_t>(tx), static_cast<int32_t>(ty));
-            // 3) Copia fila a fila al interior del tile.
-            for (int64_t py = py0; py < py1; ++py) {
-                const uint8_t* s = src + (py - y) * srcStride + (px0 - x) * 4;
-                uint8_t* d = t.pixels.get() + ((py - ty * T) * T + (px0 - tx * T)) * 4;
-                std::memcpy(d, s, static_cast<size_t>(px1 - px0) * 4);
-            }
-            markDirty(t);  // <- aquí se marca como sucio
-        }
+void TiledLayer::copyWriteRows(Tile& tile, int64_t tx, int64_t ty, int64_t px0, int64_t px1,
+                               int64_t py0, int64_t py1, int32_t x, int32_t y,
+                               const uint8_t* src, size_t stride) {
+    const int64_t tileOriginX = tx * TILE_SIZE;
+    const int64_t tileOriginY = ty * TILE_SIZE;
+    for (int64_t py = py0; py < py1; ++py) {
+        const uint8_t* sourceRow = src + (py - y) * stride + (px0 - x) * 4;
+        uint8_t* destinationRow = tile.pixels.get() +
+            ((py - tileOriginY) * TILE_SIZE + (px0 - tileOriginX)) * 4;
+        std::memcpy(destinationRow, sourceRow, static_cast<size_t>(px1 - px0) * 4);
     }
 }
 
 bool TiledLayer::writeRectFromJS(int32_t x, int32_t y, uint32_t w, uint32_t h, const val& bytes) {
     const size_t need = static_cast<size_t>(w) * h * 4;
     if (bytes["length"].as<unsigned>() < need) return false;
-    // Copia JS -> memoria temporal Wasm (una sola vez), luego reparte a los tiles.
     std::vector<uint8_t> tmp(need);
     val dst(typed_memory_view(need, tmp.data()));
     dst.call<void>("set", bytes.call<val>("subarray", 0, static_cast<unsigned>(need)));
@@ -97,158 +132,64 @@ bool TiledLayer::loadFromRGBA(const val& bytes) {
 }
 
 void TiledLayer::applyBrightness(int amount) {
-    auto c8 = [](int v) { return static_cast<uint8_t>(v < 0 ? 0 : (v > 255 ? 255 : v)); };
-    for (auto& [k, t] : tiles_) {          // solo tiles existentes: los vacíos no cambian
-        if (observer_) observer_->onBeforeTileWrite(*this, t.tx, t.ty, &t);
-        uint8_t* p = t.pixels.get();
-        for (uint32_t i = 0; i < TILE_BYTES; i += 4) {
-            p[i] = c8(p[i] + amount); p[i + 1] = c8(p[i + 1] + amount); p[i + 2] = c8(p[i + 2] + amount);
-        }
-        markDirty(t);
+    for (auto& entry : tiles_) applyBrightnessToTile(entry.second, amount);
+}
+
+void TiledLayer::applyBrightnessToTile(Tile& tile, int amount) {
+    if (observer_) observer_->onBeforeTileWrite(*this, tile.tx, tile.ty, &tile);
+    uint8_t* pixels = tile.pixels.get();
+    for (uint32_t i = 0; i < TILE_BYTES; i += 4) {
+        pixels[i] = clamp8(pixels[i] + amount);
+        pixels[i + 1] = clamp8(pixels[i + 1] + amount);
+        pixels[i + 2] = clamp8(pixels[i + 2] + amount);
     }
+    markDirty(tile);
 }
 
 // ── Dirty tracking ────────────────────────────────────────────────────────
 
 void TiledLayer::markRectDirty(int32_t x, int32_t y, uint32_t w, uint32_t h) {
-    const int64_t x0 = std::max<int64_t>(0, x),  y0 = std::max<int64_t>(0, y);
-    const int64_t x1 = std::min<int64_t>(width_,  static_cast<int64_t>(x) + w);
-    const int64_t y1 = std::min<int64_t>(height_, static_cast<int64_t>(y) + h);
-    if (x0 >= x1 || y0 >= y1) return;
-    for (int64_t ty = y0 / TILE_SIZE; ty <= (y1 - 1) / TILE_SIZE; ++ty)
-        for (int64_t tx = x0 / TILE_SIZE; tx <= (x1 - 1) / TILE_SIZE; ++tx) {
-            auto it = tiles_.find(key(static_cast<int32_t>(tx), static_cast<int32_t>(ty)));
-            if (it != tiles_.end()) markDirty(it->second);
-        }
+    const ClippedRect rect = clipRect(x, y, w, h);
+    if (rect.empty()) return;
+    markDirtyTileRows(rect);
+}
+
+void TiledLayer::markDirtyTileRows(const ClippedRect& rect) {
+    for (int64_t ty = rect.y0 / TILE_SIZE; ty <= (rect.y1 - 1) / TILE_SIZE; ++ty) {
+        markDirtyTileColumns(rect.x0 / TILE_SIZE, (rect.x1 - 1) / TILE_SIZE, ty);
+    }
+}
+
+void TiledLayer::markDirtyTileColumns(int64_t tx0, int64_t tx1, int64_t ty) {
+    for (int64_t tx = tx0; tx <= tx1; ++tx) markDirtyAt(static_cast<int32_t>(tx), static_cast<int32_t>(ty));
+}
+
+void TiledLayer::markDirtyAt(int32_t tx, int32_t ty) {
+    auto it = tiles_.find(key(tx, ty));
+    if (it == tiles_.end()) return;
+    markDirty(it->second);
 }
 
 void TiledLayer::markAllDirty() {
-    for (auto& [k, t] : tiles_) markDirty(t);
+    for (auto& entry : tiles_) markDirty(entry.second);
 }
 
 uint32_t TiledLayer::flushDirty() {
     desc_.clear();
     desc_.reserve(dirtyList_.size() * 3);
-    for (Tile* t : dirtyList_) {
-        desc_.push_back(static_cast<uint32_t>(t->tx));
-        desc_.push_back(static_cast<uint32_t>(t->ty));
-        desc_.push_back(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(t->pixels.get())));
-        t->dirty = false;
+    for (Tile* tile : dirtyList_) {
+        desc_.push_back(static_cast<uint32_t>(tile->tx));
+        desc_.push_back(static_cast<uint32_t>(tile->ty));
+        desc_.push_back(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(tile->pixels.get())));
+        tile->dirty = false;
     }
     dirtyList_.clear();
     return static_cast<uint32_t>(desc_.size() / 3);
 }
 
 uintptr_t TiledLayer::tilePtr(int32_t tx, int32_t ty) const {
-    auto it = tiles_.find(key(tx, ty));
-    return it == tiles_.end() ? 0 : reinterpret_cast<uintptr_t>(it->second.pixels.get());
-}
-
-void TiledLayer::touchRect(int32_t x, int32_t y, uint32_t w, uint32_t h) {
-    const int64_t x0 = std::max<int64_t>(0, x),  y0 = std::max<int64_t>(0, y);
-    const int64_t x1 = std::min<int64_t>(width_,  static_cast<int64_t>(x) + w);
-    const int64_t y1 = std::min<int64_t>(height_, static_cast<int64_t>(y) + h);
-    if (x0 >= x1 || y0 >= y1) return;
-    for (int64_t ty = y0 / TILE_SIZE; ty <= (y1 - 1) / TILE_SIZE; ++ty)
-        for (int64_t tx = x0 / TILE_SIZE; tx <= (x1 - 1) / TILE_SIZE; ++tx) {
-            const int32_t cx = static_cast<int32_t>(tx), cy = static_cast<int32_t>(ty);
-            auto it = tiles_.find(key(cx, cy));
-            if (observer_) observer_->onBeforeTileWrite(*this, cx, cy, it != tiles_.end() ? &it->second : nullptr);
-            if (it == tiles_.end()) getOrCreate(cx, cy);   // para que tilePtr() ya sea válido
-        }
-}
-
-bool TiledLayer::swapTilePixels(int32_t tx, int32_t ty, std::unique_ptr<uint8_t[]>& other) {
-    auto it = tiles_.find(key(tx, ty));
-    if (it == tiles_.end()) {
-        if (!other) return false;               // transparente <-> transparente: nada que hacer
-        Tile& t = getOrCreate(tx, ty);
-        t.pixels = std::move(other);            // la capa recupera el contenido guardado...
-        other.reset();                          // ...y el snapshot pasa a "transparente" (nulo)
-        markDirty(t);
-        return true;
-    }
-    Tile& t = it->second;
-    if (other) {
-        t.pixels.swap(other);                   // intercambio de punteros: sin copiar 256 KiB
-    } else {
-        other = std::move(t.pixels);            // el snapshot se queda con lo que había
-        t.pixels.reset(new uint8_t[TILE_BYTES]());  // el tile pasa a transparente (sigue reservado)
-    }
-    markDirty(t);                               // ¡importante!: el compositor y la GPU deben enterarse
-    return true;
-}
-
-bool TiledLayer::readRectToJS(int32_t x, int32_t y, uint32_t w, uint32_t h, const val& dst) const {
-    const size_t need = static_cast<size_t>(w) * h * 4;
-    if (need == 0 || dst["length"].as<unsigned>() < need) return false;
-    std::vector<uint8_t> tmp(need, 0);              // sin tile / fuera del lienzo = transparente
-
-    const int64_t x0 = std::max<int64_t>(0, x),  y0 = std::max<int64_t>(0, y);
-    const int64_t x1 = std::min<int64_t>(width_,  static_cast<int64_t>(x) + w);
-    const int64_t y1 = std::min<int64_t>(height_, static_cast<int64_t>(y) + h);
-    const int64_t T = TILE_SIZE;
-    for (int64_t ty = y0 / T; x0 < x1 && y0 < y1 && ty <= (y1 - 1) / T; ++ty)
-        for (int64_t tx = x0 / T; tx <= (x1 - 1) / T; ++tx) {
-            const Tile* t = findTile(static_cast<int32_t>(tx), static_cast<int32_t>(ty));
-            if (!t) continue;
-            const int64_t px0 = std::max(x0, tx * T), px1 = std::min(x1, (tx + 1) * T);
-            const int64_t py0 = std::max(y0, ty * T), py1 = std::min(y1, (ty + 1) * T);
-            for (int64_t py = py0; py < py1; ++py)
-                std::memcpy(tmp.data() + ((py - y) * w + (px0 - x)) * 4,
-                            t->pixels.get() + ((py - ty * T) * T + (px0 - tx * T)) * 4,
-                            static_cast<size_t>(px1 - px0) * 4);
-        }
-    // Una sola copia memoria Wasm -> Uint8Array de JS.
-    dst.call<void>("set", val(typed_memory_view(need, tmp.data())));
-    return true;
-}
-
-void TiledLayer::stampDisc(float cx, float cy, float radius, int r, int g, int b, int a, bool erase) {
-    if (radius <= 0.f) return;
-    const int32_t x0 = std::max<int32_t>(0, static_cast<int32_t>(std::floor(cx - radius - 1.f)));
-    const int32_t y0 = std::max<int32_t>(0, static_cast<int32_t>(std::floor(cy - radius - 1.f)));
-    const int32_t x1 = std::min<int32_t>(static_cast<int32_t>(width_),  static_cast<int32_t>(std::ceil(cx + radius + 1.f)));
-    const int32_t y1 = std::min<int32_t>(static_cast<int32_t>(height_), static_cast<int32_t>(std::ceil(cy + radius + 1.f)));
-    if (x0 >= x1 || y0 >= y1) return;
-
-    const float brushA = std::min(1.f, std::max(0.f, a / 255.f));
-    const float rf = static_cast<float>(r), gf = static_cast<float>(g), bf = static_cast<float>(b);
-    auto to8 = [](float v) { return static_cast<uint8_t>(std::min(255.f, std::max(0.f, v)) + 0.5f); };
-    const int32_t T = TILE_SIZE;
-
-    for (int32_t ty = y0 / T; ty <= (y1 - 1) / T; ++ty)
-        for (int32_t tx = x0 / T; tx <= (x1 - 1) / T; ++tx) {
-            auto it = tiles_.find(key(tx, ty));
-            if (erase && it == tiles_.end()) continue;           // borrar donde no hay nada: no-op
-            if (observer_) observer_->onBeforeTileWrite(*this, tx, ty, it != tiles_.end() ? &it->second : nullptr);
-            Tile& t = (it != tiles_.end()) ? it->second : getOrCreate(tx, ty);
-
-            const int32_t px0 = std::max(x0, tx * T), px1 = std::min(x1, (tx + 1) * T);
-            const int32_t py0 = std::max(y0, ty * T), py1 = std::min(y1, (ty + 1) * T);
-            bool changed = false;
-            for (int32_t py = py0; py < py1; ++py)
-                for (int32_t px = px0; px < px1; ++px) {
-                    const float dx = px + 0.5f - cx, dy = py + 0.5f - cy;
-                    const float cov = std::min(1.f, std::max(0.f, radius + 0.5f - std::sqrt(dx * dx + dy * dy)));
-                    if (cov <= 0.f) continue;
-                    const float sa = cov * brushA;               // alfa efectivo de este píxel
-                    uint8_t* d = t.pixels.get() + ((py - ty * T) * T + (px - tx * T)) * 4;
-                    const float da = d[3] / 255.f;
-                    if (erase) {
-                        d[3] = to8(da * (1.f - sa) * 255.f);
-                    } else {                                     // source-over sobre color SIN premultiplicar
-                        const float oa = sa + da * (1.f - sa);
-                        const float k = da * (1.f - sa);
-                        d[0] = to8((rf * sa + d[0] * k) / oa);
-                        d[1] = to8((gf * sa + d[1] * k) / oa);
-                        d[2] = to8((bf * sa + d[2] * k) / oa);
-                        d[3] = to8(oa * 255.f);
-                    }
-                    changed = true;
-                }
-            if (changed) markDirty(t);
-        }
+    const Tile* tile = findTile(tx, ty);
+    return tile ? reinterpret_cast<uintptr_t>(tile->pixels.get()) : 0;
 }
 
 const Tile* TiledLayer::findTile(int32_t tx, int32_t ty) const {
@@ -257,13 +198,199 @@ const Tile* TiledLayer::findTile(int32_t tx, int32_t ty) const {
 }
 
 void TiledLayer::takeDirty(std::vector<std::pair<int32_t, int32_t>>& out) {
-    for (Tile* t : dirtyList_) { out.emplace_back(t->tx, t->ty); t->dirty = false; }
+    for (Tile* tile : dirtyList_) {
+        out.emplace_back(tile->tx, tile->ty);
+        tile->dirty = false;
+    }
     dirtyList_.clear();
+}
+
+// ── History support ───────────────────────────────────────────────────────
+
+void TiledLayer::touchRect(int32_t x, int32_t y, uint32_t w, uint32_t h) {
+    const ClippedRect rect = clipRect(x, y, w, h);
+    if (rect.empty()) return;
+    touchTileRows(rect);
+}
+
+void TiledLayer::touchTileRows(const ClippedRect& rect) {
+    for (int64_t ty = rect.y0 / TILE_SIZE; ty <= (rect.y1 - 1) / TILE_SIZE; ++ty) {
+        touchTileColumns(rect.x0 / TILE_SIZE, (rect.x1 - 1) / TILE_SIZE, ty);
+    }
+}
+
+void TiledLayer::touchTileColumns(int64_t tx0, int64_t tx1, int64_t ty) {
+    for (int64_t tx = tx0; tx <= tx1; ++tx) touchTileAt(static_cast<int32_t>(tx), static_cast<int32_t>(ty));
+}
+
+void TiledLayer::touchTileAt(int32_t tx, int32_t ty) {
+    auto it = tiles_.find(key(tx, ty));
+    if (observer_) observer_->onBeforeTileWrite(*this, tx, ty, it == tiles_.end() ? nullptr : &it->second);
+    if (it != tiles_.end()) return;
+    getOrCreate(tx, ty);
+}
+
+bool TiledLayer::swapTilePixels(int32_t tx, int32_t ty, std::unique_ptr<uint8_t[]>& other) {
+    auto it = tiles_.find(key(tx, ty));
+    if (it == tiles_.end() && !other) return false;
+    if (it == tiles_.end()) {
+        Tile& tile = getOrCreate(tx, ty);
+        tile.pixels = std::move(other);
+        other.reset();
+        markDirty(tile);
+        return true;
+    }
+    Tile& tile = it->second;
+    if (other) {
+        tile.pixels.swap(other);
+    } else {
+        other = std::move(tile.pixels);
+        tile.pixels.reset(new uint8_t[TILE_BYTES]());
+    }
+    markDirty(tile);
+    return true;
+}
+
+// ── Region reads ──────────────────────────────────────────────────────────
+
+bool TiledLayer::readRectToJS(int32_t x, int32_t y, uint32_t w, uint32_t h, const val& dst) const {
+    const size_t need = static_cast<size_t>(w) * h * 4;
+    if (need == 0 || dst["length"].as<unsigned>() < need) return false;
+    std::vector<uint8_t> tmp(need, 0);
+    const ClippedRect rect = clipRect(x, y, w, h);
+    if (!rect.empty()) readTileRows(rect, x, y, w, tmp);
+    dst.call<void>("set", val(typed_memory_view(need, tmp.data())));
+    return true;
+}
+
+void TiledLayer::readTileRows(const ClippedRect& rect, int32_t x, int32_t y, uint32_t w,
+                              std::vector<uint8_t>& dst) const {
+    for (int64_t ty = rect.y0 / TILE_SIZE; ty <= (rect.y1 - 1) / TILE_SIZE; ++ty) {
+        readTileColumns(rect, ty, x, y, w, dst);
+    }
+}
+
+void TiledLayer::readTileColumns(const ClippedRect& rect, int64_t ty, int32_t x, int32_t y,
+                                 uint32_t w, std::vector<uint8_t>& dst) const {
+    for (int64_t tx = rect.x0 / TILE_SIZE; tx <= (rect.x1 - 1) / TILE_SIZE; ++tx) {
+        readTileRect(rect, tx, ty, x, y, w, dst);
+    }
+}
+
+void TiledLayer::readTileRect(const ClippedRect& rect, int64_t tx, int64_t ty, int32_t x, int32_t y,
+                              uint32_t w, std::vector<uint8_t>& dst) const {
+    const Tile* tile = findTile(static_cast<int32_t>(tx), static_cast<int32_t>(ty));
+    if (!tile) return;
+    copyReadRows(*tile, rect, tx, ty, x, y, w, dst);
+}
+
+void TiledLayer::copyReadRows(const Tile& tile, const ClippedRect& rect, int64_t tx, int64_t ty,
+                              int32_t x, int32_t y, uint32_t w, std::vector<uint8_t>& dst) const {
+    const int64_t tileOriginX = tx * TILE_SIZE;
+    const int64_t tileOriginY = ty * TILE_SIZE;
+    const int64_t px0 = std::max(rect.x0, tileOriginX);
+    const int64_t px1 = std::min(rect.x1, tileOriginX + TILE_SIZE);
+    const int64_t py0 = std::max(rect.y0, tileOriginY);
+    const int64_t py1 = std::min(rect.y1, tileOriginY + TILE_SIZE);
+    for (int64_t py = py0; py < py1; ++py) {
+        const size_t destinationOffset = static_cast<size_t>(((py - y) * w + (px0 - x)) * 4);
+        const size_t sourceOffset = static_cast<size_t>(((py - tileOriginY) * TILE_SIZE + (px0 - tileOriginX)) * 4);
+        std::memcpy(dst.data() + destinationOffset, tile.pixels.get() + sourceOffset,
+                    static_cast<size_t>(px1 - px0) * 4);
+    }
+}
+
+// ── Brush stamp ───────────────────────────────────────────────────────────
+
+void TiledLayer::stampDisc(float cx, float cy, float radius, int r, int g, int b, int a, bool erase) {
+    if (radius <= 0.f) return;
+    const ClippedRect rect{
+        std::max<int32_t>(0, static_cast<int32_t>(std::floor(cx - radius - 1.f))),
+        std::max<int32_t>(0, static_cast<int32_t>(std::floor(cy - radius - 1.f))),
+        std::min<int32_t>(static_cast<int32_t>(width_), static_cast<int32_t>(std::ceil(cx + radius + 1.f))),
+        std::min<int32_t>(static_cast<int32_t>(height_), static_cast<int32_t>(std::ceil(cy + radius + 1.f)))
+    };
+    if (rect.empty()) return;
+    const float brushA = std::min(1.f, std::max(0.f, a / 255.f));
+    stampTileRows(rect, cx, cy, radius, brushA, static_cast<float>(r), static_cast<float>(g),
+                  static_cast<float>(b), erase);
+}
+
+void TiledLayer::stampTileRows(const ClippedRect& rect, float cx, float cy, float radius, float brushA,
+                               float rf, float gf, float bf, bool erase) {
+    for (int64_t ty = rect.y0 / TILE_SIZE; ty <= (rect.y1 - 1) / TILE_SIZE; ++ty) {
+        stampTileColumns(rect, ty, cx, cy, radius, brushA, rf, gf, bf, erase);
+    }
+}
+
+void TiledLayer::stampTileColumns(const ClippedRect& rect, int64_t ty, float cx, float cy, float radius,
+                                  float brushA, float rf, float gf, float bf, bool erase) {
+    for (int64_t tx = rect.x0 / TILE_SIZE; tx <= (rect.x1 - 1) / TILE_SIZE; ++tx) {
+        stampTile(rect, static_cast<int32_t>(tx), static_cast<int32_t>(ty),
+                  cx, cy, radius, brushA, rf, gf, bf, erase);
+    }
+}
+
+void TiledLayer::stampTile(const ClippedRect& rect, int32_t tx, int32_t ty, float cx, float cy,
+                           float radius, float brushA, float rf, float gf, float bf, bool erase) {
+    auto it = tiles_.find(key(tx, ty));
+    if (erase && it == tiles_.end()) return;
+    if (observer_) observer_->onBeforeTileWrite(*this, tx, ty, it == tiles_.end() ? nullptr : &it->second);
+    Tile& tile = it == tiles_.end() ? getOrCreate(tx, ty) : it->second;
+    const int32_t tileX = tx * static_cast<int32_t>(TILE_SIZE);
+    const int32_t tileY = ty * static_cast<int32_t>(TILE_SIZE);
+    const int32_t px0 = static_cast<int32_t>(std::max<int64_t>(rect.x0, tileX));
+    const int32_t px1 = static_cast<int32_t>(std::min<int64_t>(rect.x1, tileX + TILE_SIZE));
+    const int32_t py0 = static_cast<int32_t>(std::max<int64_t>(rect.y0, tileY));
+    const int32_t py1 = static_cast<int32_t>(std::min<int64_t>(rect.y1, tileY + TILE_SIZE));
+    bool changed = false;
+    stampPixelRows(tile, tx, ty, px0, px1, py0, py1, cx, cy, radius, brushA, rf, gf, bf, erase, changed);
+    if (changed) markDirty(tile);
+}
+
+void TiledLayer::stampPixelRows(Tile& tile, int32_t tx, int32_t ty, int32_t px0, int32_t px1,
+                                int32_t py0, int32_t py1, float cx, float cy, float radius,
+                                float brushA, float rf, float gf, float bf, bool erase, bool& changed) {
+    for (int32_t py = py0; py < py1; ++py) {
+        stampPixelRow(tile, tx, ty, px0, px1, py, cx, cy, radius, brushA, rf, gf, bf, erase, changed);
+    }
+}
+
+void TiledLayer::stampPixelRow(Tile& tile, int32_t tx, int32_t ty, int32_t px0, int32_t px1, int32_t py,
+                               float cx, float cy, float radius, float brushA,
+                               float rf, float gf, float bf, bool erase, bool& changed) {
+    for (int32_t px = px0; px < px1; ++px) {
+        changed = stampPixel(tile, tx, ty, px, py, cx, cy, radius, brushA, rf, gf, bf, erase) || changed;
+    }
+}
+
+bool TiledLayer::stampPixel(Tile& tile, int32_t tx, int32_t ty, int32_t px, int32_t py,
+                            float cx, float cy, float radius, float brushA,
+                            float rf, float gf, float bf, bool erase) {
+    const float dx = px + 0.5f - cx;
+    const float dy = py + 0.5f - cy;
+    const float coverage = std::min(1.f, std::max(0.f, radius + 0.5f - std::sqrt(dx * dx + dy * dy)));
+    if (coverage <= 0.f) return false;
+    const float sourceAlpha = coverage * brushA;
+    uint8_t* pixel = tile.pixels.get() +
+        ((py - ty * static_cast<int32_t>(TILE_SIZE)) * TILE_SIZE +
+         (px - tx * static_cast<int32_t>(TILE_SIZE))) * 4;
+    const float destinationAlpha = pixel[3] / 255.f;
+    if (erase) {
+        pixel[3] = to8(destinationAlpha * (1.f - sourceAlpha) * 255.f);
+        return true;
+    }
+    const float outputAlpha = sourceAlpha + destinationAlpha * (1.f - sourceAlpha);
+    const float retained = destinationAlpha * (1.f - sourceAlpha);
+    pixel[0] = to8((rf * sourceAlpha + pixel[0] * retained) / outputAlpha);
+    pixel[1] = to8((gf * sourceAlpha + pixel[1] * retained) / outputAlpha);
+    pixel[2] = to8((bf * sourceAlpha + pixel[2] * retained) / outputAlpha);
+    pixel[3] = to8(outputAlpha * 255.f);
+    return true;
 }
 
 } // namespace nvts
 
-// ── Bindings ──────────────────────────────────────────────────────────────
 EMSCRIPTEN_BINDINGS(nvts_tiles) {
     constant("TILE_SIZE", nvts::TILE_SIZE);
     class_<nvts::TiledLayer>("TiledLayer")

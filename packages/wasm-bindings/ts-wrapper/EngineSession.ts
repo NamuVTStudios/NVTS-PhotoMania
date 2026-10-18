@@ -19,6 +19,16 @@ export interface AddLayerOptions {
   group?: boolean;
 }
 
+function packEdgeTile(rgba: Uint8Array | Uint8ClampedArray, tileSize: number, width: number, height: number): Uint8Array {
+  const packed = new Uint8Array(width * height * 4);
+  for (let row = 0; row < height; row++) {
+    const sourceStart = row * tileSize * 4;
+    const sourceEnd = sourceStart + width * 4;
+    packed.set(rgba.subarray(sourceStart, sourceEnd), row * width * 4);
+  }
+  return packed;
+}
+
 export class EngineSession {
   readonly tileSize: number;
   private readonly comp: Compositor;
@@ -97,12 +107,7 @@ export class EngineSession {
     }
     const w = Math.min(T, this.width - x), h = Math.min(T, this.height - y);
 
-    let src: Uint8Array | Uint8ClampedArray = rgba;
-    if (w !== T || h !== T) { // tile del borde: el motor espera filas contiguas de w*4 bytes
-      const packed = new Uint8Array(w * h * 4);
-      for (let row = 0; row < h; row++) packed.set(rgba.subarray(row * T * 4, row * T * 4 + w * 4), row * w * 4);
-      src = packed;
-    }
+    const src = w === T && h === T ? rgba : packEdgeTile(rgba, T, w, h);
     // JS -> memoria Wasm. Funciona igual si `src` o la memoria de Wasm son compartidas.
     if (!this.layer(layerId).writeRectFromJS(x, y, w, h, src)) throw new Error('El motor rechazó la escritura del tile');
   }

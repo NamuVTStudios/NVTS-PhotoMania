@@ -1,6 +1,6 @@
 import type { TemplateDef } from './types';
 
-/** TikTok Story: 1080 × 1920 px. */
+/* TikTok Story: 1080 × 1920 px. */
 export const tiktokStoryTemplate: TemplateDef = {
   id: 'tiktok-story',
   title: 'TikTok Story',

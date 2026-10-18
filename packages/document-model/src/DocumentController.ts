@@ -12,6 +12,7 @@ export type LayerPatch = Partial<Pick<LayerNode,
   'name' | 'visible' | 'locked' | 'opacity' | 'blendMode' | 'fillColor' | 'filterKind' | 'filterStrength' | 'vectorShapes' | 'sourceName' | 'sourceLinkId' | 'sourceLastModified' | 'sourceFileSize' | 'textContent' | 'textX' | 'textY' | 'textFontFamily' | 'textFontSize' | 'textColor' | 'textStyle' | 'textAlign' | 'textLineHeight' | 'textLetterSpacing' | 'textStrokeColor' | 'textStrokeWidth' | 'textBackgroundColor'>>;
 type HistoryAction = { kind: 'pixels'; label: string } | { kind: 'structure'; label: string; undo: () => void; redo: () => void };
 type LayerSnapshot = { node: LayerNode; parentId: string | null; index: number; pixels: Map<string, Uint8Array> };
+type FileLayerSource = { name: string; linkId?: string; lastModified?: number; fileSize?: number };
 
 const cloneShapes = (shapes: VectorShape[] | undefined): VectorShape[] => (shapes ?? []).map((s) => ({ ...s, points: s.points?.map((point) => ({ ...point })) }));
 const clonePatch = (n: LayerNode): LayerPatch => ({
@@ -51,14 +52,22 @@ export class DocumentController {
   find(id: string): LayerNode | undefined { return this.nodes.get(id); }
   isEffectivelyLocked(id: string): boolean {
     let node = this.nodes.get(id);
-    while (node) { if (node.locked) return true; node = this.parentOf(node) ?? undefined; }
-    return false;
+    let locked = false;
+    while (node) {
+      locked = locked || node.locked;
+      node = this.parentOf(node) ?? undefined;
+    }
+    return locked;
   }
   isEffectivelyVisible(id: string): boolean {
     let node = this.nodes.get(id);
     if (!node) return false;
-    while (node) { if (!node.visible) return false; node = this.parentOf(node) ?? undefined; }
-    return true;
+    let visible = true;
+    while (node) {
+      visible = visible && node.visible;
+      node = this.parentOf(node) ?? undefined;
+    }
+    return visible;
   }
   layerPixels(node: LayerNode): TiledLayer | null { return this.comp.layer(node.engineId); }
 
@@ -122,96 +131,162 @@ export class DocumentController {
   }
 
   /** Sustituye la imagen incrustada de una capa de archivo como una sola acción de historial. */
-  replaceFileLayerContent(id: string, pixels: Uint8Array, sourceName: string, sourceLinkId?: string, sourceLastModified?: number, sourceFileSize?: number): boolean {
+  replaceFileLayerContent(
+    id: string,
+    pixels: Uint8Array,
+    sourceName: string,
+    sourceLinkId?: string,
+    sourceLastModified?: number,
+    sourceFileSize?: number,
+  ): boolean {
     const node = this.nodes.get(id);
-    if (!node || node.type !== 'file' || pixels.byteLength !== this.doc.width * this.doc.height * 4) return false;
-    const beforePixels = this.readPixels(node) ?? new Uint8Array(this.doc.width * this.doc.height * 4);
-    const afterPixels = new Uint8Array(pixels);
-    const beforeName = node.sourceName ?? node.name;
-    const beforeLinkId = node.sourceLinkId;
-    const beforeLastModified = node.sourceLastModified;
-    const beforeFileSize = node.sourceFileSize;
-    const apply = (data: Uint8Array, name: string, linkId?: string, lastModified?: number, fileSize?: number) => {
-      const current = this.nodes.get(id);
-      if (!current || current.type !== 'file') return;
-      current.sourceName = name;
-      current.sourceLinkId = linkId;
-      current.sourceLastModified = lastModified;
-      current.sourceFileSize = fileSize;
-      this.layerPixels(current)?.loadFromRGBA(data);
-      this.comp.invalidateAll();
-    };
-    const equalPixels = beforePixels.byteLength === afterPixels.byteLength && beforePixels.every((value, index) => value === afterPixels[index]);
-    const unchanged = equalPixels && beforeName === sourceName && beforeLinkId === sourceLinkId && beforeLastModified === sourceLastModified && beforeFileSize === sourceFileSize;
-    if (unchanged) return true;
-    apply(afterPixels, sourceName, sourceLinkId, sourceLastModified, sourceFileSize);
-    if (!this.replaying) this.recordStructure(
-      `Actualizar imagen vinculada de «${node.name}»`,
-      () => apply(beforePixels, beforeName, beforeLinkId, beforeLastModified, beforeFileSize),
-      () => apply(afterPixels, sourceName, sourceLinkId, sourceLastModified, sourceFileSize),
-    );
+    if (!this.isValidFileLayerReplacement(node, pixels)) return false;
+    const before = this.captureFileLayerState(node);
+    const after = this.createFileLayerState(pixels, sourceName, sourceLinkId, sourceLastModified, sourceFileSize);
+    if (this.fileLayerStatesMatch(before, after)) return true;
+    this.applyFileLayerState(id, after);
+    if (!this.replaying) this.recordFileLayerReplacement(id, node.name, before, after);
     return true;
+  }
+
+  private isValidFileLayerReplacement(node: LayerNode | undefined, pixels: Uint8Array): node is LayerNode {
+    return !!node && node.type === 'file' && pixels.byteLength === this.doc.width * this.doc.height * 4;
+  }
+
+  private captureFileLayerState(node: LayerNode): { pixels: Uint8Array; source: FileLayerSource } {
+    const size = this.doc.width * this.doc.height * 4;
+    return {
+      pixels: this.readPixels(node) ?? new Uint8Array(size),
+      source: {
+        name: node.sourceName ?? node.name,
+        linkId: node.sourceLinkId,
+        lastModified: node.sourceLastModified,
+        fileSize: node.sourceFileSize,
+      },
+    };
+  }
+
+  private createFileLayerState(
+    pixels: Uint8Array,
+    name: string,
+    linkId?: string,
+    lastModified?: number,
+    fileSize?: number,
+  ): { pixels: Uint8Array; source: FileLayerSource } {
+    return { pixels: new Uint8Array(pixels), source: { name, linkId, lastModified, fileSize } };
+  }
+
+  private fileLayerStatesMatch(
+    first: { pixels: Uint8Array; source: FileLayerSource },
+    second: { pixels: Uint8Array; source: FileLayerSource },
+  ): boolean {
+    return this.pixelBuffersMatch(first.pixels, second.pixels) && this.fileLayerSourcesMatch(first.source, second.source);
+  }
+
+  private pixelBuffersMatch(first: Uint8Array, second: Uint8Array): boolean {
+    if (first.byteLength !== second.byteLength) return false;
+    return first.every((value, index) => value === second[index]);
+  }
+
+  private fileLayerSourcesMatch(first: FileLayerSource, second: FileLayerSource): boolean {
+    return first.name === second.name
+      && first.linkId === second.linkId
+      && first.lastModified === second.lastModified
+      && first.fileSize === second.fileSize;
+  }
+
+  private applyFileLayerState(id: string, state: { pixels: Uint8Array; source: FileLayerSource }): void {
+    const current = this.nodes.get(id);
+    if (!current || current.type !== 'file') return;
+    current.sourceName = state.source.name;
+    current.sourceLinkId = state.source.linkId;
+    current.sourceLastModified = state.source.lastModified;
+    current.sourceFileSize = state.source.fileSize;
+    this.layerPixels(current)?.loadFromRGBA(state.pixels);
+    this.comp.invalidateAll();
+  }
+
+  private recordFileLayerReplacement(
+    id: string,
+    layerName: string,
+    before: { pixels: Uint8Array; source: FileLayerSource },
+    after: { pixels: Uint8Array; source: FileLayerSource },
+  ): void {
+    this.recordStructure(
+      `Actualizar imagen vinculada de «${layerName}»`,
+      () => this.applyFileLayerState(id, before),
+      () => this.applyFileLayerState(id, after),
+    );
   }
 
   duplicateLayer(id: string): LayerNode | null {
     const original = this.nodes.get(id);
     if (!original) return null;
-    const parent = this.parentOf(original);
-    const siblings = this.siblingsOf(original);
     const clone = this.cloneNodeWithNewIds(original);
     const pixels = new Map<string, Uint8Array>();
-    const copyPixels = (oldNode: LayerNode, newNode: LayerNode) => {
-      const source = this.readPixels(oldNode);
-      if (source) pixels.set(newNode.id, source);
-      oldNode.children.forEach((child, i) => copyPixels(child, newNode.children[i]));
-    };
-    copyPixels(original, clone);
-    const seed: LayerSnapshot = { node: clone, parentId: parent?.id ?? null, index: siblings.indexOf(original) + 1, pixels };
+    this.copyLayerPixelData(original, clone, pixels);
+    const seed = this.createDuplicateSnapshot(original, clone, pixels);
     this.restoreRaw(seed);
     const duplicated = this.nodes.get(clone.id)!;
-    // Guardamos los IDs del motor que realmente se asignaron. El historial de píxeles
-    // del motor Wasm referencia esos IDs y debe seguir funcionando tras rehacer la duplicación.
-    const stableSnapshot = this.snapshot(duplicated);
-    if (!this.replaying) this.recordStructure(`Duplicar «${original.name}»`, () => this.removeRaw(clone.id), () => this.restoreRaw(stableSnapshot));
+    this.recordDuplicateHistory(original, duplicated);
     return duplicated;
+  }
+
+  private copyLayerPixelData(source: LayerNode, target: LayerNode, pixels: Map<string, Uint8Array>): void {
+    const sourcePixels = this.readPixels(source);
+    if (sourcePixels) pixels.set(target.id, sourcePixels);
+    source.children.forEach((child, index) => {
+      const clonedChild = target.children[index];
+      if (clonedChild) this.copyLayerPixelData(child, clonedChild, pixels);
+    });
+  }
+
+  private createDuplicateSnapshot(original: LayerNode, clone: LayerNode, pixels: Map<string, Uint8Array>): LayerSnapshot {
+    const parent = this.parentOf(original);
+    const siblings = this.siblingsOf(original);
+    return {
+      node: clone,
+      parentId: parent?.id ?? null,
+      index: siblings.indexOf(original) + 1,
+      pixels,
+    };
+  }
+
+  private recordDuplicateHistory(original: LayerNode, duplicated: LayerNode): void {
+    if (this.replaying) return;
+    // El historial de píxeles del motor Wasm referencia los IDs que realmente se asignaron.
+    const stableSnapshot = this.snapshot(duplicated);
+    this.recordStructure(
+      `Duplicar «${original.name}»`,
+      () => this.removeRaw(duplicated.id),
+      () => this.restoreRaw(stableSnapshot),
+    );
   }
 
   /** Devuelve el motivo por el que una capa no se puede eliminar, o null si se permite. */
   getLayerDeletionBlockReason(id: string): string | null {
     const node = this.nodes.get(id);
     if (!node) return 'La capa seleccionada ya no existe.';
-
-    // Un grupo bloqueado también protege a todas sus capas descendientes.
     if (this.isEffectivelyLocked(id)) {
       return 'No se puede eliminar una capa bloqueada. Desbloqueá la capa y su grupo, si corresponde.';
     }
-
-    // No permitir borrar un grupo que contiene capas bloqueadas: eso eliminaría
-    // indirectamente capas que el usuario protegió de manera explícita.
-    let containsLockedDescendant = false;
-    const findLockedDescendant = (current: LayerNode): void => {
-      for (const child of current.children) {
-        if (child.locked) containsLockedDescendant = true;
-        findLockedDescendant(child);
-      }
-    };
-    findLockedDescendant(node);
-    if (containsLockedDescendant) {
+    if (this.hasLockedDescendant(node)) {
       return 'No se puede eliminar este grupo porque contiene capas bloqueadas. Desbloquealas primero.';
     }
-
-    // Contar todo el subárbol: eliminar el único grupo también eliminaría sus hijos.
-    let subtreeCount = 0;
-    const countSubtree = (current: LayerNode): void => {
-      subtreeCount++;
-      current.children.forEach(countSubtree);
-    };
-    countSubtree(node);
-    if (this.nodes.size - subtreeCount < 1) {
-      return 'El documento debe conservar al menos una capa.';
-    }
-
+    if (this.wouldRemoveLastLayer(node)) return 'El documento debe conservar al menos una capa.';
     return null;
+  }
+
+  private hasLockedDescendant(node: LayerNode): boolean {
+    return node.children.some((child) => child.locked || this.hasLockedDescendant(child));
+  }
+
+  private wouldRemoveLastLayer(node: LayerNode): boolean {
+    return this.nodes.size - this.countSubtreeNodes(node) < 1;
+  }
+
+  private countSubtreeNodes(node: LayerNode): number {
+    return 1 + node.children.reduce((total, child) => total + this.countSubtreeNodes(child), 0);
   }
 
   removeLayer(id: string): boolean {
@@ -249,10 +324,7 @@ export class DocumentController {
     const destination = newParent ? newParent.children : this.doc.layers;
     const requestedIndex = index < 0 ? destination.length : Math.max(0, Math.min(index, destination.length));
     if (oldParentId === parentId) {
-      const bounded = Math.max(0, Math.min(destination.length - 1, requestedIndex));
-      if (bounded === oldIndex || !this.moveRaw(id, bounded)) return false;
-      if (!this.replaying) this.recordStructure(`Mover «${node.name}»`, () => this.moveRaw(id, oldIndex), () => this.moveRaw(id, bounded));
-      return true;
+      return this.moveWithinParent(id, node, destination.length, oldIndex, requestedIndex);
     }
     if (!this.moveToParentRaw(id, parentId, requestedIndex)) return false;
     if (!this.replaying) this.recordStructure(
@@ -260,6 +332,20 @@ export class DocumentController {
       () => this.moveToParentRaw(id, oldParentId, oldIndex),
       () => this.moveToParentRaw(id, parentId, requestedIndex),
     );
+    return true;
+  }
+
+
+  private moveWithinParent(
+    id: string,
+    node: LayerNode,
+    siblingCount: number,
+    oldIndex: number,
+    requestedIndex: number,
+  ): boolean {
+    const bounded = Math.max(0, Math.min(siblingCount - 1, requestedIndex));
+    if (bounded === oldIndex || !this.moveRaw(id, bounded)) return false;
+    if (!this.replaying) this.recordStructure(`Mover «${node.name}»`, () => this.moveRaw(id, oldIndex), () => this.moveRaw(id, bounded));
     return true;
   }
 
@@ -328,42 +414,65 @@ export class DocumentController {
   recordPixelAction(label: string): void { if (!this.replaying) { this.redoStack = []; this.undoStack.push({ kind: 'pixels', label }); } }
 
   undo(): 'pixels' | 'structure' | null {
-    while (this.undoStack.length) {
-      const action = this.undoStack.pop()!;
-      if (action.kind === 'pixels') {
-        if (!this.history.undo()) {
-          // El historial Wasm puede descartar sus snapshots de píxeles más antiguos por el límite de memoria.
-          // No dejamos que una etiqueta obsoleta bloquee las acciones estructurales anteriores.
-          if (this.history.undoCount() === 0) continue;
-          this.undoStack.push(action); return null;
-        }
-      } else {
-        this.replaying = true;
-        try { action.undo(); } finally { this.replaying = false; }
-        this.comp.invalidateAll();
-      }
-      this.redoStack.push(action);
-      return action.kind;
+    return this.undoNextAction();
+  }
+
+  private undoNextAction(): 'pixels' | 'structure' | null {
+    const action = this.undoStack.pop();
+    if (!action) return null;
+    const outcome = this.applyUndoAction(action);
+    if (outcome === 'skip') return this.undoNextAction();
+    if (outcome === null) return null;
+    this.redoStack.push(action);
+    return action.kind;
+  }
+
+  private applyUndoAction(action: HistoryAction): 'ready' | 'skip' | null {
+    if (action.kind !== 'pixels') {
+      this.runStructuralUndo(action);
+      return 'ready';
     }
+    if (this.history.undo()) return 'ready';
+    if (this.history.undoCount() === 0) return 'skip';
+    this.undoStack.push(action);
     return null;
   }
+
+  private runStructuralUndo(action: Extract<HistoryAction, { kind: 'structure' }>): void {
+    this.replaying = true;
+    try { action.undo(); } finally { this.replaying = false; }
+    this.comp.invalidateAll();
+  }
+
   redo(): 'pixels' | 'structure' | null {
-    while (this.redoStack.length) {
-      const action = this.redoStack.pop()!;
-      if (action.kind === 'pixels') {
-        if (!this.history.redo()) {
-          if (this.history.redoCount() === 0) continue;
-          this.redoStack.push(action); return null;
-        }
-      } else {
-        this.replaying = true;
-        try { action.redo(); } finally { this.replaying = false; }
-        this.comp.invalidateAll();
-      }
-      this.undoStack.push(action);
-      return action.kind;
+    return this.redoNextAction();
+  }
+
+  private redoNextAction(): 'pixels' | 'structure' | null {
+    const action = this.redoStack.pop();
+    if (!action) return null;
+    const outcome = this.applyRedoAction(action);
+    if (outcome === 'skip') return this.redoNextAction();
+    if (outcome === null) return null;
+    this.undoStack.push(action);
+    return action.kind;
+  }
+
+  private applyRedoAction(action: HistoryAction): 'ready' | 'skip' | null {
+    if (action.kind !== 'pixels') {
+      this.runStructuralRedo(action);
+      return 'ready';
     }
+    if (this.history.redo()) return 'ready';
+    if (this.history.redoCount() === 0) return 'skip';
+    this.redoStack.push(action);
     return null;
+  }
+
+  private runStructuralRedo(action: Extract<HistoryAction, { kind: 'structure' }>): void {
+    this.replaying = true;
+    try { action.redo(); } finally { this.replaying = false; }
+    this.comp.invalidateAll();
   }
   clearHistory(): void { this.history.clear(); this.undoStack = []; this.redoStack = []; }
   dispose(): void { this.history.delete(); this.comp.delete(); this.nodes.clear(); }
@@ -487,10 +596,12 @@ export class DocumentController {
   }
   private pushProps(n: LayerNode): void { this.comp.setProps(n.engineId, n.visible, n.opacity, blendModeFromManifest(n.blendMode)); }
   private parentOf(n: LayerNode): LayerNode | null {
-    const find = (list: LayerNode[], parent: LayerNode | null): LayerNode | null | undefined => {
-      for (const c of list) { if (c === n) return parent; const r = find(c.children, c); if (r !== undefined) return r; }
-      return undefined;
-    };
+    const find = (list: LayerNode[], parent: LayerNode | null): LayerNode | null | undefined =>
+      list.reduce<LayerNode | null | undefined>((found, child) => {
+        if (found !== undefined) return found;
+        if (child === n) return parent;
+        return find(child.children, child);
+      }, undefined);
     return find(this.doc.layers, null) ?? null;
   }
   private siblingsOf(n: LayerNode): LayerNode[] { return this.parentOf(n)?.children ?? this.doc.layers; }

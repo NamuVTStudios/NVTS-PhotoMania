@@ -1,6 +1,6 @@
 import type { TemplateDef } from './types';
 
-/** Instagram Post: 1080 × 1080 px. */
+/* Instagram Post: 1080 × 1080 px. */
 export const instagramPostTemplate: TemplateDef = {
   id: 'instagram-post',
   title: 'Instagram Post',

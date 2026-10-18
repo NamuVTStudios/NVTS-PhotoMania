@@ -92,28 +92,46 @@ export class WebGL2Renderer implements RendererBackend {
   setOpacity(value: number): void { this.opacity = Math.min(1, Math.max(0, value)); }
 
   render(): void {
-    const gl = this.gl;
     if (!this.tex) return;
+    const size = this.resizeCanvasToDisplaySize();
+    const scale = this.calculateContainScale(size.width, size.height);
+    this.gl.viewport(0, 0, size.width, size.height);
+    this.configureCanvasBlending();
+    this.drawTexturedQuad(scale.x, scale.y);
+  }
 
+  private resizeCanvasToDisplaySize(): { width: number; height: number } {
     const dpr = window.devicePixelRatio || 1;
     const renderScale = Math.min(4, Math.max(1, Number(this.canvas.dataset.renderScale) || 1));
-    const cw = Math.max(1, Math.floor(this.canvas.clientWidth * dpr * renderScale));
-    const ch = Math.max(1, Math.floor(this.canvas.clientHeight * dpr * renderScale));
-    if (this.canvas.width !== cw || this.canvas.height !== ch) { this.canvas.width = cw; this.canvas.height = ch; }
-    gl.viewport(0, 0, cw, ch);
+    const width = Math.max(1, Math.floor(this.canvas.clientWidth * dpr * renderScale));
+    const height = Math.max(1, Math.floor(this.canvas.clientHeight * dpr * renderScale));
+    if (this.canvas.width !== width || this.canvas.height !== height) {
+      this.canvas.width = width;
+      this.canvas.height = height;
+    }
+    return { width, height };
+  }
 
-    // Escala "contain": mantiene la proporción de la imagen dentro del canvas.
-    const imgAspect = this.texW / this.texH, canvasAspect = cw / ch;
-    const sx = imgAspect > canvasAspect ? 1 : imgAspect / canvasAspect;
-    const sy = imgAspect > canvasAspect ? canvasAspect / imgAspect : 1;
+  private calculateContainScale(width: number, height: number): { x: number; y: number } {
+    const imageAspect = this.texW / this.texH;
+    const canvasAspect = width / height;
+    return {
+      x: imageAspect > canvasAspect ? 1 : imageAspect / canvasAspect,
+      y: imageAspect > canvasAspect ? canvasAspect / imageAspect : 1,
+    };
+  }
 
-    gl.clearColor(0.12, 0.12, 0.12, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);            // source-over premultiplicado
+  private configureCanvasBlending(): void {
+    this.gl.clearColor(0.12, 0.12, 0.12, 1);
+    this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+    this.gl.enable(this.gl.BLEND);
+    this.gl.blendFunc(this.gl.ONE, this.gl.ONE_MINUS_SRC_ALPHA);
+  }
 
+  private drawTexturedQuad(scaleX: number, scaleY: number): void {
+    const gl = this.gl;
     gl.useProgram(this.prog);
-    gl.uniform2f(this.uScale, sx, sy);
+    gl.uniform2f(this.uScale, scaleX, scaleY);
     gl.uniform1f(this.uOpacity, this.opacity);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.tex);

@@ -9,7 +9,12 @@ export interface ToolbarHandlers {
   onLayerProps(opacity: number, blendMode: number): void;
 }
 
-export function createToolbar(root: HTMLElement, h: ToolbarHandlers): void {
+export function createToolbar(root: HTMLElement, handlers: ToolbarHandlers): void {
+  renderToolbarMarkup(root);
+  connectToolbarEvents(root, handlers);
+}
+
+function renderToolbarMarkup(root: HTMLElement): void {
   // Marcado estático (sin contenido del usuario), por eso innerHTML es seguro aquí.
   root.innerHTML = `
     <label>Color <input id="tb-color" type="color" value="#e03030"></label>
@@ -25,28 +30,48 @@ export function createToolbar(root: HTMLElement, h: ToolbarHandlers): void {
         <option value="${BlendMode.Overlay}">Superponer</option>
       </select>
     </label>`;
+}
 
-  const $ = <T extends HTMLElement>(id: string) => root.querySelector<T>(`#${id}`)!;
-  const color = $<HTMLInputElement>('tb-color');
-  const size = $<HTMLInputElement>('tb-size');
-  const opacity = $<HTMLInputElement>('tb-opacity');
-  const blend = $<HTMLSelectElement>('tb-blend');
+function connectToolbarEvents(root: HTMLElement, handlers: ToolbarHandlers): void {
+  const color = getToolbarElement<HTMLInputElement>(root, 'tb-color');
+  const size = getToolbarElement<HTMLInputElement>(root, 'tb-size');
+  const opacity = getToolbarElement<HTMLInputElement>(root, 'tb-opacity');
+  const blend = getToolbarElement<HTMLSelectElement>(root, 'tb-blend');
+  const emitBrush = () => handlers.onBrush(readToolbarColor(color.value), Number(size.value));
+  const emitProps = () => handlers.onLayerProps(Number(opacity.value) / 100, Number(blend.value));
+  bindBrushControls(color, size, emitBrush);
+  bindPropertyControls(root, opacity, blend, emitProps, handlers);
+  emitBrush();
+}
 
-  const emitBrush = () => {
-    const v = color.value;
-    h.onBrush(
-      [parseInt(v.slice(1, 3), 16), parseInt(v.slice(3, 5), 16), parseInt(v.slice(5, 7), 16)],
-      Number(size.value),
-    );
-  };
-  const emitProps = () => h.onLayerProps(Number(opacity.value) / 100, Number(blend.value));
+function getToolbarElement<T extends HTMLElement>(root: HTMLElement, id: string): T {
+  const element = root.querySelector<T>(`#${id}`);
+  if (!element) throw new Error(`No se encontró el control de barra #${id}.`);
+  return element;
+}
 
+function readToolbarColor(value: string): [number, number, number] {
+  return [
+    Number.parseInt(value.slice(1, 3), 16),
+    Number.parseInt(value.slice(3, 5), 16),
+    Number.parseInt(value.slice(5, 7), 16),
+  ];
+}
+
+function bindBrushControls(color: HTMLInputElement, size: HTMLInputElement, emitBrush: () => void): void {
   color.oninput = emitBrush;
   size.oninput = emitBrush;
+}
+
+function bindPropertyControls(
+  root: HTMLElement,
+  opacity: HTMLInputElement,
+  blend: HTMLSelectElement,
+  emitProps: () => void,
+  handlers: ToolbarHandlers,
+): void {
   opacity.oninput = emitProps;
   blend.onchange = emitProps;
-  $('tb-dark').onclick = () => h.onBrightness(-20);
-  $('tb-light').onclick = () => h.onBrightness(20);
-
-  emitBrush();
+  getToolbarElement<HTMLButtonElement>(root, 'tb-dark').onclick = () => handlers.onBrightness(-20);
+  getToolbarElement<HTMLButtonElement>(root, 'tb-light').onclick = () => handlers.onBrightness(20);
 }

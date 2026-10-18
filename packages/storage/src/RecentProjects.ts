@@ -52,28 +52,42 @@ function transactionDone(tx: IDBTransaction): Promise<void> {
 export async function rememberRecentProject(doc: Pick<DocumentState, 'id' | 'name' | 'width' | 'height'>, bytes: Uint8Array): Promise<void> {
   const db = await openRecentDb();
   try {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const done = transactionDone(tx);
-    const store = tx.objectStore(STORE_NAME);
-    const record: RecentProjectRecord = {
-      id: doc.id,
-      name: doc.name,
-      width: doc.width,
-      height: doc.height,
-      updatedAt: Date.now(),
-      data: bytes.slice().buffer,
-    };
-    const request = store.getAll();
-    request.onsuccess = () => {
-      const previous = (request.result as RecentProjectRecord[]).filter((item) => item.id !== record.id);
-      const ordered = [record, ...previous].sort((a, b) => b.updatedAt - a.updatedAt);
-      store.put(record);
-      for (const old of ordered.slice(MAX_RECENT)) store.delete(old.id);
-    };
-    await done;
+    await storeRecentProject(db, createRecentProjectRecord(doc, bytes));
   } finally {
     db.close();
   }
+}
+
+function createRecentProjectRecord(
+  doc: Pick<DocumentState, 'id' | 'name' | 'width' | 'height'>,
+  bytes: Uint8Array,
+): RecentProjectRecord {
+  return {
+    id: doc.id,
+    name: doc.name,
+    width: doc.width,
+    height: doc.height,
+    updatedAt: Date.now(),
+    data: bytes.slice().buffer,
+  };
+}
+
+async function storeRecentProject(db: IDBDatabase, record: RecentProjectRecord): Promise<void> {
+  const tx = db.transaction(STORE_NAME, 'readwrite');
+  const done = transactionDone(tx);
+  const store = tx.objectStore(STORE_NAME);
+  trimRecentProjectsAfterWrite(store, record);
+  await done;
+}
+
+function trimRecentProjectsAfterWrite(store: IDBObjectStore, record: RecentProjectRecord): void {
+  const request = store.getAll();
+  request.onsuccess = () => {
+    const previous = (request.result as RecentProjectRecord[]).filter((item) => item.id !== record.id);
+    const ordered = [record, ...previous].sort((a, b) => b.updatedAt - a.updatedAt);
+    store.put(record);
+    ordered.slice(MAX_RECENT).forEach((old) => store.delete(old.id));
+  };
 }
 
 /** Devuelve únicamente metadatos, sin traer los datos pesados de los proyectos a memoria. */

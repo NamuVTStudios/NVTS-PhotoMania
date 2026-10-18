@@ -88,7 +88,127 @@ export interface ComicManagerPanelCallbacks {
   onRenamePage(page: ComicPageEntry, nextName: string): void;
 }
 
-/** Renders settings and the comic page list; filesystem and document actions stay in the app controller. */
+function setComicFieldValue(root: HTMLElement, id: string, value: string): void {
+  const input = root.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`);
+  if (input) input.value = value;
+}
+
+function renderComicSettings(root: HTMLElement, config: ComicConfig, projectLocationDisplay: string): void {
+  const values: Array<[string, string]> = [
+    ['comic-project-name', config.projectName],
+    ['comic-project-location', projectLocationDisplay],
+    ['comic-pages-dir-name', config.pagesDirectoryName || 'páginas'],
+    ['comic-export-dir-name', config.exportDirectoryName || 'exportación'],
+    ['comic-title', config.title],
+    ['comic-author', config.author],
+    ['comic-direction', config.readingDirection],
+    ['comic-page-width', String(config.pageWidth)],
+    ['comic-page-height', String(config.pageHeight)],
+    ['comic-dpi', String(config.dpi)],
+    ['comic-bleed', String(config.bleedMm)],
+    ['comic-margin', String(config.marginMm)],
+    ['comic-gutter', String(config.gutterMm)],
+  ];
+  values.forEach(([id, value]) => setComicFieldValue(root, id, value));
+  const facing = root.querySelector<HTMLInputElement>('#comic-facing-pages');
+  if (facing) facing.checked = config.facingPages;
+}
+
+function createComicPageSelect(page: ComicPageEntry, activePageId: string | null, callbacks: ComicManagerPanelCallbacks): HTMLButtonElement {
+  const select = document.createElement('button');
+  select.type = 'button';
+  select.className = 'comic-page-select';
+  select.setAttribute('aria-pressed', String(page.id === activePageId));
+  const thumbnail = document.createElement('span');
+  thumbnail.className = 'comic-page-thumb';
+  thumbnail.textContent = String(page.number).padStart(2, '0');
+  const detail = document.createElement('span');
+  detail.className = 'comic-page-detail';
+  const name = document.createElement('strong');
+  name.textContent = page.name;
+  const meta = document.createElement('small');
+  meta.textContent = `${page.width} × ${page.height} px · ${page.fileName}`;
+  detail.append(name, meta);
+  select.append(thumbnail, detail);
+  select.onclick = () => callbacks.onSelectPage(page.id);
+  return select;
+}
+
+function createComicPageRenameButton(page: ComicPageEntry, callbacks: ComicManagerPanelCallbacks): HTMLButtonElement {
+  const edit = document.createElement('button');
+  edit.type = 'button';
+  edit.className = 'comic-page-rename';
+  edit.title = 'Renombrar página';
+  edit.setAttribute('aria-label', `Renombrar ${page.name}`);
+  edit.textContent = '✎';
+  edit.onclick = () => {
+    const value = prompt('Nombre de la página', page.name);
+    if (value === null) return;
+    const nextName = value.trim();
+    if (!nextName) {
+      alert('El nombre de la página no puede estar vacío.');
+      return;
+    }
+    callbacks.onRenamePage(page, nextName.slice(0, 160));
+  };
+  return edit;
+}
+
+function createComicPageRow(
+  page: ComicPageEntry,
+  index: number,
+  activePageId: string | null,
+  callbacks: ComicManagerPanelCallbacks,
+): HTMLDivElement {
+  const row = document.createElement('div');
+  row.className = 'comic-page-row' + (page.id === activePageId ? ' selected' : '');
+  row.append(createComicPageSelect(page, activePageId, callbacks), createComicPageRenameButton(page, callbacks));
+  row.dataset.index = String(index);
+  return row;
+}
+
+function renderComicPages(
+  root: HTMLElement,
+  config: ComicConfig,
+  activePageId: string | null,
+  callbacks: ComicManagerPanelCallbacks,
+): void {
+  const list = root.querySelector<HTMLElement>('#comic-pages-list');
+  if (!list) return;
+  list.replaceChildren(...config.pages.map((page, index) => createComicPageRow(page, index, activePageId, callbacks)));
+}
+
+function setComicButtonDisabled(root: HTMLElement, id: string, disabled: boolean): void {
+  const button = root.querySelector<HTMLButtonElement>(`#${id}`);
+  if (button) button.disabled = disabled;
+}
+
+function updateComicPageControls(root: HTMLElement, config: ComicConfig, activePageId: string | null): void {
+  const selectedIndex = config.pages.findIndex((page) => page.id === activePageId);
+  const hasSelection = selectedIndex >= 0;
+  const count = root.querySelector<HTMLElement>('#comic-page-count');
+  if (count) count.textContent = `${config.pages.length} ${config.pages.length === 1 ? 'página' : 'páginas'}`;
+  ['comic-duplicate-page', 'comic-page-up', 'comic-page-down', 'comic-delete-page', 'comic-create-canvas', 'comic-page-open-file']
+    .forEach((id) => setComicButtonDisabled(root, id, !hasSelection));
+  setComicButtonDisabled(root, 'comic-page-up', !hasSelection || selectedIndex <= 0);
+  setComicButtonDisabled(root, 'comic-page-down', !hasSelection || selectedIndex >= config.pages.length - 1);
+}
+
+function updateComicPreset(root: HTMLElement, config: ComicConfig): void {
+  const preset = root.querySelector<HTMLSelectElement>('#comic-preset');
+  if (!preset) return;
+  const matches: Array<[string, number, number, 'ltr' | 'rtl' | undefined]> = [
+    ['us', 1650, 2550, 'ltr'],
+    ['european', 2100, 2970, 'ltr'],
+    ['manga', 1650, 2400, 'rtl'],
+    ['manhwa', 1600, 2560, 'ltr'],
+  ];
+  preset.value = matches.find((entry) => entry[1] === config.pageWidth
+    && entry[2] === config.pageHeight
+    && (!entry[3] || entry[3] === config.readingDirection))?.[0] ?? 'custom';
+}
+
+/** Renders comic settings and pages by delegating each UI task to a focused helper. */
 export function renderComicManagerPanel(
   root: HTMLElement,
   config: ComicConfig,
@@ -96,65 +216,8 @@ export function renderComicManagerPanel(
   projectLocationDisplay: string,
   callbacks: ComicManagerPanelCallbacks,
 ): void {
-  const setValue = (id: string, value: string) => {
-    const input = root.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`);
-    if (input) input.value = value;
-  };
-  setValue('comic-project-name', config.projectName);
-  setValue('comic-project-location', projectLocationDisplay);
-  setValue('comic-pages-dir-name', config.pagesDirectoryName || 'páginas');
-  setValue('comic-export-dir-name', config.exportDirectoryName || 'exportación');
-  setValue('comic-title', config.title); setValue('comic-author', config.author); setValue('comic-direction', config.readingDirection);
-  setValue('comic-page-width', String(config.pageWidth)); setValue('comic-page-height', String(config.pageHeight)); setValue('comic-dpi', String(config.dpi));
-  setValue('comic-bleed', String(config.bleedMm)); setValue('comic-margin', String(config.marginMm)); setValue('comic-gutter', String(config.gutterMm));
-  const facing = root.querySelector<HTMLInputElement>('#comic-facing-pages');
-  if (facing) facing.checked = config.facingPages;
-  const list = root.querySelector<HTMLElement>('#comic-pages-list');
-  if (!list) return;
-  list.replaceChildren();
-
-  config.pages.forEach((page, index) => {
-    const row = document.createElement('div');
-    row.className = 'comic-page-row' + (page.id === activePageId ? ' selected' : '');
-    const select = document.createElement('button'); select.type = 'button'; select.className = 'comic-page-select';
-    select.setAttribute('aria-pressed', String(page.id === activePageId));
-    const thumbnail = document.createElement('span'); thumbnail.className = 'comic-page-thumb';
-    thumbnail.textContent = String(page.number).padStart(2, '0');
-    const detail = document.createElement('span'); detail.className = 'comic-page-detail';
-    const name = document.createElement('strong'); name.textContent = page.name;
-    const meta = document.createElement('small'); meta.textContent = `${page.width} × ${page.height} px · ${page.fileName}`;
-    detail.append(name, meta); select.append(thumbnail, detail);
-    select.onclick = () => callbacks.onSelectPage(page.id);
-
-    const edit = document.createElement('button'); edit.type = 'button'; edit.className = 'comic-page-rename';
-    edit.title = 'Renombrar página'; edit.setAttribute('aria-label', `Renombrar ${page.name}`); edit.textContent = '✎';
-    edit.onclick = () => {
-      const nameInput = prompt('Nombre de la página', page.name);
-      if (nameInput === null) return;
-      const nextName = nameInput.trim();
-      if (!nextName) { alert('El nombre de la página no puede estar vacío.'); return; }
-      callbacks.onRenamePage(page, nextName.slice(0, 160));
-    };
-    row.append(select, edit); row.dataset.index = String(index); list.append(row);
-  });
-
-  const selectedIndex = config.pages.findIndex((page) => page.id === activePageId);
-  const selectedPage = selectedIndex >= 0 ? config.pages[selectedIndex] : undefined;
-  const count = root.querySelector<HTMLElement>('#comic-page-count');
-  if (count) count.textContent = `${config.pages.length} ${config.pages.length === 1 ? 'página' : 'páginas'}`;
-  for (const id of ['comic-duplicate-page', 'comic-page-up', 'comic-page-down', 'comic-delete-page', 'comic-create-canvas', 'comic-page-open-file']) {
-    const button = root.querySelector<HTMLButtonElement>(`#${id}`);
-    if (button) button.disabled = !selectedPage;
-  }
-  const up = root.querySelector<HTMLButtonElement>('#comic-page-up');
-  if (up) up.disabled = !selectedPage || selectedIndex <= 0;
-  const down = root.querySelector<HTMLButtonElement>('#comic-page-down');
-  if (down) down.disabled = !selectedPage || selectedIndex >= config.pages.length - 1;
-  const preset = root.querySelector<HTMLSelectElement>('#comic-preset');
-  if (preset) {
-    const matches: Array<[string, number, number, 'ltr' | 'rtl' | undefined]> = [
-      ['us', 1650, 2550, 'ltr'], ['european', 2100, 2970, 'ltr'], ['manga', 1650, 2400, 'rtl'], ['manhwa', 1600, 2560, 'ltr'],
-    ];
-    preset.value = matches.find((entry) => entry[1] === config.pageWidth && entry[2] === config.pageHeight && (!entry[3] || entry[3] === config.readingDirection))?.[0] ?? 'custom';
-  }
+  renderComicSettings(root, config, projectLocationDisplay);
+  renderComicPages(root, config, activePageId, callbacks);
+  updateComicPageControls(root, config, activePageId);
+  updateComicPreset(root, config);
 }

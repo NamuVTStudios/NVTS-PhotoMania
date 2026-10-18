@@ -1,4 +1,5 @@
 /** Shared document-preset contract for NVTS creative applications. */
+
 export type TemplateDef = {
   /** Stable identifier suitable for saved preferences/configuration. */
   id: string;

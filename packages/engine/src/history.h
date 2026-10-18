@@ -67,7 +67,9 @@ private:
     bool step(std::deque<HistoryEntry>& from, std::deque<HistoryEntry>& to);
     void swapIn(HistoryEntry& e);            // intercambia píxeles snapshot <-> capas
     void endAction();                        // desengancha observadores y limpia el estado abierto
-    void trim();                             // respeta el tope de memoria
+    void trim();                             // respects the memory cap
+    void appendChangedSnapshot(HistoryEntry& entry, TileSnapshot& snapshot);
+    void swapSnapshot(TileSnapshot& snapshot);
 
     Compositor& comp_;
     size_t maxBytes_;

@@ -42,7 +42,153 @@ export interface LayersPanelCallbacks {
   getDeleteBlockReason(layer: LayerNode): string | null;
 }
 
-/** Owns the layer-tree DOM: rows, nesting, thumbnails and layer-specific controls. */
+function createLayerVisibilityControl(layer: LayerNode, callbacks: LayersPanelCallbacks): HTMLInputElement {
+  const control = Object.assign(document.createElement('input'), { type: 'checkbox', checked: layer.visible });
+  control.title = 'Visibilidad';
+  control.setAttribute('aria-label', `Visibilidad de ${layer.name}`);
+  control.onclick = (event) => event.stopPropagation();
+  control.onchange = () => callbacks.onVisibilityChange(layer, control.checked);
+  return control;
+}
+
+function createLayerTypeIcon(layer: LayerNode, callbacks: LayersPanelCallbacks): HTMLSpanElement {
+  const icon = document.createElement('span');
+  const iconName = layer.type === 'group' && layer.children.length
+    ? 'group-layer-open'
+    : callbacks.getTypeIcon(layer.type);
+  icon.className = `layer-type-icon tool-icon tool-icon--${iconName}`;
+  icon.title = callbacks.getTypeLabel(layer.type);
+  return icon;
+}
+
+function createLayerThumbnail(layer: LayerNode, callbacks: LayersPanelCallbacks): HTMLCanvasElement {
+  const thumbnail = document.createElement('canvas');
+  thumbnail.className = 'layer-thumbnail';
+  thumbnail.width = 52;
+  thumbnail.height = 36;
+  thumbnail.setAttribute('aria-label', `Miniatura de ${layer.name}`);
+  callbacks.drawThumbnail(thumbnail, layer);
+  return thumbnail;
+}
+
+function createLayerName(layer: LayerNode, callbacks: LayersPanelCallbacks): HTMLSpanElement {
+  const name = document.createElement('span');
+  name.className = 'layer-name';
+  name.textContent = layer.name;
+  name.title = layer.type === 'file'
+    ? `${layer.sourceName ?? layer.name} · ${layer.sourceLinkId ? 'vínculo externo configurado' : 'imagen incrustada sin vínculo externo'}`
+    : 'Doble clic para renombrar o editar esta capa';
+  name.ondblclick = (event) => {
+    event.stopPropagation();
+    callbacks.onRenameOrEdit(layer);
+  };
+  return name;
+}
+
+function createLayerEffectsButton(layer: LayerNode, callbacks: LayersPanelCallbacks): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.className = 'layer-effects-hit';
+  button.type = 'button';
+  button.textContent = 'fx';
+  button.title = 'Estilos de capa';
+  button.onclick = (event) => {
+    event.stopPropagation();
+    callbacks.onOpenEffects(layer);
+  };
+  return button;
+}
+
+function createLayerLockButton(layer: LayerNode, callbacks: LayersPanelCallbacks): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'layer-lock-toggle';
+  const icon = document.createElement('span');
+  icon.className = `tool-icon ${layer.locked ? 'tool-icon--lock' : 'tool-icon--unlock'}`;
+  icon.setAttribute('aria-hidden', 'true');
+  button.replaceChildren(icon);
+  button.title = layer.locked ? 'Desbloquear capa' : 'Bloquear capa';
+  button.setAttribute('aria-label', button.title);
+  button.onclick = (event) => {
+    event.stopPropagation();
+    callbacks.onToggleLock(layer);
+  };
+  return button;
+}
+
+function createLayerRow(layer: LayerNode, activeLayerId: string, depth: number, callbacks: LayersPanelCallbacks): HTMLDivElement {
+  const row = document.createElement('div');
+  row.className = 'layer' + (layer.id === activeLayerId ? ' active' : '');
+  row.dataset.layerId = layer.id;
+  row.style.paddingLeft = `${5 + depth * 14}px`;
+  row.title = `${callbacks.getTypeLabel(layer.type)} · ${layer.name}`;
+  row.append(
+    createLayerVisibilityControl(layer, callbacks),
+    createLayerTypeIcon(layer, callbacks),
+    createLayerThumbnail(layer, callbacks),
+    createLayerName(layer, callbacks),
+    createLayerEffectsButton(layer, callbacks),
+    createLayerLockButton(layer, callbacks),
+  );
+  row.onclick = () => callbacks.onSelect(layer);
+  row.oncontextmenu = (event) => {
+    event.preventDefault();
+    callbacks.onContextMenu(layer, event.clientX, event.clientY);
+  };
+  return row;
+}
+
+function renderLayerTree(
+  container: HTMLElement,
+  nodes: LayerNode[],
+  activeLayerId: string,
+  depth: number,
+  callbacks: LayersPanelCallbacks,
+): number {
+  let renderedCount = 0;
+  for (const layer of [...nodes].reverse()) renderedCount += renderLayerEntry(container, layer, activeLayerId, depth, callbacks);
+  return renderedCount;
+}
+
+function renderLayerEntry(
+  container: HTMLElement,
+  layer: LayerNode,
+  activeLayerId: string,
+  depth: number,
+  callbacks: LayersPanelCallbacks,
+): number {
+  container.append(createLayerRow(layer, activeLayerId, depth, callbacks));
+  if (!isExpandableGroup(layer)) return 1;
+  const children = document.createElement('div');
+  children.className = 'layer-children';
+  children.dataset.parentLayerId = layer.id;
+  const childCount = renderLayerTree(children, layer.children, activeLayerId, depth + 1, callbacks);
+  container.append(children);
+  return childCount + 1;
+}
+
+function isExpandableGroup(layer: LayerNode): boolean {
+  return layer.type === 'group' && layer.children.length > 0;
+}
+
+function findLayerById(layers: LayerNode[], id: string): LayerNode | null {
+  return layers.reduce<LayerNode | null>((found, layer) => {
+    if (found) return found;
+    if (layer.id === id) return layer;
+    return findLayerById(layer.children, id);
+  }, null);
+}
+
+function updateDeleteButton(root: HTMLElement, layers: LayerNode[], activeLayerId: string, callbacks: LayersPanelCallbacks): void {
+  const button = root.querySelector<HTMLButtonElement>('#l-del');
+  if (!button) return;
+  const selected = findLayerById(layers, activeLayerId);
+  const reason = selected ? callbacks.getDeleteBlockReason(selected) : 'Seleccioná una capa para eliminar.';
+  button.disabled = Boolean(reason);
+  button.title = reason ?? 'Eliminar capa';
+  button.setAttribute('aria-label', reason ? `Eliminar capa. ${reason}` : 'Eliminar capa');
+}
+
+/** Owns the layer-tree DOM and delegates individual row creation to focused helpers. */
 export function renderLayersPanel(
   root: HTMLElement,
   layers: LayerNode[],
@@ -52,98 +198,10 @@ export function renderLayersPanel(
   const list = root.querySelector<HTMLElement>('#layers');
   if (!list) return;
   list.replaceChildren();
-  let total = 0;
-
-  const renderTree = (container: HTMLElement, nodes: LayerNode[], depth: number): void => {
-    // The stack order is visually inverted so the topmost layer appears first.
-    for (const layer of [...nodes].reverse()) {
-      total++;
-      const row = document.createElement('div');
-      row.className = 'layer' + (layer.id === activeLayerId ? ' active' : '');
-      row.dataset.layerId = layer.id;
-      row.style.paddingLeft = `${5 + depth * 14}px`;
-      row.title = `${callbacks.getTypeLabel(layer.type)} · ${layer.name}`;
-
-      const visible = Object.assign(document.createElement('input'), { type: 'checkbox', checked: layer.visible });
-      visible.title = 'Visibilidad';
-      visible.setAttribute('aria-label', `Visibilidad de ${layer.name}`);
-      visible.onclick = (event) => event.stopPropagation();
-      visible.onchange = () => callbacks.onVisibilityChange(layer, visible.checked);
-
-      const icon = document.createElement('span');
-      const iconName = layer.type === 'group' && layer.children.length ? 'group-layer-open' : callbacks.getTypeIcon(layer.type);
-      icon.className = `layer-type-icon tool-icon tool-icon--${iconName}`;
-      icon.title = callbacks.getTypeLabel(layer.type);
-
-      const thumbnail = document.createElement('canvas');
-      thumbnail.className = 'layer-thumbnail'; thumbnail.width = 52; thumbnail.height = 36;
-      thumbnail.setAttribute('aria-label', `Miniatura de ${layer.name}`);
-      callbacks.drawThumbnail(thumbnail, layer);
-
-      const name = document.createElement('span');
-      name.className = 'layer-name'; name.textContent = layer.name;
-      name.title = layer.type === 'file'
-        ? `${layer.sourceName ?? layer.name} · ${layer.sourceLinkId ? 'vínculo externo configurado' : 'imagen incrustada sin vínculo externo'}`
-        : 'Doble clic para renombrar o editar esta capa';
-      name.ondblclick = (event) => { event.stopPropagation(); callbacks.onRenameOrEdit(layer); };
-
-      const effects = document.createElement('button');
-      effects.className = 'layer-effects-hit'; effects.type = 'button'; effects.textContent = 'fx';
-      effects.title = 'Estilos de capa';
-      effects.onclick = (event) => { event.stopPropagation(); callbacks.onOpenEffects(layer); };
-
-      const lock = document.createElement('button');
-      lock.type = 'button'; lock.className = 'layer-lock-toggle';
-      const lockIcon = document.createElement('span');
-      lockIcon.className = `tool-icon ${layer.locked ? 'tool-icon--lock' : 'tool-icon--unlock'}`;
-      lockIcon.setAttribute('aria-hidden', 'true');
-      lock.replaceChildren(lockIcon);
-      lock.title = layer.locked ? 'Desbloquear capa' : 'Bloquear capa';
-      lock.setAttribute('aria-label', lock.title);
-      lock.onclick = (event) => { event.stopPropagation(); callbacks.onToggleLock(layer); };
-
-      row.append(visible, icon, thumbnail, name, effects, lock);
-      row.onclick = () => callbacks.onSelect(layer);
-      row.oncontextmenu = (event) => {
-        event.preventDefault();
-        callbacks.onContextMenu(layer, event.clientX, event.clientY);
-      };
-      container.append(row);
-
-      if (layer.type === 'group' && layer.children.length) {
-        const children = document.createElement('div');
-        children.className = 'layer-children';
-        children.dataset.parentLayerId = layer.id;
-        renderTree(children, layer.children, depth + 1);
-        container.append(children);
-      }
-    }
-  };
-
-  renderTree(list, layers, 0);
+  const renderedCount = renderLayerTree(list, layers, activeLayerId, 0, callbacks);
   const empty = root.querySelector<HTMLElement>('#layer-empty');
-  if (empty) empty.hidden = total > 0;
-
-  // El botón refleja la regla del documento en cada render, incluyendo el bloqueo
-  // heredado de un grupo y el caso en que borrar dejaría cero capas.
-  const findLayer = (nodes: LayerNode[], id: string): LayerNode | null => {
-    for (const node of nodes) {
-      if (node.id === id) return node;
-      const nested = findLayer(node.children, id);
-      if (nested) return nested;
-    }
-    return null;
-  };
-  const deleteButton = root.querySelector<HTMLButtonElement>('#l-del');
-  if (deleteButton) {
-    const selected = findLayer(layers, activeLayerId);
-    const reason = selected
-      ? callbacks.getDeleteBlockReason(selected)
-      : 'Seleccioná una capa para eliminar.';
-    deleteButton.disabled = Boolean(reason);
-    deleteButton.title = reason ?? 'Eliminar capa';
-    deleteButton.setAttribute('aria-label', reason ? `Eliminar capa. ${reason}` : 'Eliminar capa');
-  }
+  if (empty) empty.hidden = renderedCount > 0;
+  updateDeleteButton(root, layers, activeLayerId, callbacks);
 }
 
 
@@ -162,23 +220,34 @@ export interface LayersPanelActions {
 
 /** Wires the fixed layer-toolbar controls and delegates document mutations to the app. */
 export function wireLayersPanel(root: HTMLElement, actions: LayersPanelActions): void {
+  bindLayerCreationMenu(root, actions);
+  bindLayerActionButtons(root, actions);
+  bindLayerPropertyControls(root, actions);
+  bindLayerMenuDismissal(root);
+}
+
+function bindLayerCreationMenu(root: HTMLElement, actions: LayersPanelActions): void {
   root.querySelector<HTMLButtonElement>('#l-add')?.addEventListener('click', (event) => {
     const button = event.currentTarget as HTMLButtonElement;
     const menu = root.querySelector<HTMLElement>('#layer-create-menu');
-    if (menu) {
-      menu.hidden = !menu.hidden;
-      button.setAttribute('aria-expanded', String(!menu.hidden));
-    }
+    if (!menu) return;
+    menu.hidden = !menu.hidden;
+    button.setAttribute('aria-expanded', String(!menu.hidden));
   });
   root.querySelectorAll<HTMLButtonElement>('#layer-create-menu [data-layer-type]').forEach((button) => {
-    button.addEventListener('click', () => {
-      const menu = root.querySelector<HTMLElement>('#layer-create-menu');
-      const add = root.querySelector<HTMLButtonElement>('#l-add');
-      if (menu) menu.hidden = true;
-      add?.setAttribute('aria-expanded', 'false');
-      actions.createLayer(button.dataset.layerType as LayerType);
-    });
+    button.addEventListener('click', () => createLayerFromMenu(root, button, actions));
   });
+}
+
+function createLayerFromMenu(root: HTMLElement, button: HTMLButtonElement, actions: LayersPanelActions): void {
+  const menu = root.querySelector<HTMLElement>('#layer-create-menu');
+  const add = root.querySelector<HTMLButtonElement>('#l-add');
+  if (menu) menu.hidden = true;
+  add?.setAttribute('aria-expanded', 'false');
+  actions.createLayer(button.dataset.layerType as LayerType);
+}
+
+function bindLayerActionButtons(root: HTMLElement, actions: LayersPanelActions): void {
   root.querySelector<HTMLButtonElement>('#l-del')?.addEventListener('click', () => actions.deleteActiveLayer());
   root.querySelector<HTMLButtonElement>('#l-duplicate')?.addEventListener('click', () => actions.duplicateActiveLayer());
   root.querySelector<HTMLButtonElement>('#l-up')?.addEventListener('click', () => actions.moveActiveLayer(+1));
@@ -187,21 +256,27 @@ export function wireLayersPanel(root: HTMLElement, actions: LayersPanelActions):
   root.querySelector<HTMLButtonElement>('#l-filter-options')?.addEventListener('click', () => actions.configureFilter());
   root.querySelector<HTMLButtonElement>('#l-vector-add')?.addEventListener('click', () => actions.editVectorLayer());
   root.querySelector<HTMLButtonElement>('#l-text-edit')?.addEventListener('click', () => actions.editTextLayer());
+}
+
+function bindLayerPropertyControls(root: HTMLElement, actions: LayersPanelActions): void {
   root.querySelector<HTMLInputElement>('#layer-opacity')?.addEventListener('change', (event) => {
-    const input = event.currentTarget as HTMLInputElement;
-    const value = Number(input.value);
-    if (Number.isFinite(value)) actions.setOpacity(Math.max(0, Math.min(100, value)) / 100);
+    const value = Number((event.currentTarget as HTMLInputElement).value);
+    if (!Number.isFinite(value)) return;
+    actions.setOpacity(Math.max(0, Math.min(100, value)) / 100);
   });
   root.querySelector<HTMLSelectElement>('#dock-blend')?.addEventListener('change', (event) => {
     actions.setBlendMode((event.currentTarget as HTMLSelectElement).value as BlendMode);
   });
+}
+
+function bindLayerMenuDismissal(root: HTMLElement): void {
   document.addEventListener('pointerdown', (event) => {
     const menu = root.querySelector<HTMLElement>('#layer-create-menu');
     const add = root.querySelector<HTMLElement>('#l-add');
     const target = event.target;
-    if (menu && add && target instanceof Node && !menu.contains(target) && !add.contains(target)) {
-      menu.hidden = true;
-      add.setAttribute('aria-expanded', 'false');
-    }
+    if (!menu || !add || !(target instanceof Node)) return;
+    if (menu.contains(target) || add.contains(target)) return;
+    menu.hidden = true;
+    add.setAttribute('aria-expanded', 'false');
   });
 }

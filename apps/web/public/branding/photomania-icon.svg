@@ -1,16 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
-<title id="title">NVTS PhotoMania icon</title>
-<defs>
- <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#202945"/><stop offset="1" stop-color="#101426"/></linearGradient>
- <linearGradient id="pink" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#F472D0"/><stop offset="1" stop-color="#A855F7"/></linearGradient>
- <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#A855F7"/><stop offset="1" stop-color="#38BDF8"/></linearGradient>
-</defs>
-<rect x="24" y="24" width="464" height="464" rx="112" fill="url(#bg)"/>
-<rect x="25" y="25" width="462" height="462" rx="111" fill="none" stroke="#64748B" stroke-opacity=".42" stroke-width="2"/>
-<g transform="translate(256 256)">
- <path d="M-14-152 C58-164 137-109 140-36 C142 20 98 43 43 43 L-2 43 L-2-10 C-2-67-54-103-14-152Z" fill="url(#pink)"/>
- <path d="M152-14 C164 58 109 137 36 140 C-20 142-43 98-43 43 L-43-2 L10-2 C67-2 103-54 152-14Z" fill="url(#blue)"/>
- <path d="M14 152 C-58 164-137 109-140 36 C-142-20-98-43-43-43 L2-43 L2 10 C2 67 54 103 14 152Z" fill="#8B5CF6"/>
- <path d="M-152 14 C-164-58-109-137-36-140 C20-142 43-98 43-43 L43 2 L-10 2 C-67 2-103 54-152 14Z" fill="#E879F9"/>
- <circle r="54" fill="#F8FAFC"/><path d="M0-31 L9-9 L31 0 L9 9 L0 31 L-9 9 L-31 0 L-9-9Z" fill="#8B5CF6"/>
-</g></svg>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Capa_2" data-name="Capa 2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect x="21" y="21" width="470" height="470" rx="120" ry="120" style="fill: red;"/>
+  <polygon points="431.08 136.07 395.06 198.83 395.1 198.83 368.42 303.19 341.53 198.83 307.85 136.07 271.83 198.83 271.83 370.35 315.24 370.35 315.24 239.54 348.62 370.35 387.91 370.35 421.36 239.54 421.36 370.35 464.76 370.35 464.76 198.83 431.08 136.07" style="fill: #c1272d;"/>
+  <path d="M222.19,159.91c-12.74-12.17-31.9-18.25-57.49-18.25h-46.49l-35.49-63.57-35.49,63.57v228.69l34.96,62.76,36.01-62.76v-84.86h38.69c28.49,0,49.69-6.5,63.57-19.5,13.88-13,20.83-31.04,20.83-54.13s-6.37-39.78-19.11-51.95ZM164.23,232.05c-5.51,4.73-15.08,7.1-28.7,7.1h-17.32v-51.01h20.12c13.21,0,22.2,2.5,26.99,7.49,4.78,4.99,7.18,11.08,7.18,18.25s-2.76,13.44-8.27,18.17Z" style="fill: #c1272d;"/>
+</svg>

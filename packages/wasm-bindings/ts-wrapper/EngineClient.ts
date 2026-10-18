@@ -16,6 +16,17 @@ export interface EngineCapabilities {
   sharedMemory: boolean;
 }
 
+function rethrowEngineInitializationError(error: unknown): never {
+  if (globalThis.crossOriginIsolated === true) throw error;
+  const detail = error instanceof Error ? error.message : String(error);
+  throw new Error(
+    'No se pudo iniciar el motor Wasm. Si lo compilaste con -pthread necesita aislamiento de origen ' +
+    'cruzado (COOP/COEP) y esta página no lo tiene (GitHub Pages no permite esos headers). ' +
+    `Detalle: ${detail}`,
+    { cause: error },
+  );
+}
+
 export class EngineClient {
   /** Acceso seguro a la memoria de Wasm (vistas, copias y escritura; con o sin SharedArrayBuffer). */
   readonly heap: HeapAccess;
@@ -36,17 +47,8 @@ export class EngineClient {
       mod = await createNvtsEngine({
         locateFile: (p) => wasmBaseUrl + p, // dónde servir engine.wasm
       });
-    } catch (e) {
-      const detail = e instanceof Error ? e.message : String(e);
-      if (globalThis.crossOriginIsolated !== true) {
-        throw new Error(
-          'No se pudo iniciar el motor Wasm. Si lo compilaste con -pthread necesita aislamiento de origen ' +
-          'cruzado (COOP/COEP) y esta página no lo tiene (GitHub Pages no permite esos headers). ' +
-          `Detalle: ${detail}`,
-          { cause: e },
-        );
-      }
-      throw e;
+    } catch (error) {
+      rethrowEngineInitializationError(error);
     }
     return new EngineClient(mod);
   }

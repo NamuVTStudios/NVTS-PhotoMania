@@ -22,21 +22,35 @@ export class WebGPURenderer implements RendererBackend {
     private readonly sampler: GPUSampler,
   ) {}
 
-  /** Crea el renderer. Lanza error si no hay WebGPU (aquí se activaría el fallback WebGL2). */
+  /** Crea el renderer y coordina la inicialización de sus recursos GPU. */
   static async create(canvas: HTMLCanvasElement): Promise<WebGPURenderer> {
+    const device = await this.requestDevice();
+    const { ctx, format } = this.configureCanvas(canvas, device);
+    const pipeline = this.createPipeline(device, format);
+    const uniforms = this.createUniformBuffer(device);
+    const sampler = this.createSampler(device);
+    return new WebGPURenderer(canvas, device, ctx, pipeline, uniforms, sampler);
+  }
+
+  private static async requestDevice(): Promise<GPUDevice> {
     if (!navigator.gpu) throw new Error('WebGPU no disponible');
     const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
     if (!adapter) throw new Error('Sin adaptador WebGPU');
     const device = await adapter.requestDevice();
-    device.lost.then((i) => console.error('GPU device lost:', i.message));
+    device.lost.then((info) => console.error('GPU device lost:', info.message));
+    return device;
+  }
 
-    // Contexto del canvas con alpha premultiplicado (coincide con el shader).
+  private static configureCanvas(canvas: HTMLCanvasElement, device: GPUDevice): { ctx: GPUCanvasContext; format: GPUTextureFormat } {
     const ctx = canvas.getContext('webgpu')!;
     const format = navigator.gpu.getPreferredCanvasFormat();
     ctx.configure({ device, format, alphaMode: 'premultiplied' });
+    return { ctx, format };
+  }
 
+  private static createPipeline(device: GPUDevice, format: GPUTextureFormat): GPURenderPipeline {
     const module = device.createShaderModule({ code: shaderCode });
-    const pipeline = device.createRenderPipeline({
+    return device.createRenderPipeline({
       layout: 'auto',
       vertex: { module, entryPoint: 'vs' },
       fragment: {
@@ -44,7 +58,6 @@ export class WebGPURenderer implements RendererBackend {
         entryPoint: 'fs',
         targets: [{
           format,
-          // Blend "source-over" para alpha premultiplicado.
           blend: {
             color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
             alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
@@ -53,15 +66,18 @@ export class WebGPURenderer implements RendererBackend {
       },
       primitive: { topology: 'triangle-list' },
     });
+  }
 
-    const uniforms = device.createBuffer({
-      size: 16, // vec2f scale + f32 opacity + f32 pad
+  private static createUniformBuffer(device: GPUDevice): GPUBuffer {
+    return device.createBuffer({
+      size: 16,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-    // 'nearest' al ampliar: ves los píxeles reales (importante en un editor).
-    const sampler = device.createSampler({ magFilter: 'nearest', minFilter: 'linear' });
+  }
 
-    return new WebGPURenderer(canvas, device, ctx, pipeline, uniforms, sampler);
+  private static createSampler(device: GPUDevice): GPUSampler {
+    // Nearest al ampliar: muestra los píxeles reales del documento.
+    return device.createSampler({ magFilter: 'nearest', minFilter: 'linear' });
   }
 
   /**
@@ -69,37 +85,16 @@ export class WebGPURenderer implements RendererBackend {
    * (ImageHandle.getPixels()): writeTexture copia directo desde esa memoria.
    */
   setLayerPixels(pixels: Uint8ClampedArray | Uint8Array, width: number, height: number): void {
-    // Recrea la textura solo si cambió el tamaño (evita alocar en cada frame).
-    if (!this.tex || width !== this.texW || height !== this.texH) {
-      this.tex?.destroy();
-      this.tex = this.device.createTexture({
-        size: [width, height],
-        format: 'rgba8unorm',
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-      });
-      this.texW = width;
-      this.texH = height;
-      this.bindGroup = this.device.createBindGroup({
-        layout: this.pipeline.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: { buffer: this.uniforms } },
-          { binding: 1, resource: this.tex.createView() },
-          { binding: 2, resource: this.sampler },
-        ],
-      });
-    }
-    // writeTexture NO exige bytesPerRow múltiplo de 256 (a diferencia de copyBufferToTexture).
+    if (!this.tex || width !== this.texW || height !== this.texH) this.createLayerTexture(width, height);
     this.device.queue.writeTexture(
-      { texture: this.tex },
+      { texture: this.tex! },
       toGPUBuffer(pixels),
       { bytesPerRow: width * 4, rowsPerImage: height },
       [width, height],
     );
   }
 
-  /** Crea (o recrea) la textura del lienzo. Si recrea, el contenido se pierde: re-subir todo. */
-  ensureSize(width: number, height: number): void {
-    if (this.tex && width === this.texW && height === this.texH) return;
+  private createLayerTexture(width: number, height: number): void {
     this.tex?.destroy();
     this.tex = this.device.createTexture({
       size: [width, height],
@@ -112,10 +107,16 @@ export class WebGPURenderer implements RendererBackend {
       layout: this.pipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: { buffer: this.uniforms } },
-        { binding: 1, resource: this.tex.createView() },
+        { binding: 1, resource: this.tex!.createView() },
         { binding: 2, resource: this.sampler },
       ],
     });
+  }
+
+  /** Crea (o recrea) la textura del lienzo. Si recrea, el contenido se pierde: re-subir todo. */
+  ensureSize(width: number, height: number): void {
+    if (this.tex && width === this.texW && height === this.texH) return;
+    this.createLayerTexture(width, height);
   }
 
   /** Sube una región (p. ej. un tile). bytesPerRow = stride del buffer origen (tile completo: 1024). */
@@ -136,35 +137,45 @@ export class WebGPURenderer implements RendererBackend {
   /** Dibuja la capa ajustada ("contain") al tamaño actual del canvas. */
   render(): void {
     if (!this.bindGroup) return;
+    const size = this.resizeCanvasToDisplaySize();
+    const scale = this.calculateContainScale(size.width, size.height);
+    this.device.queue.writeBuffer(this.uniforms, 0, new Float32Array([scale.x, scale.y, this.opacity, 0]));
+    this.submitRenderPass();
+  }
 
-    // Ajusta la resolución interna del canvas a su tamaño real en pantalla.
+  private resizeCanvasToDisplaySize(): { width: number; height: number } {
     const dpr = window.devicePixelRatio || 1;
     const renderScale = Math.min(4, Math.max(1, Number(this.canvas.dataset.renderScale) || 1));
-    const cw = Math.max(1, Math.floor(this.canvas.clientWidth * dpr * renderScale));
-    const ch = Math.max(1, Math.floor(this.canvas.clientHeight * dpr * renderScale));
-    if (this.canvas.width !== cw || this.canvas.height !== ch) {
-      this.canvas.width = cw;
-      this.canvas.height = ch;
+    const width = Math.max(1, Math.floor(this.canvas.clientWidth * dpr * renderScale));
+    const height = Math.max(1, Math.floor(this.canvas.clientHeight * dpr * renderScale));
+    if (this.canvas.width !== width || this.canvas.height !== height) {
+      this.canvas.width = width;
+      this.canvas.height = height;
     }
+    return { width, height };
+  }
 
-    // Escala "contain": mantiene la proporción de la imagen dentro del canvas.
-    const imgAspect = this.texW / this.texH;
-    const canvasAspect = cw / ch;
-    const sx = imgAspect > canvasAspect ? 1 : imgAspect / canvasAspect;
-    const sy = imgAspect > canvasAspect ? canvasAspect / imgAspect : 1;
-    this.device.queue.writeBuffer(this.uniforms, 0, new Float32Array([sx, sy, this.opacity, 0]));
+  private calculateContainScale(width: number, height: number): { x: number; y: number } {
+    const imageAspect = this.texW / this.texH;
+    const canvasAspect = width / height;
+    return {
+      x: imageAspect > canvasAspect ? 1 : imageAspect / canvasAspect,
+      y: imageAspect > canvasAspect ? canvasAspect / imageAspect : 1,
+    };
+  }
 
+  private submitRenderPass(): void {
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
       colorAttachments: [{
         view: this.ctx.getCurrentTexture().createView(),
-        clearValue: { r: 0.12, g: 0.12, b: 0.12, a: 1 }, // fondo gris oscuro
+        clearValue: { r: 0.12, g: 0.12, b: 0.12, a: 1 },
         loadOp: 'clear',
         storeOp: 'store',
       }],
     });
     pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, this.bindGroup);
+    pass.setBindGroup(0, this.bindGroup!);
     pass.draw(6);
     pass.end();
     this.device.queue.submit([encoder.finish()]);

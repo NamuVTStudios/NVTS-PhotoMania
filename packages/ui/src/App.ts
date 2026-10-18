@@ -4,52 +4,170 @@
 
 import { EngineClient } from '@nvts/wasm-bindings';
 import { createRenderer, type RendererBackend } from '@nvts/renderer';
-import {
-  DocumentController, blendModeToManifest, StrokeSession, refresh, runEdit,
-  type EngineCtx, type LayerNode,
-} from '@nvts/document-model';
+import { DocumentController, blendModeToManifest, StrokeSession, refresh, runEdit, type EngineCtx, type LayerNode, } from '@nvts/document-model';
 import { isPixelLayerType, type BlendMode, type FilterKind, type LayerType, type VectorShape, type TextLayerStyle, type TextLayerAlign } from '@nvts/shared';
 import { ADVANCED_TOOL_OPTIONS_PANEL_TEMPLATE, renderAdvancedToolOptionsPanel } from './panels/AdvancedToolOptionsPanel';
 import { HISTORY_PANEL_TEMPLATE, renderHistoryPanel } from './panels/HistoryPanel';
 import { LAYERS_PANEL_TEMPLATE, renderLayersPanel, wireLayersPanel } from './panels/LayersPanel';
 import { COMIC_MANAGER_PANEL_TEMPLATE, renderComicManagerPanel, type ComicConfig, type ComicPageEntry } from './panels/ComicManagerPanel';
+import { STORYBOARD_PANEL_TEMPLATE, wireStoryboardPanel } from './panels/StoryboardPanel';
+import { ANIMATION_TIMELINE_PANEL_TEMPLATE, wireAnimationTimelinePanel } from './panels/AnimationTimelinePanel';
 import { LAYER_EFFECTS_PANEL_TEMPLATE, wireLayerEffectsPanel } from './panels/LayerEffectsPanel';
 import { FILTER_PANEL_TEMPLATE, wireFilterPanel } from './panels/FilterPanel';
 import { VECTOR_EDITOR_PANEL_TEMPLATE, wireVectorEditorPanel, renderVectorEditorPanel } from './panels/VectorEditorPanel';
 import { PLUGINS_PANEL_TEMPLATE, wirePlugins, type PluginApi } from './panels/PluginsPanel';
 import { PREFERENCES_PANEL_TEMPLATE, initializePreferences, readPreferences, wirePreferences, type AppPreferences } from './panels/PreferencesPanel';
+import { HomeScreenController } from './HomeScreenController';
+import { LOGO_URL, MAIN_MENU } from './ShellTemplates';
+import { readWorkspace, writeWorkspace } from './workspaces/persistence';
 import { createDockLayoutManager, type DockLayoutController } from './panels/DockLayoutManager';
-import { openFromDisk, packNvtsPhoto, saveToDisk, unpackNvtsPhoto, listRecentProjects, loadRecentProject, rememberRecentProject, removeRecentProject, supportsFileSystemAccess, rememberLinkedFile, getLinkedFile, type RecentProjectInfo } from '@nvts/storage';
-import { TEMPLATES } from '@nvts/templates';
+import { openFromDisk, packNvtsPhoto, saveToDisk, unpackNvtsPhoto, rememberRecentProject, supportsFileSystemAccess, rememberLinkedFile, getLinkedFile } from '@nvts/storage';
+import { WORKSPACES, getWorkspaceDefinition, type WorkspaceId } from './workspaces';
+
+function escapeSvgText(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function getVectorShapeSvgTransform(shape: VectorShape): string {
+  if (!shape.rotation) return '';
+  const centerX = shape.x + shape.width / 2;
+  const centerY = shape.y + shape.height / 2;
+  return ` transform="rotate(${shape.rotation} ${centerX} ${centerY})"`;
+}
+
+function getVectorShapeSvgStyle(shape: VectorShape, forceNoFill = false): string {
+  const noFillKinds: VectorShape['kind'][] = ['line', 'polyline', 'bezier', 'freehand', 'spiral'];
+  const defaultStrokeKinds: VectorShape['kind'][] = ['line', 'polyline', 'bezier', 'freehand', 'spiral'];
+  const fill = forceNoFill ? 'none'
+    : (shape.fillEnabled ?? !noFillKinds.includes(shape.kind))
+      ? (shape.fillColor ?? shape.color)
+      : 'none';
+  const stroke = (shape.strokeEnabled ?? defaultStrokeKinds.includes(shape.kind)) && shape.strokeWidth > 0
+    ? (shape.strokeColor ?? shape.color)
+    : 'none';
+  const dash = shape.strokeDash === 'dash'
+    ? ` stroke-dasharray="${Math.max(4, shape.strokeWidth * 3)} ${Math.max(3, shape.strokeWidth * 2)}"`
+    : shape.strokeDash === 'dot'
+      ? ` stroke-dasharray="1 ${Math.max(3, shape.strokeWidth * 2)}"`
+      : '';
+  return `fill="${escapeSvgText(fill)}" stroke="${escapeSvgText(stroke)}" stroke-width="${shape.strokeWidth}" stroke-linecap="${shape.lineCap ?? 'round'}" stroke-linejoin="${shape.lineJoin ?? 'round'}"${dash} opacity="${shape.opacity}"`;
+}
+
+function vectorStarPoints(shape: VectorShape, centerX: number, centerY: number): string {
+  const count = Math.max(3, Math.min(64, shape.starPoints ?? 5));
+  const outer = Math.min(Math.abs(shape.width), Math.abs(shape.height)) / 2;
+  const inner = outer * 0.44;
+  return Array.from({ length: count * 2 }, (_, index) => {
+    const radius = index % 2 === 0 ? outer : inner;
+    const angle = Math.PI * index / count - Math.PI / 2;
+    return `${centerX + Math.cos(angle) * radius},${centerY + Math.sin(angle) * radius}`;
+  }).join(' ');
+}
+
+function vectorSpiralPath(shape: VectorShape, centerX: number, centerY: number): string {
+  return Array.from({ length: 361 }, (_, index) => {
+    const t = index / 360;
+    const angle = t * Math.PI * 9;
+    const radius = Math.min(Math.abs(shape.width), Math.abs(shape.height)) / 2 * t;
+    return `${index ? 'L' : 'M'} ${centerX + Math.cos(angle) * radius} ${centerY + Math.sin(angle) * radius}`;
+  }).join(' ');
+}
+
+function vectorPathData(shape: VectorShape): string {
+  const pathPoints = shape.points ?? [{ x: shape.x, y: shape.y }, { x: shape.x + shape.width, y: shape.y + shape.height }];
+  let path = `M ${pathPoints[0].x} ${pathPoints[0].y}`;
+  for (let index = 1; index < pathPoints.length; index++) {
+    const previous = pathPoints[index - 1];
+    const next = pathPoints[index];
+    const useBezier = shape.kind === 'bezier' && (previous.outX !== undefined || next.inX !== undefined);
+    path += useBezier
+      ? ` C ${previous.outX ?? previous.x} ${previous.outY ?? previous.y} ${next.inX ?? next.x} ${next.inY ?? next.y} ${next.x} ${next.y}`
+      : ` L ${next.x} ${next.y}`;
+  }
+  return shape.kind === 'polygon' ? `${path} Z` : path;
+}
+
+function vectorShapeToSvg(shape: VectorShape): string {
+  const centerX = shape.x + shape.width / 2;
+  const centerY = shape.y + shape.height / 2;
+  const transform = getVectorShapeSvgTransform(shape);
+  const style = getVectorShapeSvgStyle(shape);
+  const { x, y, width, height } = shape;
+  if (shape.kind === 'rectangle') return `<rect x="${x}" y="${y}" width="${width}" height="${height}" ${style}${transform}/>`;
+  if (shape.kind === 'rounded-rectangle') return `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${shape.cornerRadius ?? 20}" ${style}${transform}/>`;
+  if (shape.kind === 'ellipse') return `<ellipse cx="${centerX}" cy="${centerY}" rx="${Math.abs(width / 2)}" ry="${Math.abs(height / 2)}" ${style}${transform}/>`;
+  if (shape.kind === 'line') return `<line x1="${x}" y1="${y}" x2="${x + width}" y2="${y + height}" ${style}${transform}/>`;
+  if (shape.kind === 'star') return `<polygon points="${vectorStarPoints(shape, centerX, centerY)}" ${style}${transform}/>`;
+  if (shape.kind === 'spiral') return `<path d="${vectorSpiralPath(shape, centerX, centerY)}" ${getVectorShapeSvgStyle(shape, true)}${transform}/>`;
+  if (shape.kind === 'text') return vectorTextToSvg(shape, style, transform);
+  return `<path d="${vectorPathData(shape)}" ${style}${transform}/>`;
+}
+
+function vectorTextToSvg(shape: VectorShape, style: string, transform: string): string {
+  const fontSize = shape.fontSize ?? 64;
+  const fontFamily = escapeSvgText(shape.fontFamily ?? 'Arial');
+  const text = escapeSvgText(shape.text ?? 'Texto vectorial');
+  const anchor = shape.textAlign === 'center' ? 'middle' : shape.textAlign === 'right' ? 'end' : 'start';
+  return `<text x="${shape.x}" y="${shape.y + Math.max(1, fontSize)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${shape.fontWeight ?? 'normal'}" font-style="${shape.fontStyle ?? 'normal'}" text-anchor="${anchor}" ${style}${transform}>${text}</text>`;
+}
 
 type Tool = 'brush' | 'eraser' | 'eyedropper' | 'line' | 'rectangle' | 'ellipse' | 'fill' | 'hand' | 'text' | 'vector-select';
 type ToolSettings = { size: number; opacity: number; hardness: number; spacing: number; smoothing: number; tolerance: number; contiguous: boolean; sampleMerged: boolean; shapeFill: boolean; lineCap: CanvasLineCap; lineJoin: CanvasLineJoin };
-const LOGO_URL = `${import.meta.env.BASE_URL}branding/photomania-icon.svg`;
+type FillOperation = {
+  width: number;
+  height: number;
+  original: Uint8Array;
+  reference: Uint8Array;
+  seedX: number;
+  seedY: number;
+  seedColor: readonly [number, number, number, number];
+  tolerance: number;
+  color: readonly [number, number, number];
+  opacity: number;
+  contiguous: boolean;
+};
+type FillResult = {
+  pixels: Uint8Array;
+  filled: number;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+};
+type WorkspacePanelElements = {
+  advanced: HTMLElement;
+  history: HTMLElement;
+  layers: HTMLElement;
+  comic: HTMLElement;
+  storyboard: HTMLElement;
+  timeline: HTMLElement;
+  dock: HTMLElement;
+};
+type FilterCanvasPools = {
+  target: HTMLCanvasElement[];
+  layer: HTMLCanvasElement[];
+  filterSource: HTMLCanvasElement[];
+  filterResult: HTMLCanvasElement[];
+};
+type FilterTile = { x: number; y: number; width: number; height: number };
+type PixelRegion = { left: number; top: number; width: number; height: number };
+type StampOperation = {
+  region: PixelRegion;
+  centerX: number;
+  centerY: number;
+  radius: number;
+  hardEdge: number;
+  fadeWidth: number;
+  erase: boolean;
+  color: readonly [number, number, number];
+  opacity: number;
+};
+type VectorPaintOptions = { fill: boolean; stroke: boolean; strokeWidth: number };
 
 interface TextToolSettings { fontFamily: string; fontSize: number; style: TextLayerStyle; color: string; align: TextLayerAlign; lineHeight: number; letterSpacing: number; strokeColor: string; strokeWidth: number; backgroundColor: string }
 
-type WorkspaceId = 'general' | 'digital-illustration' | 'vector-illustration' | 'image-manipulation' | 'comics';
-const WORKSPACE_STORAGE_KEY = 'nvts-photomania-workspace-v1';
-const WORKSPACES: Array<{ id: WorkspaceId; label: string }> = [
-  { id: 'general', label: 'General' },
-  { id: 'digital-illustration', label: 'Ilustración digital' },
-  { id: 'vector-illustration', label: 'Ilustración vectorial' },
-  { id: 'image-manipulation', label: 'Manipulación de imágenes' },
-  { id: 'comics', label: 'Cómics' },
-];
-
 const COMIC_CONFIG_STORAGE_KEY = 'nvts-photomania-comic-config-v1';
 
-function readWorkspace(): WorkspaceId {
-  try {
-    const value = localStorage.getItem(WORKSPACE_STORAGE_KEY);
-    return WORKSPACES.some((workspace) => workspace.id === value) ? value as WorkspaceId : 'general';
-  } catch { return 'general'; }
-}
-function writeWorkspace(workspace: WorkspaceId): void {
-  try { localStorage.setItem(WORKSPACE_STORAGE_KEY, workspace); }
-  catch (error) { console.warn('No se pudo guardar el espacio de trabajo:', error); }
-}
 function safeComicFolderName(value: string, fallback: string): string {
   const cleaned = value.trim().replace(/[<>:\"/\\|?*\u0000-\u001f]/g, '_').replace(/[. ]+$/g, '').slice(0, 120);
   return cleaned && cleaned !== '.' && cleaned !== '..' ? cleaned : fallback;
@@ -68,25 +186,38 @@ function defaultComicConfig(): ComicConfig {
     facingPages: true, pages: [], updatedAt: Date.now(),
   };
 }
+function validComicDimension(value: unknown, fallback: number): number {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 1 || number > 16384) return fallback;
+  return Math.round(number);
+}
+
+function normalizeComicPage(rawPage: unknown, index: number, base: ComicConfig): ComicPageEntry {
+  const page = rawPage && typeof rawPage === 'object' ? rawPage as Partial<ComicPageEntry> : {};
+  const number = validComicDimension(page.number, index + 1);
+  return {
+    id: typeof page.id === 'string' && page.id ? page.id : crypto.randomUUID(),
+    number,
+    name: typeof page.name === 'string' && page.name.trim() ? page.name.trim().slice(0, 160) : `Página ${number}`,
+    fileName: typeof page.fileName === 'string' ? page.fileName.slice(0, 240) : `comic-page-${String(number).padStart(3, '0')}.nvtsphoto`,
+    width: Math.min(8192, validComicDimension(page.width, base.pageWidth)),
+    height: Math.min(8192, validComicDimension(page.height, base.pageHeight)),
+    notes: typeof page.notes === 'string' ? page.notes.slice(0, 4000) : '',
+  };
+}
+
+function normalizeComicPages(rawPages: unknown[], base: ComicConfig): ComicPageEntry[] {
+  return rawPages.slice(0, 1000).map((page, index) => normalizeComicPage(page, index, base));
+}
+
 function normalizeComicConfig(input: unknown): ComicConfig {
   if (!input || typeof input !== 'object') throw new Error('El archivo no contiene una configuración de cómic válida.');
   const value = input as Partial<ComicConfig>;
   if (value.format !== 'nvts-comic-config' || value.version !== 1 || !Array.isArray(value.pages)) {
     throw new Error('El archivo debe ser una configuración NVTS de cómic (comicConfig.json, versión 1).');
   }
-  const validDimension = (num: unknown, fallback: number) => Number.isFinite(Number(num)) && Number(num) >= 1 && Number(num) <= 16384 ? Math.round(Number(num)) : fallback;
   const base = defaultComicConfig();
-  const pages: ComicPageEntry[] = value.pages.slice(0, 1000).map((rawPage, index) => {
-    const page = rawPage && typeof rawPage === 'object' ? rawPage as Partial<ComicPageEntry> : {};
-    const number = validDimension(page.number, index + 1);
-    return {
-      id: typeof page.id === 'string' && page.id ? page.id : crypto.randomUUID(),
-      number, name: typeof page.name === 'string' && page.name.trim() ? page.name.trim().slice(0, 160) : `Página ${number}`,
-      fileName: typeof page.fileName === 'string' ? page.fileName.slice(0, 240) : `comic-page-${String(number).padStart(3, '0')}.nvtsphoto`,
-      width: Math.min(8192, validDimension(page.width, base.pageWidth)), height: Math.min(8192, validDimension(page.height, base.pageHeight)),
-      notes: typeof page.notes === 'string' ? page.notes.slice(0, 4000) : '',
-    };
-  });
+  const pages = normalizeComicPages(value.pages, base);
   return {
     ...base,
     projectName: typeof value.projectName === 'string' && value.projectName.trim() ? value.projectName.trim().slice(0, 160) : base.projectName,
@@ -97,8 +228,8 @@ function normalizeComicConfig(input: unknown): ComicConfig {
     title: typeof value.title === 'string' && value.title.trim() ? value.title.trim().slice(0, 160) : base.title,
     author: typeof value.author === 'string' ? value.author.slice(0, 160) : '',
     readingDirection: value.readingDirection === 'rtl' ? 'rtl' : 'ltr',
-    pageWidth: Math.min(8192, validDimension(value.pageWidth, base.pageWidth)), pageHeight: Math.min(8192, validDimension(value.pageHeight, base.pageHeight)),
-    dpi: validDimension(value.dpi, base.dpi),
+    pageWidth: Math.min(8192, validComicDimension(value.pageWidth, base.pageWidth)), pageHeight: Math.min(8192, validComicDimension(value.pageHeight, base.pageHeight)),
+    dpi: validComicDimension(value.dpi, base.dpi),
     bleedMm: Number.isFinite(Number(value.bleedMm)) ? Math.max(0, Math.min(100, Number(value.bleedMm))) : base.bleedMm,
     marginMm: Number.isFinite(Number(value.marginMm)) ? Math.max(0, Math.min(500, Number(value.marginMm))) : base.marginMm,
     gutterMm: Number.isFinite(Number(value.gutterMm)) ? Math.max(0, Math.min(500, Number(value.gutterMm))) : base.gutterMm,
@@ -148,6 +279,12 @@ async function readStoredComicProjectDirectoryHandle(): Promise<FileSystemDirect
     });
   } finally { db.close(); }
 }
+function copyBytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
 async function writeFileHandleBytes(handle: FileSystemFileHandle, data: BlobPart): Promise<void> {
   const writable = await handle.createWritable();
   try { await writable.write(data); await writable.close(); }
@@ -161,62 +298,6 @@ function documentNameFromFile(fileName: string): string {
   const leaf = fileName.split(/[\\/]/).pop() ?? fileName;
   return leaf.replace(/\.(nvtsphoto|png|jpe?g|webp|gif|bmp|tiff?)$/i, '').trim() || 'Sin título';
 }
-
-const MAIN_MENU = `<nav class="menus" aria-label="Menú principal">
-    <div class="menu-wrap">
-      <button id="menu-file" aria-haspopup="menu" aria-expanded="false" aria-controls="file-menu-dropdown">Archivo ▾</button>
-      <div id="file-menu-dropdown" class="file-menu-dropdown" role="menu" aria-label="Archivo" hidden>
-        <button id="b-new" class="menu-item" role="menuitem" type="button"><span>Nuevo proyecto</span><kbd>Ctrl+N</kbd></button>
-        <button id="b-open" class="menu-item" role="menuitem" type="button"><span>Abrir archivo…</span><kbd>Ctrl+O</kbd></button>
-        <div class="menu-divider" role="separator"></div>
-        <button id="b-save" class="menu-item" role="menuitem" type="button"><span>Guardar</span><kbd>Ctrl+S</kbd></button>
-        <button id="b-save-as" class="menu-item" role="menuitem" type="button"><span>Guardar como…</span><kbd>Ctrl+Shift+S</kbd></button>
-      </div>
-    </div>
-    <div class="menu-wrap">
-      <button id="menu-edit" aria-haspopup="menu" aria-expanded="false" aria-controls="edit-menu-dropdown">Editar ▾</button>
-      <div id="edit-menu-dropdown" class="file-menu-dropdown" role="menu" aria-label="Editar" hidden>
-        <button id="b-preferences" class="menu-item" role="menuitem" type="button"><span>Preferencias…</span><kbd></kbd></button>
-      </div>
-    </div>
-    <button id="menu-image">Imagen</button><button id="menu-layer">Capa</button><button id="menu-select">Seleccionar</button><button id="menu-filter">Filtro</button>
-    <div class="menu-wrap view-menu-wrap">
-      <button id="menu-view" aria-haspopup="menu" aria-expanded="false" aria-controls="view-menu-dropdown">Ver ▾</button>
-      <div id="view-menu-dropdown" class="file-menu-dropdown" role="menu" aria-label="Ver" hidden>
-        <button id="toggle-panels" class="menu-item" role="menuitem" type="button"><span>Mostrar paneles</span><kbd>Tab</kbd></button>
-        <div class="menu-divider" role="separator"></div>
-        <div class="menu-subwrap">
-          <button id="menu-panels" class="menu-item submenu-trigger" role="menuitem" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="panels-menu-dropdown"><span>Paneles</span><span class="submenu-arrow">›</span></button>
-          <div id="panels-menu-dropdown" class="file-menu-dropdown submenu-dropdown" role="menu" aria-label="Paneles" hidden>
-            <button id="toggle-panel-advanced" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="true" type="button"><span>Opciones avanzadas de herramienta</span><span class="menu-check">✓</span></button>
-            <button id="toggle-panel-history" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="true" type="button"><span>Historial</span><span class="menu-check">✓</span></button>
-            <button id="toggle-panel-layers" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="true" type="button"><span>Capas</span><span class="menu-check">✓</span></button>
-            <button id="toggle-panel-comic" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="false" type="button"><span>Gestor de cómics</span><span class="menu-check"></span></button>
-          </div>
-        </div>
-        <div class="menu-subwrap">
-          <button id="menu-plugins" class="menu-item submenu-trigger" role="menuitem" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="plugins-menu-dropdown"><span>Plugins</span><span class="submenu-arrow">›</span></button>
-          <div id="plugins-menu-dropdown" class="file-menu-dropdown submenu-dropdown" role="menu" aria-label="Plugins" hidden>
-            <button id="plugins-manage" class="menu-item" role="menuitem" type="button"><span>Administrar plugins…</span></button>
-            <button id="plugins-install-menu" class="menu-item" role="menuitem" type="button"><span>Instalar plugin (.js)…</span></button>
-            <div class="menu-divider" role="separator"></div>
-            <div id="plugin-actions" class="plugin-actions"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div class="menu-wrap workspace-menu-wrap">
-      <button id="menu-workspace" aria-haspopup="menu" aria-expanded="false" aria-controls="workspace-menu-dropdown">Espacio de trabajo ▾</button>
-      <div id="workspace-menu-dropdown" class="file-menu-dropdown workspace-menu-dropdown" role="menu" aria-label="Espacios de trabajo" hidden>
-        <button class="menu-item workspace-menu-item" role="menuitemradio" aria-checked="true" data-workspace="general" type="button"><span>General</span><span class="menu-check">✓</span></button>
-        <button class="menu-item workspace-menu-item" role="menuitemradio" aria-checked="false" data-workspace="digital-illustration" type="button"><span>Ilustración digital</span><span class="menu-check"></span></button>
-        <button class="menu-item workspace-menu-item" role="menuitemradio" aria-checked="false" data-workspace="vector-illustration" type="button"><span>Ilustración vectorial</span><span class="menu-check"></span></button>
-        <button class="menu-item workspace-menu-item" role="menuitemradio" aria-checked="false" data-workspace="image-manipulation" type="button"><span>Manipulación de imágenes</span><span class="menu-check"></span></button>
-        <button class="menu-item workspace-menu-item" role="menuitemradio" aria-checked="false" data-workspace="comics" type="button"><span>Cómics</span><span class="menu-check"></span></button>
-      </div>
-    </div>
-    <button id="menu-help">Ayuda</button>
-  </nav>`;
 
 const TEMPLATE = `
 <header class="topbar">
@@ -245,44 +326,11 @@ ${ADVANCED_TOOL_OPTIONS_PANEL_TEMPLATE}
 ${HISTORY_PANEL_TEMPLATE}
 ${LAYERS_PANEL_TEMPLATE}
 ${COMIC_MANAGER_PANEL_TEMPLATE}
+${STORYBOARD_PANEL_TEMPLATE}
+${ANIMATION_TIMELINE_PANEL_TEMPLATE}
   </aside>
 </main>
 ${LAYER_EFFECTS_PANEL_TEMPLATE}${FILTER_PANEL_TEMPLATE}${VECTOR_EDITOR_PANEL_TEMPLATE}`;
-
-const HOME_TEMPLATE = `
-<div class="home-shell">
-  <header class="home-topbar"><button class="home-back" title="Volver al selector" aria-label="Volver al selector">←</button><div class="home-mini-brand"><img src="${LOGO_URL}" alt=""/><strong>PhotoMania</strong></div><span class="home-top-divider"></span>${MAIN_MENU}</header>
-  <main class="home-card">
-    <header class="home-brand"><img src="${LOGO_URL}" alt="Logo de NVTS PhotoMania"/><div><h1>Photo<span>Mania</span></h1><p>Crea algo increíble. Diseñá, editá y da vida a tus ideas.</p></div></header>
-    <div class="home-layout">
-      <aside class="home-sidebar">
-        <button data-home-nav="new" class="active"><span>♧</span>Nuevo proyecto</button>
-        <button data-home-nav="open"><span>▱</span>Abrir archivo</button>
-        <button data-home-nav="recent"><span>◷</span>Proyectos recientes <small id="home-recent-count">0</small></button>
-        <div class="home-sidebar-divider"></div><span class="home-side-caption">Importar desde…</span>
-        <button data-home-open="device"><span>▣</span>Tu dispositivo</button>
-        <button class="home-disabled" title="Integración futura"><span>△</span>Google Drive <em>Próximamente</em></button>
-        <button class="home-disabled" title="Integración futura"><span>❖</span>Dropbox <em>Próximamente</em></button>
-        <button id="home-paste-hint" class="home-drop-hint">Arrastrá un archivo o pegá una imagen (Ctrl+V)</button>
-      </aside>
-      <section class="home-main">
-        <section data-home-view="new" class="home-view">
-          <div class="home-section-head"><h2 id="home-section-title">Nuevo proyecto</h2><span>Elegí una plantilla para empezar</span></div>
-          <div class="home-template-toolbar"><label for="home-category">Categoría</label><select id="home-category"><option>Todas</option><option>Redes sociales</option><option>Pantallas</option><option>Impresión</option><option>Cómic e ilustración</option><option>Animación 2D</option><option>Texturas</option></select></div>
-          <div id="home-template-grid" class="home-template-grid"></div>
-          <div class="home-create-settings"><label class="home-field home-name-field">Nombre del proyecto<input id="home-project-name" maxlength="120" value="Sin título" /></label><div class="home-dimensions"><label class="home-field">Ancho<input id="home-width" type="number" min="1" max="8192" value="1920" /></label><label class="home-lock"><input id="home-lock" type="checkbox" checked aria-label="Mantener proporción"/><span>🔒</span></label><label class="home-field">Alto<input id="home-height" type="number" min="1" max="8192" value="1080" /></label><span class="home-px">px</span><button id="home-create" class="home-primary">Crear proyecto <span>→</span></button></div>
-          </div>
-        </section>
-        <section data-home-view="open" class="home-view" hidden>
-          <div class="home-section-head"><h2>Abrir archivo</h2><span>Continuá trabajando en una imagen</span></div>
-          <div id="home-dropzone" class="home-dropzone"><div class="home-download-icon">↓</div><h3>Arrastrá una imagen o <span>seleccioná un archivo</span></h3><p>También podés examinar tu dispositivo</p><button id="home-browse" class="home-secondary">▱ &nbsp; Examinar archivos</button><div class="home-filetypes"><span>.nvtsphoto</span><span>.png</span><span>.jpg</span><span>.webp</span><span>.gif</span></div><input id="home-file-input" type="file" accept="image/*,.nvtsphoto" hidden /></div>
-        </section>
-        <section data-home-view="recent" class="home-view" hidden><div class="home-section-head"><h2>Proyectos recientes</h2><span>Seguí donde lo dejaste</span></div><div id="home-recents" class="home-recent-grid"></div></section>
-        <p id="home-status" class="home-status" role="status"></p>
-      </section>
-    </div>
-  </main>
-</div>`;
 
 export class App {
   private ctl!: DocumentController;
@@ -321,6 +369,7 @@ export class App {
   private vectorDraft: VectorShape[] = [];
   private vectorSelectedId: string | null = null;
   private layerContextMenu: HTMLElement | null = null;
+  private layerContextDismiss: ((event: PointerEvent) => void) | null = null;
 
   private constructor(
     private readonly root: HTMLElement,
@@ -330,240 +379,85 @@ export class App {
   ) { }
 
   static async start(root: HTMLElement, wasmBase = '/wasm/'): Promise<void> {
-    // La pantalla de bienvenida no inicializa el motor Wasm hasta que el usuario abre/crea un documento.
     await initializePreferences();
-    root.innerHTML = HOME_TEMPLATE;
-    root.insertAdjacentHTML('beforeend', PREFERENCES_PANEL_TEMPLATE);
-    root.insertAdjacentHTML('beforeend', PLUGINS_PANEL_TEMPLATE);
-    let openPreferences: () => void = () => {};
-    let selected = TEMPLATES.find((t) => t.id === 'full-hd')!;
-    let width = selected.width;
-    let height = selected.height;
-    const nameInput = root.querySelector<HTMLInputElement>('#home-project-name')!;
-    const widthInput = root.querySelector<HTMLInputElement>('#home-width')!;
-    const heightInput = root.querySelector<HTMLInputElement>('#home-height')!;
-    const lock = root.querySelector<HTMLInputElement>('#home-lock')!;
-    const gallery = root.querySelector<HTMLElement>('#home-template-grid')!;
-    const category = root.querySelector<HTMLSelectElement>('#home-category')!;
-    const title = root.querySelector<HTMLElement>('#home-section-title')!;
-    const homeStatus = root.querySelector<HTMLElement>('#home-status')!;
-    let recentItems: RecentProjectInfo[] = [];
-    let removeRecentId: string | null = null;
-    const recentContextMenu = document.createElement('div');
-    recentContextMenu.className = 'recent-context-menu';
-    recentContextMenu.hidden = true;
-    recentContextMenu.setAttribute('role', 'menu');
-    const removeRecentButton = document.createElement('button');
-    removeRecentButton.type = 'button';
-    removeRecentButton.textContent = 'Eliminar de recientes';
-    removeRecentButton.setAttribute('role', 'menuitem');
-    recentContextMenu.append(removeRecentButton);
-    root.append(recentContextMenu);
-    const closeRecentContextMenu = () => { recentContextMenu.hidden = true; removeRecentId = null; };
-    removeRecentButton.onclick = () => {
-      const id = removeRecentId;
-      closeRecentContextMenu();
-      if (!id) return;
-      void (async () => {
-        try {
-          await removeRecentProject(id);
-          recentItems = recentItems.filter((item) => item.id !== id);
-          renderRecent();
-        } catch (error) {
-          homeStatus.textContent = error instanceof Error ? error.message : String(error);
-        }
-      })();
-    };
-    root.addEventListener('pointerdown', (event) => {
-      if (event.target instanceof Node && !recentContextMenu.contains(event.target)) closeRecentContextMenu();
-    });
-    root.addEventListener('keydown', (event) => { if (event.key === 'Escape') closeRecentContextMenu(); });
+    const home = new HomeScreenController(root, (name, width, height, file) =>
+      this.launchProject(root, wasmBase, name, width, height, file),
+    );
+    home.mount();
+  }
 
-    const refreshRecent = async () => {
-      if (!readPreferences().rememberRecentProjects) recentItems = [];
-      else {
-        try { recentItems = await listRecentProjects(); }
-        catch (error) { console.warn('No se pudieron cargar los proyectos recientes:', error); recentItems = []; }
-      }
-      renderRecent();
-    };
-    const renderRecent = () => {
-      const host = root.querySelector<HTMLElement>('#home-recents')!;
-      host.replaceChildren();
-      root.querySelector<HTMLElement>('#home-recent-count')!.textContent = String(recentItems.length);
-      if (!readPreferences().rememberRecentProjects) {
-        host.innerHTML = '<div class="home-empty"><span>◷</span><strong>Proyectos recientes desactivados</strong><p>Podés activarlos desde Preferencias cuando quieras guardar una lista local.</p><button type="button" class="home-secondary" id="enable-recent-preference">Abrir preferencias</button></div>';
-        host.querySelector<HTMLButtonElement>('#enable-recent-preference')!.onclick = () => openPreferences();
-        return;
-      }
-      if (!recentItems.length) {
-        host.innerHTML = '<div class="home-empty"><span>◷</span><strong>Todavía no hay proyectos recientes</strong><p>Los proyectos guardados en este navegador aparecerán acá.</p></div>';
-        return;
-      }
-      for (const item of recentItems) {
-        const button = document.createElement('button'); button.className = 'recent-card'; button.type = 'button';
-        const preview = document.createElement('span'); preview.className = 'recent-preview';
-        const paper = document.createElement('span'); paper.className = 'recent-paper'; paper.style.aspectRatio = `${item.width} / ${item.height}`; preview.append(paper);
-        const label = document.createElement('strong'); label.textContent = item.name;
-        const meta = document.createElement('small'); meta.textContent = `${item.width} × ${item.height} px · ${new Date(item.updatedAt).toLocaleDateString()}`;
-        button.append(preview, label, meta);
-        button.oncontextmenu = (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          removeRecentId = item.id;
-          recentContextMenu.hidden = false;
-          const menuWidth = 210, menuHeight = 48;
-          recentContextMenu.style.left = `${Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8))}px`;
-          recentContextMenu.style.top = `${Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8))}px`;
-          removeRecentButton.focus();
-        };
-        button.onclick = () => {
-          button.disabled = true;
-          void (async () => {
-            try {
-              const bytes = await loadRecentProject(item.id);
-              if (!bytes) throw new Error('No se encontró la copia local de este proyecto.');
-              const fileBytes = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-              const file = new File([fileBytes], `${item.name || 'Proyecto'}.nvtsphoto`, { type: 'application/x-nvtsphoto' });
-              await launch(item.name, item.width, item.height, file);
-            } catch (error) {
-              homeStatus.textContent = error instanceof Error ? error.message : String(error);
-            } finally { button.disabled = false; }
-          })();
-        };
-        host.append(button);
-      }
-    };
-    openPreferences = wirePreferences(root, async () => { await refreshRecent(); });
-    wirePlugins(root);
-    const renderTemplates = () => {
-      const cat = category.value;
-      const items = TEMPLATES.filter((t) => cat === 'Todas' || t.category === cat);
-      gallery.replaceChildren();
-      for (const item of items) {
-        const button = document.createElement('button'); button.type = 'button'; button.className = 'template-card' + (selected.id === item.id ? ' selected' : '');
-        button.setAttribute('aria-pressed', String(selected.id === item.id));
-        const preview = document.createElement('span'); preview.className = `template-preview preview-${item.preview}`;
-        preview.innerHTML = `<span class="preview-paper"></span>`;
-        const icon = document.createElement('span'); icon.className = 'template-icon'; icon.textContent = item.icon;
-        const name = document.createElement('strong'); name.textContent = item.title;
-        const dims = document.createElement('small'); dims.textContent = `${item.width} × ${item.height} px`;
-        button.append(preview, icon, name, dims);
-        button.onclick = () => { selected = item; width = item.width; height = item.height; widthInput.value = String(width); heightInput.value = String(height); renderTemplates(); };
-        gallery.append(button);
-      }
-    };
-    const showSection = (section: 'new'|'open'|'recent') => {
-      root.querySelectorAll<HTMLElement>('[data-home-view]').forEach((el) => el.hidden = el.dataset.homeView !== section);
-      root.querySelectorAll<HTMLElement>('[data-home-nav]').forEach((el) => el.classList.toggle('active', el.dataset.homeNav === section));
-      const labels = { new:'Nuevo proyecto', open:'Abrir archivo', recent:'Proyectos recientes' };
-      title.textContent = labels[section];
-      if (section === 'recent') renderRecent();
-    };
-    const launch = async (name: string, w: number, h: number, file?: File) => {
-      if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || w > 8192 || h > 8192) { homeStatus.textContent = 'Usá dimensiones entre 1 y 8192 píxeles.'; return; }
-      homeStatus.textContent = 'Iniciando PhotoMania…';
-      try {
-        root.innerHTML = TEMPLATE;
-        root.insertAdjacentHTML('beforeend', PREFERENCES_PANEL_TEMPLATE);
-        root.insertAdjacentHTML('beforeend', PLUGINS_PANEL_TEMPLATE);
-        let appInstance: App | null = null;
-        wirePreferences(root, async (next, previous) => {
-          if (!previous.rememberRecentProjects && next.rememberRecentProjects) appInstance?.queueRecentSnapshot();
-        });
-        const canvas = root.querySelector<HTMLCanvasElement>('#canvas')!;
-        const [engine, renderer] = await Promise.all([EngineClient.create(wasmBase), createRenderer(canvas)]);
-        const app = new App(root, canvas, engine, renderer);
-        appInstance = app;
-        const projectName = file ? documentNameFromFile(file.name) : name;
-        app.bind(); app.newDocument(w, h, projectName);
-        if (file && /\.nvtsphoto$/i.test(file.name)) {
-          const bytes = new Uint8Array(await file.arrayBuffer());
-          const unpacked = unpackNvtsPhoto(bytes);
-          unpacked.doc.name = documentNameFromFile(file.name) || name;
-          app.setDocument(DocumentController.fromUnpacked(engine.module, unpacked));
-          await app.refreshLinkedFileLayers(false);
-          if (readPreferences().rememberRecentProjects) {
-            await rememberRecentProject(app.ctl.doc, packNvtsPhoto(app.ctl.doc, (layer) => app.ctl.readPixels(layer))).catch((error) => console.warn('No se pudo guardar la copia reciente:', error));
-          }
-        } else if (file) {
-          await app.importImage(file);
-          app.queueRecentSnapshot();
-        }
-      } catch (e) {
-        root.innerHTML = `<main class="home-fatal"><h1>No se pudo iniciar PhotoMania</h1><p id="home-error"></p><button id="home-back">Volver al inicio</button></main>`;
-        root.querySelector('#home-error')!.textContent = e instanceof Error ? e.message : String(e);
-        root.querySelector('#home-back')!.addEventListener('click', () => void App.start(root, wasmBase));
-        console.error(e);
-      }
-    };
-    root.querySelectorAll<HTMLElement>('[data-home-nav]').forEach((el) => el.addEventListener('click', () => showSection(el.dataset.homeNav as 'new'|'open'|'recent')));
-    // La misma barra de menús está disponible tanto en la pantalla de inicio como en el editor.
-    const homeMenus = [
-      { button: root.querySelector<HTMLButtonElement>('#menu-file')!, dropdown: root.querySelector<HTMLElement>('#file-menu-dropdown')! },
-      { button: root.querySelector<HTMLButtonElement>('#menu-edit')!, dropdown: root.querySelector<HTMLElement>('#edit-menu-dropdown')! },
-      { button: root.querySelector<HTMLButtonElement>('#menu-workspace')!, dropdown: root.querySelector<HTMLElement>('#workspace-menu-dropdown')! },
-    ];
-    const closeHomeMenu = (menu: typeof homeMenus[number]) => { menu.dropdown.hidden = true; menu.button.setAttribute('aria-expanded', 'false'); };
-    for (const menu of homeMenus) {
-      menu.button.addEventListener('click', (event) => {
-        event.stopPropagation();
-        const willOpen = menu.dropdown.hidden;
-        homeMenus.forEach(closeHomeMenu);
-        menu.dropdown.hidden = !willOpen;
-        menu.button.setAttribute('aria-expanded', String(willOpen));
-      });
-      menu.dropdown.addEventListener('click', (event) => {
-        if ((event.target as HTMLElement).closest('button[role^="menuitem"]')) closeHomeMenu(menu);
-      });
-      menu.dropdown.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape') { closeHomeMenu(menu); menu.button.focus(); }
-      });
+  private static async launchProject(
+    root: HTMLElement,
+    wasmBase: string,
+    name: string,
+    width: number,
+    height: number,
+    file?: File,
+  ): Promise<void> {
+    try {
+      root.innerHTML = TEMPLATE;
+      root.insertAdjacentHTML('beforeend', PREFERENCES_PANEL_TEMPLATE);
+      root.insertAdjacentHTML('beforeend', PLUGINS_PANEL_TEMPLATE);
+      const canvas = root.querySelector<HTMLCanvasElement>('#canvas')!;
+      const [engine, renderer] = await Promise.all([
+        EngineClient.create(wasmBase),
+        createRenderer(canvas),
+      ]);
+      const app = new App(root, canvas, engine, renderer);
+      wireStoryboardPanel(root);
+      wireAnimationTimelinePanel(root);
+      App.bindEditorPreferences(root, app);
+      app.bind();
+      app.newDocument(width, height, file ? documentNameFromFile(file.name) : name);
+      await app.openInitialFile(file, name);
+    } catch (error) {
+      App.showLaunchError(root, error, wasmBase);
     }
-    document.addEventListener('pointerdown', (event) => {
-      if (!(event.target instanceof Node)) return;
-      homeMenus.forEach((menu) => {
-        if (!menu.dropdown.contains(event.target as Node) && !menu.button.contains(event.target as Node)) closeHomeMenu(menu);
-      });
+  }
+
+  private static bindEditorPreferences(root: HTMLElement, app: App): void {
+    wirePreferences(root, async (next, previous) => {
+      if (!previous.rememberRecentProjects && next.rememberRecentProjects) {
+        app.queueRecentSnapshot();
+      }
     });
-    const refreshHomeWorkspaceMenu = () => root.querySelectorAll<HTMLButtonElement>('[data-workspace]').forEach((button) => {
-      const active = button.dataset.workspace === readWorkspace();
-      button.setAttribute('aria-checked', String(active));
-      const check = button.querySelector<HTMLElement>('.menu-check'); if (check) check.textContent = active ? '✓' : '';
+  }
+
+  private static showLaunchError(root: HTMLElement, error: unknown, wasmBase: string): void {
+    root.innerHTML = '<main class="home-fatal"><h1>No se pudo iniciar PhotoMania</h1><p id="home-error"></p><button id="home-back">Volver al inicio</button></main>';
+    const message = root.querySelector<HTMLElement>('#home-error');
+    if (message) message.textContent = error instanceof Error ? error.message : String(error);
+    root.querySelector<HTMLButtonElement>('#home-back')?.addEventListener('click', () => {
+      void App.start(root, wasmBase);
     });
-    root.querySelectorAll<HTMLButtonElement>('[data-workspace]').forEach((button) => button.addEventListener('click', () => {
-      const candidate = button.dataset.workspace as WorkspaceId;
-      if (!WORKSPACES.some((entry) => entry.id === candidate)) return;
-      writeWorkspace(candidate); refreshHomeWorkspaceMenu();
-      homeStatus.textContent = `Espacio de trabajo «${WORKSPACES.find((entry) => entry.id === candidate)?.label ?? candidate}» seleccionado. Se aplicará al abrir un documento.`;
-    }));
-    refreshHomeWorkspaceMenu();
-    root.querySelector<HTMLButtonElement>('#b-new')!.onclick = () => showSection('new');
-    root.querySelector<HTMLButtonElement>('#b-open')!.onclick = () => { showSection('open'); root.querySelector<HTMLInputElement>('#home-file-input')!.click(); };
-    root.querySelector<HTMLButtonElement>('#b-save')!.disabled = true;
-    root.querySelector<HTMLButtonElement>('#b-save-as')!.disabled = true;
-    ['#menu-image', '#menu-layer', '#menu-select', '#menu-filter', '#menu-view', '#menu-help'].forEach((selector) => {
-      root.querySelector<HTMLButtonElement>(selector)!.onclick = () => { homeStatus.textContent = 'Esta opción estará disponible después de crear o abrir un documento.'; };
+    console.error(error);
+  }
+
+  private async openInitialFile(file: File | undefined, fallbackName: string): Promise<void> {
+    if (!file) return;
+    if (/\.nvtsphoto$/i.test(file.name)) {
+      await this.openNativeProjectFile(file, fallbackName);
+      return;
+    }
+    await this.importImage(file);
+    this.queueRecentSnapshot();
+  }
+
+  private async openNativeProjectFile(file: File, fallbackName: string): Promise<void> {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const unpacked = unpackNvtsPhoto(bytes);
+    unpacked.doc.name = documentNameFromFile(file.name) || fallbackName;
+    this.setDocument(DocumentController.fromUnpacked(this.engine.module, unpacked));
+    await this.refreshLinkedFileLayers(false);
+    await this.rememberOpenedProject();
+  }
+
+  private async rememberOpenedProject(): Promise<void> {
+    if (!readPreferences().rememberRecentProjects) return;
+    const bytes = packNvtsPhoto(this.ctl.doc, (layer) => this.ctl.readPixels(layer));
+    await rememberRecentProject(this.ctl.doc, bytes).catch((error) => {
+      console.warn('No se pudo guardar la copia reciente:', error);
     });
-    root.querySelector('.home-back')!.addEventListener('click', () => showSection('new'));
-    root.querySelectorAll<HTMLElement>('[data-home-open]').forEach((el) => el.addEventListener('click', () => showSection('open')));
-    category.onchange = renderTemplates;
-    lock.onchange = () => { if (lock.checked) { const ratio = width / height; height = Math.max(1, Math.round(Number(widthInput.value) / ratio)); heightInput.value = String(height); } };
-    widthInput.oninput = () => { width = Number(widthInput.value); if (lock.checked && width > 0 && height > 0) { height = Math.round(width / (selected.width / selected.height)); heightInput.value = String(height); } };
-    heightInput.oninput = () => { height = Number(heightInput.value); if (lock.checked && height > 0) { width = Math.round(height * selected.width / selected.height); widthInput.value = String(width); } };
-    root.querySelector('#home-create')!.addEventListener('click', () => {
-      const name = nameInput.value.trim() || 'Sin título';
-      void launch(name, Number(widthInput.value), Number(heightInput.value));
-    });
-    const fileInput = root.querySelector<HTMLInputElement>('#home-file-input')!;
-    root.querySelector('#home-browse')!.addEventListener('click', () => fileInput.click());
-    fileInput.onchange = () => { const file = fileInput.files?.[0]; if (!file) return; const isProject = /\.nvtsphoto$/i.test(file.name); if (isProject) { void launch(file.name.replace(/\.[^.]+$/, '') || 'Proyecto', 1280, 720, file); return; } const image = new Image(); const url = URL.createObjectURL(file); image.onload = () => { URL.revokeObjectURL(url); void launch(file.name.replace(/\.[^.]+$/, '') || 'Imagen importada', image.naturalWidth, image.naturalHeight, file); }; image.onerror = () => { URL.revokeObjectURL(url); homeStatus.textContent = 'No se pudo leer ese archivo como imagen.'; }; image.src = url; };
-    const drop = root.querySelector<HTMLElement>('#home-dropzone')!;
-    drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('dragging'); };
-    drop.ondragleave = () => drop.classList.remove('dragging');
-    drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('dragging'); const file = e.dataTransfer?.files[0]; if (!file) return; if (/\.nvtsphoto$/i.test(file.name)) { void launch(file.name.replace(/\.[^.]+$/, '') || 'Proyecto', 1280, 720, file); return; } const url = URL.createObjectURL(file); const img = new Image(); img.onload = () => { URL.revokeObjectURL(url); void launch(file.name.replace(/\.[^.]+$/, '') || 'Imagen importada', img.naturalWidth, img.naturalHeight, file); }; img.onerror = () => { URL.revokeObjectURL(url); homeStatus.textContent = 'Ese archivo no parece ser una imagen compatible. Los proyectos compatibles son .nvtsphoto.'; }; img.src = url; };
-    root.querySelector('#home-paste-hint')!.addEventListener('click', () => { homeStatus.textContent = 'Podés pegar una imagen con Ctrl+V después de abrir el editor.'; });
-    renderTemplates(); void refreshRecent(); showSection('new');
   }
 
   private async importImage(file: File): Promise<void> {
@@ -594,47 +488,91 @@ export class App {
     this.ctl?.dispose();
     this.ctl = ctl;
     this.activeId = this.topRaster()?.id ?? '';
+    this.prepareRendererForDocument(ctl.doc.width, ctl.doc.height);
+    this.clearRendererForDocument(ctl.doc.width, ctl.doc.height);
+    this.ctx = this.createEngineContext(ctl);
+    this.refreshAfterDocumentReplacement();
+  }
 
-    const mod = this.engine.module;
-    const T = mod.TILE_SIZE;
-    const { width: W, height: H } = ctl.doc;
-    this.renderer.ensureSize(W, H);
-    // Limpia la textura GPU: los tiles transparentes del documento nuevo nunca se suben.
-    const zero = new Uint8Array(T * T * 4);
-    for (let y = 0; y < H; y += T)
-      for (let x = 0; x < W; x += T)
-        this.renderer.writeRegion(x, y, Math.min(T, W - x), Math.min(T, H - y), zero, T * 4);
+  private prepareRendererForDocument(width: number, height: number): void {
+    this.renderer.ensureSize(width, height);
+  }
 
-    this.ctx = {
-      mod, comp: ctl.comp, history: ctl.history,
-      uploadTile: (tx, ty, px) => {
-        const x = tx * T, y = ty * T;
-        const w = Math.min(T, W - x), h = Math.min(T, H - y);
-        if (w > 0 && h > 0) this.renderer.writeRegion(x, y, w, h, px, T * 4); // stride del tile = T*4
-      },
+  private clearRendererForDocument(width: number, height: number): void {
+    const tileSize = this.engine.module.TILE_SIZE;
+    const transparentTile = new Uint8Array(tileSize * tileSize * 4);
+    for (let y = 0; y < height; y += tileSize) this.clearRendererRow(width, tileSize, transparentTile, y);
+  }
+
+  private clearRendererRow(width: number, tileSize: number, transparentTile: Uint8Array, y: number): void {
+    for (let x = 0; x < width; x += tileSize) {
+      const tileWidth = Math.min(tileSize, width - x);
+      const tileHeight = Math.min(tileSize, this.ctl.doc.height - y);
+      this.renderer.writeRegion(x, y, tileWidth, tileHeight, transparentTile, tileSize * 4);
+    }
+  }
+
+  private createEngineContext(ctl: DocumentController): EngineCtx {
+    const module = this.engine.module;
+    const tileSize = module.TILE_SIZE;
+    const { width, height } = ctl.doc;
+    return {
+      mod: module,
+      comp: ctl.comp,
+      history: ctl.history,
+      uploadTile: (tileX, tileY, pixels) => this.uploadDocumentTile(width, height, tileSize, tileX, tileY, pixels),
       render: () => this.renderer.render(),
       scheduleRefresh: () => this.scheduleRefresh(),
-      onPixelHistory: (label) => { ctl.recordPixelAction(label); this.updateHistoryUI(); },
+      onPixelHistory: (label) => {
+        ctl.recordPixelAction(label);
+        this.updateHistoryUI();
+      },
     };
-    ctl.comp.invalidateAll();
+  }
+
+  private uploadDocumentTile(
+    documentWidth: number,
+    documentHeight: number,
+    tileSize: number,
+    tileX: number,
+    tileY: number,
+    pixels: Uint8Array,
+  ): void {
+    const x = tileX * tileSize;
+    const y = tileY * tileSize;
+    const width = Math.min(tileSize, documentWidth - x);
+    const height = Math.min(tileSize, documentHeight - y);
+    if (width <= 0 || height <= 0) return;
+    this.renderer.writeRegion(x, y, width, height, pixels, tileSize * 4);
+  }
+
+  private refreshAfterDocumentReplacement(): void {
+    this.ctl.comp.invalidateAll();
     this.syncUI();
     this.scheduleRefresh();
   }
 
   private topRaster(nodes: LayerNode[] = this.ctl.doc.layers): LayerNode | undefined {
-    for (const layer of [...nodes].reverse()) {
-      const nestedPaint = layer.type === 'group' ? this.topRaster(layer.children) : undefined;
-      if (nestedPaint) return nestedPaint;
-      if (layer.type === 'paint' || layer.type === 'raster') return layer;
-    }
-    for (const layer of [...nodes].reverse()) {
-      if (layer.type === 'group') {
-        const nestedPixel = this.topRaster(layer.children);
-        if (nestedPixel && isPixelLayerType(nestedPixel.type)) return nestedPixel;
-      }
-      if (isPixelLayerType(layer.type)) return layer;
-    }
-    return undefined;
+    const reversed = [...nodes].reverse();
+    const paintCandidate = reversed.map((layer) => this.topPaintCandidate(layer)).find(Boolean);
+    if (paintCandidate) return paintCandidate;
+    return reversed.map((layer) => this.topPixelCandidate(layer)).find(Boolean);
+  }
+
+  private topPaintCandidate(layer: LayerNode): LayerNode | undefined {
+    const nestedCandidate = layer.type === 'group' ? this.topRaster(layer.children) : undefined;
+    return nestedCandidate ?? (layer.type === 'paint' || layer.type === 'raster' ? layer : undefined);
+  }
+
+  private topPixelCandidate(layer: LayerNode): LayerNode | undefined {
+    const nestedCandidate = this.topPixelCandidateFromGroup(layer);
+    return nestedCandidate ?? (isPixelLayerType(layer.type) ? layer : undefined);
+  }
+
+  private topPixelCandidateFromGroup(layer: LayerNode): LayerNode | undefined {
+    if (layer.type !== 'group') return undefined;
+    const nestedCandidate = this.topRaster(layer.children);
+    return nestedCandidate && isPixelLayerType(nestedCandidate.type) ? nestedCandidate : undefined;
   }
   // Durante el arranque bind() construye la barra antes de crear el documento.
   // En ese momento todavía no existe ctl; una herramienta puede consultar la capa activa.
@@ -682,161 +620,271 @@ export class App {
   private renderWithFilterLayers(): void {
     const { width, height } = this.ctl.doc;
     const tileSize = this.engine.module.TILE_SIZE || 256;
-    const targetPool: HTMLCanvasElement[] = [];
-    const layerPool: HTMLCanvasElement[] = [];
-    const filterSourcePool: HTMLCanvasElement[] = [];
-    const filterResultPool: HTMLCanvasElement[] = [];
-
-    const getCanvas = (pool: HTMLCanvasElement[], depth: number, w: number, h: number): HTMLCanvasElement => {
-      let canvas = pool[depth];
-      if (!canvas) { canvas = document.createElement('canvas'); pool[depth] = canvas; }
-      if (canvas.width !== w) canvas.width = w;
-      if (canvas.height !== h) canvas.height = h;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (ctx) { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none'; ctx.clearRect(0, 0, w, h); }
-      return canvas;
-    };
-
-    for (let y = 0; y < height; y += tileSize) {
-      for (let x = 0; x < width; x += tileSize) {
-        const w = Math.min(tileSize, width - x), h = Math.min(tileSize, height - y);
-        const rootCanvas = getCanvas(targetPool, 0, w, h);
-        const compose = (nodes: LayerNode[], depth: number): HTMLCanvasElement => {
-          const target = depth === 0 ? rootCanvas : getCanvas(targetPool, depth, w, h);
-          const targetCtx = target.getContext('2d', { willReadFrequently: true })!;
-          targetCtx.clearRect(0, 0, w, h);
-          for (const node of nodes) {
-            if (!node.visible || node.opacity <= 0) continue;
-            if (node.type === 'filter') {
-              const strength = node.filterStrength ?? 1;
-              const source = getCanvas(filterSourcePool, depth, w, h);
-              const sourceCtx = source.getContext('2d', { willReadFrequently: true })!;
-              sourceCtx.drawImage(target, 0, 0);
-              const filtered = getCanvas(filterResultPool, depth, w, h);
-              const filteredCtx = filtered.getContext('2d', { willReadFrequently: true })!;
-              filteredCtx.filter = this.filterCss(node.filterKind ?? 'grayscale', strength);
-              filteredCtx.drawImage(source, 0, 0);
-              filteredCtx.filter = 'none';
-              const originalImage = sourceCtx.getImageData(0, 0, w, h);
-              const filteredImage = filteredCtx.getImageData(0, 0, w, h);
-              for (let i = 0; i < originalImage.data.length; i++) {
-                originalImage.data[i] = Math.round(originalImage.data[i] * (1 - node.opacity) + filteredImage.data[i] * node.opacity);
-              }
-              targetCtx.clearRect(0, 0, w, h);
-              targetCtx.putImageData(originalImage, 0, 0);
-              continue;
-            }
-            if (node.type === 'group') {
-              const groupCanvas = compose(node.children, depth + 1);
-              targetCtx.save();
-              targetCtx.globalAlpha = node.opacity;
-              targetCtx.globalCompositeOperation = this.canvasBlend(node.blendMode);
-              targetCtx.drawImage(groupCanvas, 0, 0);
-              targetCtx.restore();
-              continue;
-            }
-            if (!isPixelLayerType(node.type)) continue;
-            const backing = this.ctl.layerPixels(node);
-            if (!backing) continue;
-            const rgba = new Uint8Array(w * h * 4);
-            if (!backing.readRectToJS(x, y, w, h, rgba)) continue;
-            const layerCanvas = getCanvas(layerPool, depth, w, h);
-            const layerCtx = layerCanvas.getContext('2d', { willReadFrequently: true })!;
-            const image = layerCtx.createImageData(w, h);
-            image.data.set(rgba);
-            layerCtx.putImageData(image, 0, 0);
-            targetCtx.save();
-            targetCtx.globalAlpha = node.opacity;
-            targetCtx.globalCompositeOperation = this.canvasBlend(node.blendMode);
-            targetCtx.drawImage(layerCanvas, 0, 0);
-            targetCtx.restore();
-          }
-          return target;
-        };
-        const output = compose(this.ctl.doc.layers, 0);
-        const ctx = output.getContext('2d', { willReadFrequently: true })!;
-        const image = ctx.getImageData(0, 0, w, h);
-        this.renderer.writeRegion(x, y, w, h, new Uint8Array(image.data.buffer, image.data.byteOffset, image.data.byteLength), w * 4);
-      }
-    }
+    const pools: FilterCanvasPools = { target: [], layer: [], filterSource: [], filterResult: [] };
+    for (let y = 0; y < height; y += tileSize) this.renderFilterTileRow(width, height, tileSize, y, pools);
     this.renderer.render();
   }
 
+  private renderFilterTileRow(width: number, height: number, tileSize: number, y: number, pools: FilterCanvasPools): void {
+    for (let x = 0; x < width; x += tileSize) {
+      const tile = { x, y, width: Math.min(tileSize, width - x), height: Math.min(tileSize, height - y) };
+      this.renderFilterTile(tile, pools);
+    }
+  }
+
+  private renderFilterTile(tile: FilterTile, pools: FilterCanvasPools): void {
+    const output = this.composeFilterLayers(this.ctl.doc.layers, 0, tile, pools);
+    const ctx = output.getContext('2d', { willReadFrequently: true })!;
+    const image = ctx.getImageData(0, 0, tile.width, tile.height);
+    this.renderer.writeRegion(
+      tile.x, tile.y, tile.width, tile.height,
+      new Uint8Array(image.data.buffer, image.data.byteOffset, image.data.byteLength),
+      tile.width * 4,
+    );
+  }
+
+  private getFilterCanvas(pool: HTMLCanvasElement[], depth: number, width: number, height: number): HTMLCanvasElement {
+    let canvas = pool[depth];
+    if (!canvas) {
+      canvas = document.createElement('canvas');
+      pool[depth] = canvas;
+    }
+    if (canvas.width !== width) canvas.width = width;
+    if (canvas.height !== height) canvas.height = height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (ctx) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.filter = 'none';
+      ctx.clearRect(0, 0, width, height);
+    }
+    return canvas;
+  }
+
+  private composeFilterLayers(nodes: LayerNode[], depth: number, tile: FilterTile, pools: FilterCanvasPools): HTMLCanvasElement {
+    const target = this.getFilterCanvas(pools.target, depth, tile.width, tile.height);
+    const targetCtx = target.getContext('2d', { willReadFrequently: true })!;
+    targetCtx.clearRect(0, 0, tile.width, tile.height);
+    for (const node of nodes) this.composeFilterNode(node, target, targetCtx, depth, tile, pools);
+    return target;
+  }
+
+  private composeFilterNode(
+    node: LayerNode,
+    target: HTMLCanvasElement,
+    targetCtx: CanvasRenderingContext2D,
+    depth: number,
+    tile: FilterTile,
+    pools: FilterCanvasPools,
+  ): void {
+    if (!node.visible || node.opacity <= 0) return;
+    if (node.type === 'filter') {
+      this.applyFilterLayer(node, target, targetCtx, depth, tile, pools);
+      return;
+    }
+    if (node.type === 'group') {
+      this.compositeFilterGroup(node, targetCtx, depth, tile, pools);
+      return;
+    }
+    if (isPixelLayerType(node.type)) this.compositeFilterRaster(node, targetCtx, depth, tile, pools);
+  }
+
+  private applyFilterLayer(
+    node: LayerNode,
+    target: HTMLCanvasElement,
+    targetCtx: CanvasRenderingContext2D,
+    depth: number,
+    tile: FilterTile,
+    pools: FilterCanvasPools,
+  ): void {
+    const source = this.getFilterCanvas(pools.filterSource, depth, tile.width, tile.height);
+    const filtered = this.getFilterCanvas(pools.filterResult, depth, tile.width, tile.height);
+    const pixels = this.createFilterImages(node, target, source, filtered, tile);
+    const blended = this.blendFilterImages(pixels.original, pixels.filtered, node.opacity);
+    this.replaceFilterPixels(targetCtx, blended, tile);
+  }
+
+  private createFilterImages(
+    node: LayerNode,
+    target: HTMLCanvasElement,
+    source: HTMLCanvasElement,
+    filtered: HTMLCanvasElement,
+    tile: FilterTile,
+  ): { original: ImageData; filtered: ImageData } {
+    const sourceCtx = source.getContext('2d', { willReadFrequently: true })!;
+    const filteredCtx = filtered.getContext('2d', { willReadFrequently: true })!;
+    sourceCtx.drawImage(target, 0, 0);
+    filteredCtx.filter = this.filterCss(node.filterKind ?? 'grayscale', node.filterStrength ?? 1);
+    filteredCtx.drawImage(source, 0, 0);
+    filteredCtx.filter = 'none';
+    return {
+      original: sourceCtx.getImageData(0, 0, tile.width, tile.height),
+      filtered: filteredCtx.getImageData(0, 0, tile.width, tile.height),
+    };
+  }
+
+  private blendFilterImages(original: ImageData, filtered: ImageData, opacity: number): ImageData {
+    for (let index = 0; index < original.data.length; index++) {
+      original.data[index] = Math.round(original.data[index] * (1 - opacity) + filtered.data[index] * opacity);
+    }
+    return original;
+  }
+
+  private replaceFilterPixels(targetCtx: CanvasRenderingContext2D, image: ImageData, tile: FilterTile): void {
+    targetCtx.clearRect(0, 0, tile.width, tile.height);
+    targetCtx.putImageData(image, 0, 0);
+  }
+
+  private compositeFilterGroup(
+    node: LayerNode,
+    targetCtx: CanvasRenderingContext2D,
+    depth: number,
+    tile: FilterTile,
+    pools: FilterCanvasPools,
+  ): void {
+    const groupCanvas = this.composeFilterLayers(node.children, depth + 1, tile, pools);
+    targetCtx.save();
+    targetCtx.globalAlpha = node.opacity;
+    targetCtx.globalCompositeOperation = this.canvasBlend(node.blendMode);
+    targetCtx.drawImage(groupCanvas, 0, 0);
+    targetCtx.restore();
+  }
+
+  private compositeFilterRaster(
+    node: LayerNode,
+    targetCtx: CanvasRenderingContext2D,
+    depth: number,
+    tile: FilterTile,
+    pools: FilterCanvasPools,
+  ): void {
+    const backing = this.ctl.layerPixels(node);
+    if (!backing) return;
+    const rgba = new Uint8Array(tile.width * tile.height * 4);
+    if (!backing.readRectToJS(tile.x, tile.y, tile.width, tile.height, rgba)) return;
+    const layerCanvas = this.getFilterCanvas(pools.layer, depth, tile.width, tile.height);
+    const layerCtx = layerCanvas.getContext('2d', { willReadFrequently: true })!;
+    const image = layerCtx.createImageData(tile.width, tile.height);
+    image.data.set(rgba);
+    layerCtx.putImageData(image, 0, 0);
+    targetCtx.save();
+    targetCtx.globalAlpha = node.opacity;
+    targetCtx.globalCompositeOperation = this.canvasBlend(node.blendMode);
+    targetCtx.drawImage(layerCanvas, 0, 0);
+    targetCtx.restore();
+  }
+
   private applyWorkspace(workspace: WorkspaceId, announce = true): void {
-    if (!WORKSPACES.some((entry) => entry.id === workspace)) workspace = 'general';
-    // Preserve the user's current panel arrangement before the workspace preset is applied.
+    const selectedWorkspace = this.resolveWorkspace(workspace);
     this.dockLayout?.saveCurrentWorkspace();
-    this.workspace = workspace;
-    writeWorkspace(workspace);
+    this.workspace = selectedWorkspace;
+    writeWorkspace(selectedWorkspace);
+    const panels = this.getWorkspacePanelElements();
+    if (!panels) return;
+    const preset = getWorkspaceDefinition(selectedWorkspace);
+    this.applyWorkspacePanelPreset(selectedWorkspace, preset, panels);
+    this.dockLayout?.applyWorkspace(selectedWorkspace);
+    this.refreshWorkspaceMenuChecks(selectedWorkspace);
+    this.refreshPanelMenuChecks(panels);
+    this.updateWorkspacePanelToggleState(panels);
+    if (announce) this.announceWorkspace(selectedWorkspace);
+  }
+
+  private resolveWorkspace(workspace: WorkspaceId): WorkspaceId {
+    return WORKSPACES.some((entry) => entry.id === workspace) ? workspace : 'general';
+  }
+
+  private getWorkspacePanelElements(): WorkspacePanelElements | null {
     const panel = <T extends HTMLElement = HTMLElement>(selector: string): T | null => this.root.querySelector<T>(selector);
     const advanced = panel('.advanced-tool-panel');
     const history = panel('.history-panel');
     const layers = panel('.layers-panel');
     const comic = panel('.comic-manager-panel');
+    const storyboard = panel('.storyboard-panel');
+    const timeline = panel('.animation-timeline-panel');
     const dock = panel('.right-dock');
-    if (!advanced || !history || !layers || !comic || !dock) return;
-    const presets: Record<WorkspaceId, { visible: { advanced: boolean; history: boolean; layers: boolean; comic: boolean }; order: string[] }> = {
-      general: { visible: { advanced: true, history: true, layers: true, comic: false }, order: ['advanced', 'history', 'layers', 'comic'] },
-      'digital-illustration': { visible: { advanced: true, history: true, layers: true, comic: false }, order: ['advanced', 'layers', 'history', 'comic'] },
-      'vector-illustration': { visible: { advanced: true, history: true, layers: true, comic: false }, order: ['layers', 'advanced', 'history', 'comic'] },
-      'image-manipulation': { visible: { advanced: true, history: true, layers: true, comic: false }, order: ['layers', 'history', 'advanced', 'comic'] },
-      comics: { visible: { advanced: true, history: true, layers: true, comic: true }, order: ['comic', 'layers', 'history', 'advanced'] },
+    if (!advanced || !history || !layers || !comic || !storyboard || !timeline || !dock) return null;
+    return { advanced, history, layers, comic, storyboard, timeline, dock };
+  }
+
+  private applyWorkspacePanelPreset(
+    workspace: WorkspaceId,
+    preset: ReturnType<typeof getWorkspaceDefinition>,
+    panels: WorkspacePanelElements,
+  ): void {
+    panels.advanced.hidden = !preset.visible.advanced;
+    panels.history.hidden = !preset.visible.history;
+    panels.layers.hidden = !preset.visible.layers;
+    panels.comic.hidden = !preset.visible.comic;
+    panels.storyboard.hidden = !preset.visible.storyboard;
+    panels.timeline.hidden = !preset.visible.timeline;
+    const panelById: Record<string, HTMLElement> = {
+      advanced: panels.advanced, history: panels.history, layers: panels.layers,
+      comic: panels.comic, storyboard: panels.storyboard, timeline: panels.timeline,
     };
-    const preset = presets[workspace];
-    advanced.hidden = !preset.visible.advanced;
-    history.hidden = !preset.visible.history;
-    layers.hidden = !preset.visible.layers;
-    comic.hidden = !preset.visible.comic;
-    const panels: Record<string, HTMLElement> = { advanced, history, layers, comic };
     preset.order.forEach((id, index) => {
-      const slot = panels[id].closest<HTMLElement>('.dock-panel-slot');
+      const panel = panelById[id];
+      if (!panel) return;
+      const slot = panel.closest<HTMLElement>('.dock-panel-slot');
       if (slot) slot.style.order = String(index);
-      else panels[id].style.order = String(index);
+      else panel.style.order = String(index);
     });
-    dock.dataset.workspace = workspace;
-    dock.classList.remove('panels-hidden');
-    dock.classList.toggle('panels-empty', !preset.visible.advanced && !preset.visible.history && !preset.visible.layers && !preset.visible.comic);
+    panels.dock.dataset.workspace = workspace;
+    panels.dock.classList.remove('panels-hidden');
+    const noVisiblePanels = !preset.visible.advanced && !preset.visible.history && !preset.visible.layers
+      && !preset.visible.comic && !preset.visible.storyboard && !preset.visible.timeline;
+    panels.dock.classList.toggle('panels-empty', noVisiblePanels);
+  }
+
+  private refreshWorkspaceMenuChecks(workspace: WorkspaceId): void {
     this.root.querySelectorAll<HTMLButtonElement>('[data-workspace]').forEach((button) => {
       const selected = button.dataset.workspace === workspace;
       button.setAttribute('aria-checked', String(selected));
-      const check = button.querySelector<HTMLElement>('.menu-check'); if (check) check.textContent = selected ? '✓' : '';
-    });
-    const viewDrop = panel('#view-menu-dropdown');
-    const panelsDrop = panel('#panels-menu-dropdown');
-    if (viewDrop && panelsDrop) {
-      const entries = [
-        ['#toggle-panel-advanced', advanced], ['#toggle-panel-history', history], ['#toggle-panel-layers', layers], ['#toggle-panel-comic', comic],
-      ] as const;
-      for (const [buttonSelector, panelElement] of entries) {
-        const button = panel<HTMLButtonElement>(buttonSelector);
-        if (!button) continue;
-        button.setAttribute('aria-checked', String(!panelElement.hidden));
-        const check = button.querySelector<HTMLElement>('.menu-check'); if (check) check.textContent = !panelElement.hidden ? '✓' : '';
-      }
-      const toggle = panel<HTMLButtonElement>('#toggle-panels');
-      toggle?.setAttribute('aria-pressed', 'true');
-    }
-    this.dockLayout?.applyWorkspace(workspace);
-    // Workspace-specific custom layouts may override preset visibility; refresh the menu checks afterwards.
-    const visibilityItems = [
-      ['#toggle-panel-advanced', advanced], ['#toggle-panel-history', history],
-      ['#toggle-panel-layers', layers], ['#toggle-panel-comic', comic],
-    ] as const;
-    for (const [selector, panelElement] of visibilityItems) {
-      const button = panel<HTMLButtonElement>(selector);
-      if (!button) continue;
-      button.setAttribute('aria-checked', String(!panelElement.hidden));
       const check = button.querySelector<HTMLElement>('.menu-check');
-      if (check) check.textContent = !panelElement.hidden ? '✓' : '';
-    }
-    const allPanelsToggle = panel<HTMLButtonElement>('#toggle-panels');
-    allPanelsToggle?.setAttribute('aria-pressed', String(!dock.classList.contains('panels-hidden') && !panel<HTMLElement>('.workspace')?.classList.contains('panels-hidden')));
-    dock.classList.toggle('panels-empty', visibilityItems.every(([, panelElement]) => panelElement.hidden || !panelElement.closest('.dock-panel-slot')));
-    if (announce) {
-      const label = WORKSPACES.find((entry) => entry.id === workspace)?.label ?? 'General';
-      const status = panel<HTMLElement>('#status');
-      if (status) status.textContent = `Espacio de trabajo: ${label}`;
-    }
+      if (check) check.textContent = selected ? '✓' : '';
+    });
+  }
+
+  private refreshPanelMenuChecks(panels: WorkspacePanelElements): void {
+    const viewDropdown = this.root.querySelector<HTMLElement>('#view-menu-dropdown');
+    const panelsDropdown = this.root.querySelector<HTMLElement>('#panels-menu-dropdown');
+    if (!viewDropdown || !panelsDropdown) return;
+    this.getWorkspacePanelMenuEntries(panels).forEach(([selector, panel]) => {
+      const button = this.root.querySelector<HTMLButtonElement>(selector);
+      if (!button) return;
+      const visible = !panel.hidden;
+      button.setAttribute('aria-checked', String(visible));
+      const check = button.querySelector<HTMLElement>('.menu-check');
+      if (check) check.textContent = visible ? '✓' : '';
+    });
+  }
+
+  private getWorkspacePanelMenuEntries(panels: WorkspacePanelElements): Array<[string, HTMLElement]> {
+    return [
+      ['#toggle-panel-advanced', panels.advanced],
+      ['#toggle-panel-history', panels.history],
+      ['#toggle-panel-layers', panels.layers],
+      ['#toggle-panel-comic', panels.comic],
+      ['#toggle-panel-storyboard', panels.storyboard],
+      ['#toggle-panel-timeline', panels.timeline],
+    ];
+  }
+
+  private updateWorkspacePanelToggleState(panels: WorkspacePanelElements): void {
+    const workspaceElement = this.root.querySelector<HTMLElement>('.workspace');
+    const allPanelsVisible = !panels.dock.classList.contains('panels-hidden')
+      && !workspaceElement?.classList.contains('panels-hidden');
+    this.root.querySelector<HTMLButtonElement>('#toggle-panels')?.setAttribute('aria-pressed', String(allPanelsVisible));
+    const panelsWithMenuEntries = this.getWorkspacePanelMenuEntries(panels);
+    panels.dock.classList.toggle('panels-empty', panelsWithMenuEntries.every(([, panel]) => {
+      return panel.hidden || !panel.closest('.dock-panel-slot');
+    }));
+  }
+
+  private announceWorkspace(workspace: WorkspaceId): void {
+    const label = WORKSPACES.find((entry) => entry.id === workspace)?.label ?? 'General';
+    const status = this.root.querySelector<HTMLElement>('#status');
+    if (status) status.textContent = `Espacio de trabajo: ${label}`;
   }
 
   private readComicFields(): void {
@@ -875,31 +923,45 @@ export class App {
 
   private persistComicConfig(message = 'Configuración guardada en este navegador.'): void {
     this.comicConfig.updatedAt = Date.now();
+    this.persistComicConfigLocally(message);
+    this.queueComicConfigDiskWrite();
+  }
+
+  private persistComicConfigLocally(message: string): void {
     try {
       localStorage.setItem(COMIC_CONFIG_STORAGE_KEY, JSON.stringify(this.comicConfig));
-      const status = this.root.querySelector<HTMLElement>('#comic-config-status');
-      if (status) status.textContent = message;
+      this.setComicConfigStatus(message);
     } catch (error) {
-      const status = this.root.querySelector<HTMLElement>('#comic-config-status');
-      if (status) status.textContent = 'No se pudo guardar localmente';
+      this.setComicConfigStatus('No se pudo guardar localmente');
       console.warn('No se pudo guardar la configuración de cómic:', error);
     }
-    if (this.comicProjectDirectoryHandle) {
-      const snapshot = JSON.stringify({ ...this.comicConfig, format: 'nvts-comic-config', version: 1 }, null, 2);
-      this.comicConfigWriteChain = this.comicConfigWriteChain
-        .then(async () => {
-          const written = await this.writeComicConfigSnapshot(snapshot, false, false);
-          if (!written) {
-            const status = this.root.querySelector<HTMLElement>('#comic-config-status');
-            if (status) status.textContent = 'Cambios guardados localmente; falta permiso para actualizar comicConfig.json en disco.';
-          }
-        })
-        .catch((error: unknown) => {
-          const status = this.root.querySelector<HTMLElement>('#comic-config-status');
-          if (status) status.textContent = error instanceof Error ? `Error guardando comicConfig.json: ${error.message}` : 'Error guardando comicConfig.json';
-          console.warn('No se pudo actualizar comicConfig.json en disco:', error);
-        });
-    }
+  }
+
+  private queueComicConfigDiskWrite(): void {
+    if (!this.comicProjectDirectoryHandle) return;
+    const snapshot = JSON.stringify({ ...this.comicConfig, format: 'nvts-comic-config', version: 1 }, null, 2);
+    this.comicConfigWriteChain = this.comicConfigWriteChain
+      .then(() => this.writeQueuedComicConfig(snapshot))
+      .catch((error: unknown) => this.reportComicConfigWriteFailure(error));
+  }
+
+  private async writeQueuedComicConfig(snapshot: string): Promise<void> {
+    const written = await this.writeComicConfigSnapshot(snapshot, false, false);
+    if (written) return;
+    this.setComicConfigStatus('Cambios guardados localmente; falta permiso para actualizar comicConfig.json en disco.');
+  }
+
+  private reportComicConfigWriteFailure(error: unknown): void {
+    const message = error instanceof Error
+      ? `Error guardando comicConfig.json: ${error.message}`
+      : 'Error guardando comicConfig.json';
+    this.setComicConfigStatus(message);
+    console.warn('No se pudo actualizar comicConfig.json en disco:', error);
+  }
+
+  private setComicConfigStatus(message: string): void {
+    const status = this.root.querySelector<HTMLElement>('#comic-config-status');
+    if (status) status.textContent = message;
   }
 
   private async writeComicConfigSnapshot(snapshot: string, requestPermission: boolean, updateStatus: boolean): Promise<boolean> {
@@ -908,31 +970,38 @@ export class App {
     let permission = await root.queryPermission({ mode: 'readwrite' });
     if (permission !== 'granted' && requestPermission) permission = await root.requestPermission({ mode: 'readwrite' });
     if (permission !== 'granted') {
-      if (updateStatus) {
-        const status = this.root.querySelector<HTMLElement>('#comic-config-status');
-        if (status) status.textContent = 'Se requiere volver a autorizar la carpeta del proyecto.';
-      }
+      this.reportComicConfigPermissionRequired(updateStatus);
       return false;
     }
     const configFile = await root.getFileHandle('comicConfig.json', { create: true });
     await writeFileHandleBytes(configFile, new Blob([snapshot], { type: 'application/json;charset=utf-8' }));
-    if (updateStatus) {
-      const status = this.root.querySelector<HTMLElement>('#comic-config-status');
-      if (status) status.textContent = `Guardado: ${root.name}/comicConfig.json`;
-    }
+    this.reportComicConfigSaved(root, updateStatus);
     return true;
   }
 
+  private reportComicConfigPermissionRequired(updateStatus: boolean): void {
+    if (!updateStatus) return;
+    const status = this.root.querySelector<HTMLElement>('#comic-config-status');
+    if (status) status.textContent = 'Se requiere volver a autorizar la carpeta del proyecto.';
+  }
+
+  private reportComicConfigSaved(root: FileSystemDirectoryHandle, updateStatus: boolean): void {
+    if (!updateStatus) return;
+    const status = this.root.querySelector<HTMLElement>('#comic-config-status');
+    if (status) status.textContent = `Guardado: ${root.name}/comicConfig.json`;
+  }
+
   private async writeComicConfigToProject(requestPermission = false): Promise<boolean> {
-    // Wait for any background autosave queued by persistComicConfig to finish before writing again.
     await this.comicConfigWriteChain;
     const snapshot = JSON.stringify({ ...this.comicConfig, format: 'nvts-comic-config', version: 1 }, null, 2);
     const written = await this.writeComicConfigSnapshot(snapshot, requestPermission, true);
-    if (written) {
-      try { await storeComicProjectDirectoryHandle(this.comicProjectDirectoryHandle!); }
-      catch (error) { console.warn('No se pudo recordar el proyecto de cómic:', error); }
-    }
+    if (written) await this.rememberComicProjectHandle();
     return written;
+  }
+
+  private async rememberComicProjectHandle(): Promise<void> {
+    try { await storeComicProjectDirectoryHandle(this.comicProjectDirectoryHandle!); }
+    catch (error) { console.warn('No se pudo recordar el proyecto de cómic:', error); }
   }
 
   private async activateComicProjectDirectory(root: FileSystemDirectoryHandle, loadFromDisk: boolean, requestPermission: boolean): Promise<void> {
@@ -940,16 +1009,7 @@ export class App {
     if (permission !== 'granted' && requestPermission) permission = await root.requestPermission({ mode: 'readwrite' });
     if (permission !== 'granted') throw new Error('El navegador no concedió permiso de lectura y escritura para la carpeta elegida.');
     this.comicProjectDirectoryHandle = root;
-    if (loadFromDisk) {
-      try {
-        const configHandle = await root.getFileHandle('comicConfig.json');
-        const configFile = await configHandle.getFile();
-        this.comicConfig = normalizeComicConfig(JSON.parse(await configFile.text()) as unknown);
-        this.comicActivePageId = this.comicConfig.pages[0]?.id ?? null;
-      } catch (error) {
-        if (!isNotFoundError(error)) throw error;
-      }
-    }
+    if (loadFromDisk) await this.loadComicConfigFromDirectory(root);
     this.comicConfig.projectDirectoryName = root.name;
     if (!this.comicConfig.projectName.trim()) this.comicConfig.projectName = root.name;
     if (!this.comicConfig.projectLocation) this.comicConfig.projectLocation = root.name;
@@ -961,23 +1021,43 @@ export class App {
     await this.writeComicConfigToProject(false);
   }
 
-  private async restoreComicProjectDirectory(): Promise<void> {
+  private async loadComicConfigFromDirectory(root: FileSystemDirectoryHandle): Promise<void> {
     try {
-      const root = await readStoredComicProjectDirectoryHandle();
-      if (!root) return;
-      this.comicProjectDirectoryHandle = root;
-      const permission = await root.queryPermission({ mode: 'readwrite' });
-      if (permission === 'granted') {
-        await this.activateComicProjectDirectory(root, true, false);
-      } else {
-        const location = this.root.querySelector<HTMLInputElement>('#comic-project-location');
-        if (location) location.value = `Proyecto recordado: ${root.name} (permiso pendiente)`;
-        const status = this.root.querySelector<HTMLElement>('#comic-config-status');
-        if (status) status.textContent = 'Carpeta recordada. Usá “Vincular proyecto existente…” para volver a autorizarla.';
-      }
+      const configHandle = await root.getFileHandle('comicConfig.json');
+      const configFile = await configHandle.getFile();
+      this.comicConfig = normalizeComicConfig(JSON.parse(await configFile.text()) as unknown);
+      this.comicActivePageId = this.comicConfig.pages[0]?.id ?? null;
     } catch (error) {
-      console.warn('No se pudo reconectar el directorio del proyecto de cómic:', error);
+      this.ignoreMissingComicConfig(error);
     }
+  }
+
+  private ignoreMissingComicConfig(error: unknown): void {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  private async restoreComicProjectDirectory(): Promise<void> {
+    try { await this.restoreStoredComicProjectDirectory(); }
+    catch (error) { console.warn('No se pudo reconectar el directorio del proyecto de cómic:', error); }
+  }
+
+  private async restoreStoredComicProjectDirectory(): Promise<void> {
+    const root = await readStoredComicProjectDirectoryHandle();
+    if (!root) return;
+    this.comicProjectDirectoryHandle = root;
+    const permission = await root.queryPermission({ mode: 'readwrite' });
+    if (permission === 'granted') {
+      await this.activateComicProjectDirectory(root, true, false);
+      return;
+    }
+    this.showComicProjectPermissionPending(root);
+  }
+
+  private showComicProjectPermissionPending(root: FileSystemDirectoryHandle): void {
+    const location = this.root.querySelector<HTMLInputElement>('#comic-project-location');
+    if (location) location.value = `Proyecto recordado: ${root.name} (permiso pendiente)`;
+    const status = this.root.querySelector<HTMLElement>('#comic-config-status');
+    if (status) status.textContent = 'Carpeta recordada. Usá “Vincular proyecto existente…” para volver a autorizarla.';
   }
 
   private async chooseComicParentDirectory(): Promise<void> {
@@ -994,41 +1074,98 @@ export class App {
 
   private async createComicProjectStructure(): Promise<void> {
     this.readComicFields();
+    const parent = await this.getComicParentDirectory();
+    const projectFolderName = safeComicFolderName(this.comicConfig.projectName, 'Mi cómic');
+    const root = await this.resolveNewComicProjectRoot(parent, projectFolderName);
+    if (!root) return;
+    await this.initializeNewComicProject(parent, root, projectFolderName);
+  }
+
+  private async getComicParentDirectory(): Promise<FileSystemDirectoryHandle> {
     const picker = (window as DirectoryPickerWindow).showDirectoryPicker;
     if (!picker) throw new Error('Este navegador no permite crear carpetas desde la aplicación. Usá Chrome o Edge actualizado en localhost o HTTPS.');
-    if (!this.comicParentDirectoryHandle) this.comicParentDirectoryHandle = await picker.call(window, { mode: 'readwrite' });
-    const parent = this.comicParentDirectoryHandle;
-    const projectFolderName = safeComicFolderName(this.comicConfig.projectName, 'Mi cómic');
+    if (!this.comicParentDirectoryHandle) {
+      this.comicParentDirectoryHandle = await picker.call(window, { mode: 'readwrite' });
+    }
+    return this.comicParentDirectoryHandle;
+  }
+
+  private async resolveNewComicProjectRoot(
+    parent: FileSystemDirectoryHandle,
+    projectFolderName: string,
+  ): Promise<FileSystemDirectoryHandle | null> {
     let root: FileSystemDirectoryHandle;
     try {
       root = await parent.getDirectoryHandle(projectFolderName);
-      let configExists = false;
-      try { await root.getFileHandle('comicConfig.json'); configExists = true; }
-      catch (error) { if (!isNotFoundError(error)) throw error; }
-      if (configExists) {
-        if (!confirm(`Ya existe el proyecto “${projectFolderName}” con comicConfig.json. ¿Querés abrir ese proyecto y cargar su configuración?`)) return;
-        await this.activateComicProjectDirectory(root, true, true);
-        return;
-      }
     } catch (error) {
-      if (!isNotFoundError(error)) throw error;
-      root = await parent.getDirectoryHandle(projectFolderName, { create: true });
+      return this.createMissingComicProjectRoot(parent, projectFolderName, error);
     }
-    // El permiso de la carpeta base ya fue concedido al elegirla desde el diálogo.
+    if (!await this.comicProjectHasConfig(root)) return root;
+    const shouldOpen = confirm(`Ya existe el proyecto “${projectFolderName}” con comicConfig.json. ¿Querés abrir ese proyecto y cargar su configuración?`);
+    if (!shouldOpen) return null;
+    await this.activateComicProjectDirectory(root, true, true);
+    return null;
+  }
+
+  private createMissingComicProjectRoot(
+    parent: FileSystemDirectoryHandle,
+    projectFolderName: string,
+    error: unknown,
+  ): Promise<FileSystemDirectoryHandle> {
+    if (!isNotFoundError(error)) throw error;
+    return parent.getDirectoryHandle(projectFolderName, { create: true });
+  }
+
+  private async comicProjectHasConfig(root: FileSystemDirectoryHandle): Promise<boolean> {
+    try {
+      await root.getFileHandle('comicConfig.json');
+      return true;
+    } catch (error) {
+      return this.configMissingOrThrow(error);
+    }
+  }
+
+  private configMissingOrThrow(error: unknown): false {
+    if (isNotFoundError(error)) return false;
+    throw error;
+  }
+
+  private async initializeNewComicProject(
+    parent: FileSystemDirectoryHandle,
+    root: FileSystemDirectoryHandle,
+    projectFolderName: string,
+  ): Promise<void> {
+    this.applyNewComicProjectConfig(parent, projectFolderName, root);
+    await this.createComicProjectDirectories(root);
+    await storeComicProjectDirectoryHandle(root).catch((error) => console.warn('No se pudo recordar el proyecto de cómic:', error));
+    this.renderComicManager();
+    this.persistComicConfig(`Estructura creada: ${parent.name}/${projectFolderName}`);
+    const written = await this.writeComicConfigToProject(true);
+    this.showComicProjectCreationStatus(projectFolderName, written);
+  }
+
+  private applyNewComicProjectConfig(
+    parent: FileSystemDirectoryHandle,
+    projectFolderName: string,
+    root: FileSystemDirectoryHandle,
+  ): void {
     this.comicConfig.projectName = projectFolderName;
     this.comicConfig.projectDirectoryName = projectFolderName;
     this.comicConfig.projectLocation = `${parent.name}/${projectFolderName}`;
     this.comicConfig.pagesDirectoryName = 'páginas';
     this.comicConfig.exportDirectoryName = 'exportación';
     this.comicProjectDirectoryHandle = root;
+  }
+
+  private async createComicProjectDirectories(root: FileSystemDirectoryHandle): Promise<void> {
     this.comicPagesDirectoryHandle = await root.getDirectoryHandle(this.comicConfig.pagesDirectoryName, { create: true });
     this.comicExportDirectoryHandle = await root.getDirectoryHandle(this.comicConfig.exportDirectoryName, { create: true });
-    await storeComicProjectDirectoryHandle(root).catch((error) => console.warn('No se pudo recordar la carpeta del proyecto:', error));
-    this.renderComicManager();
-    this.persistComicConfig(`Estructura creada: ${parent.name}/${projectFolderName}`);
-    const written = await this.writeComicConfigToProject(true);
+  }
+
+  private showComicProjectCreationStatus(projectFolderName: string, written: boolean): void {
     const status = this.root.querySelector<HTMLElement>('#comic-config-status');
-    if (status) status.textContent = written
+    if (!status) return;
+    status.textContent = written
       ? `Proyecto creado: ${projectFolderName} · comicConfig.json, páginas/ y exportación/ listos.`
       : 'Se crearon las carpetas, pero no se pudo escribir comicConfig.json. Volvé a vincular el proyecto.';
   }
@@ -1041,56 +1178,123 @@ export class App {
   }
 
   private async exportComicProjectCopy(): Promise<void> {
+    const root = this.requireComicProjectDirectory();
+    this.readComicFields();
+    this.persistComicConfig('Preparando copia de exportación…');
+    await this.ensureComicConfigWritten();
+    const exportDirectory = await this.getComicExportDirectory(root);
+    await this.writeComicExportConfig(exportDirectory);
+    const exportPages = await exportDirectory.getDirectoryHandle(this.comicConfig.pagesDirectoryName || 'páginas', { create: true });
+    const counts = await this.copyComicPagesToExport(exportPages);
+    this.showComicExportStatus(root.name, counts.copied, counts.missing);
+  }
+
+  private requireComicProjectDirectory(): FileSystemDirectoryHandle {
     if (!this.comicProjectDirectoryHandle) {
       throw new Error('Primero elegí una carpeta base y creá la estructura del proyecto.');
     }
-    this.readComicFields();
-    this.persistComicConfig('Preparando copia de exportación…');
-    const configWritten = await this.writeComicConfigToProject(true);
-    if (!configWritten) throw new Error('No se pudo escribir comicConfig.json. Volvé a vincular la carpeta del proyecto e intentá nuevamente.');
-    const root = this.comicProjectDirectoryHandle;
-    if (!this.comicPagesDirectoryHandle) this.comicPagesDirectoryHandle = await root.getDirectoryHandle(this.comicConfig.pagesDirectoryName || 'páginas', { create: true });
-    let exportDirectory = this.comicExportDirectoryHandle;
-    if (!exportDirectory) {
-      exportDirectory = await root.getDirectoryHandle(this.comicConfig.exportDirectoryName || 'exportación', { create: true });
-      this.comicExportDirectoryHandle = exportDirectory;
+    return this.comicProjectDirectoryHandle;
+  }
+
+  private async ensureComicConfigWritten(): Promise<void> {
+    const written = await this.writeComicConfigToProject(true);
+    if (!written) {
+      throw new Error('No se pudo escribir comicConfig.json. Volvé a vincular la carpeta del proyecto e intentá nuevamente.');
     }
-    const configSnapshot = JSON.stringify({ ...this.comicConfig, format: 'nvts-comic-config', version: 1 }, null, 2);
-    const exportConfig = await exportDirectory.getFileHandle('comicConfig.json', { create: true });
-    await writeFileHandleBytes(exportConfig, new Blob([configSnapshot], { type: 'application/json;charset=utf-8' }));
-    const exportPages = await exportDirectory.getDirectoryHandle(this.comicConfig.pagesDirectoryName || 'páginas', { create: true });
+  }
+
+  private async getComicExportDirectory(root: FileSystemDirectoryHandle): Promise<FileSystemDirectoryHandle> {
+    if (!this.comicPagesDirectoryHandle) {
+      this.comicPagesDirectoryHandle = await root.getDirectoryHandle(this.comicConfig.pagesDirectoryName || 'páginas', { create: true });
+    }
+    if (this.comicExportDirectoryHandle) return this.comicExportDirectoryHandle;
+    this.comicExportDirectoryHandle = await root.getDirectoryHandle(this.comicConfig.exportDirectoryName || 'exportación', { create: true });
+    return this.comicExportDirectoryHandle;
+  }
+
+  private async writeComicExportConfig(exportDirectory: FileSystemDirectoryHandle): Promise<void> {
+    const snapshot = JSON.stringify({ ...this.comicConfig, format: 'nvts-comic-config', version: 1 }, null, 2);
+    const configFile = await exportDirectory.getFileHandle('comicConfig.json', { create: true });
+    await writeFileHandleBytes(configFile, new Blob([snapshot], { type: 'application/json;charset=utf-8' }));
+  }
+
+  private async copyComicPagesToExport(
+    exportPages: FileSystemDirectoryHandle,
+  ): Promise<{ copied: number; missing: number }> {
     let copied = 0;
     let missing = 0;
-    if (this.comicPagesDirectoryHandle) {
-      for (const page of this.comicConfig.pages) {
-        const fileName = safeComicFileName(page.fileName, `comic-page-${String(page.number).padStart(3, '0')}.nvtsphoto`);
-        try {
-          const sourceHandle = await this.comicPagesDirectoryHandle.getFileHandle(fileName);
-          const sourceFile = await sourceHandle.getFile();
-          if (!sourceFile.size) { missing++; continue; }
-          const targetHandle = await exportPages.getFileHandle(fileName, { create: true });
-          await writeFileHandleBytes(targetHandle, sourceFile);
-          copied++;
-        } catch (error) {
-          if (isNotFoundError(error)) missing++;
-          else throw error;
-        }
-      }
+    const sourceDirectory = this.comicPagesDirectoryHandle;
+    if (!sourceDirectory) return { copied, missing };
+    for (const page of this.comicConfig.pages) {
+      const result = await this.copyComicPageToExport(sourceDirectory, exportPages, page);
+      copied += Number(result === 'copied');
+      missing += Number(result === 'missing');
     }
+    return { copied, missing };
+  }
+
+  private async copyComicPageToExport(
+    sourceDirectory: FileSystemDirectoryHandle,
+    exportDirectory: FileSystemDirectoryHandle,
+    page: ComicPageEntry,
+  ): Promise<'copied' | 'missing'> {
+    const fileName = safeComicFileName(page.fileName, `comic-page-${String(page.number).padStart(3, '0')}.nvtsphoto`);
+    try {
+      const sourceHandle = await sourceDirectory.getFileHandle(fileName);
+      const sourceFile = await sourceHandle.getFile();
+      return this.copyNonEmptyComicPage(sourceFile, exportDirectory, fileName);
+    } catch (error) {
+      return this.missingComicPageOrThrow(error);
+    }
+  }
+
+  private async copyNonEmptyComicPage(
+    sourceFile: File,
+    exportDirectory: FileSystemDirectoryHandle,
+    fileName: string,
+  ): Promise<'copied' | 'missing'> {
+    if (!sourceFile.size) return 'missing';
+    const targetHandle = await exportDirectory.getFileHandle(fileName, { create: true });
+    await writeFileHandleBytes(targetHandle, sourceFile);
+    return 'copied';
+  }
+
+  private missingComicPageOrThrow(error: unknown): 'missing' {
+    if (isNotFoundError(error)) return 'missing';
+    throw error;
+  }
+
+  private showComicExportStatus(projectName: string, copied: number, missing: number): void {
     const status = this.root.querySelector<HTMLElement>('#comic-config-status');
-    if (status) status.textContent = `Copia exportada a ${root.name}/exportación: comicConfig.json y ${copied} página(s)${missing ? `; ${missing} sin guardar se omitieron` : ''}.`;
+    if (!status) return;
+    status.textContent = `Copia exportada a ${projectName}/exportación: comicConfig.json y ${copied} página(s)${missing ? `; ${missing} sin guardar se omitieron` : ''}.`;
   }
 
   private async prepareComicPageFile(page: ComicPageEntry): Promise<FileSystemFileHandle | null> {
     const directory = this.comicPagesDirectoryHandle;
     if (!directory) return null;
     const fileName = safeComicFileName(page.fileName, `comic-page-${String(page.number).padStart(3, '0')}.nvtsphoto`);
+    const existingFile = await this.findExistingComicPage(directory, fileName);
+    if (existingFile && existingFile.size && !this.confirmOverwriteComicPage(fileName)) return null;
+    return directory.getFileHandle(fileName, { create: true });
+  }
+
+  private async findExistingComicPage(directory: FileSystemDirectoryHandle, fileName: string): Promise<File | null> {
     try {
       const existing = await directory.getFileHandle(fileName);
-      const file = await existing.getFile();
-      if (file.size > 0 && !confirm(`Ya existe “${fileName}” en la carpeta de páginas. El próximo guardado lo sobrescribirá. ¿Continuar?`)) return null;
-    } catch (error) { if (!isNotFoundError(error)) throw error; }
-    return directory.getFileHandle(fileName, { create: true });
+      return await existing.getFile();
+    } catch (error) {
+      return this.ignoreMissingComicPage(error);
+    }
+  }
+
+  private ignoreMissingComicPage(error: unknown): null {
+    if (isNotFoundError(error)) return null;
+    throw error;
+  }
+
+  private confirmOverwriteComicPage(fileName: string): boolean {
+    return confirm(`Ya existe “${fileName}” en la carpeta de páginas. El próximo guardado lo sobrescribirá. ¿Continuar?`);
   }
 
   private renderComicManager(): void {
@@ -1107,28 +1311,44 @@ export class App {
   }
 
   private wireComicManager(): void {
-    try { this.comicConfig = readComicConfig(); } catch { this.comicConfig = defaultComicConfig(); }
+    this.initializeComicManager();
+    this.bindComicConfigInputs();
+    this.bindComicPresetSelector();
+    this.bindComicProjectActions();
+    this.bindComicPageActions();
+    this.bindComicConfigTransferActions();
+  }
+
+  private initializeComicManager(): void {
+    try {
+      this.comicConfig = readComicConfig();
+    } catch {
+      this.comicConfig = defaultComicConfig();
+    }
     this.comicActivePageId = this.comicConfig.pages[0]?.id ?? null;
     this.renderComicManager();
     void this.restoreComicProjectDirectory();
-    const inputIds = ['comic-project-name', 'comic-title', 'comic-author', 'comic-direction', 'comic-page-width', 'comic-page-height', 'comic-dpi', 'comic-bleed', 'comic-margin', 'comic-gutter', 'comic-facing-pages'];
+  }
+
+  private bindComicConfigInputs(): void {
+    const inputIds = [
+      'comic-project-name', 'comic-title', 'comic-author', 'comic-direction',
+      'comic-page-width', 'comic-page-height', 'comic-dpi', 'comic-bleed',
+      'comic-margin', 'comic-gutter', 'comic-facing-pages',
+    ];
     inputIds.forEach((id) => {
-      const selector = `#${id}`;
-      const input = this.root.querySelector<HTMLInputElement | HTMLSelectElement>(selector);
-      input?.addEventListener('change', () => { this.readComicFields(); this.persistComicConfig(); this.renderComicManager(); });
+      const input = this.root.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`);
+      input?.addEventListener('change', () => this.handleComicConfigInputChange());
     });
-    this.q<HTMLButtonElement>('#comic-select-location').addEventListener('click', () => {
-      void this.chooseComicParentDirectory().catch((error: unknown) => { const status = this.q<HTMLElement>('#comic-config-status'); status.textContent = error instanceof Error ? error.message : String(error); });
-    });
-    this.q<HTMLButtonElement>('#comic-create-project').addEventListener('click', () => {
-      void this.createComicProjectStructure().catch((error: unknown) => { const status = this.q<HTMLElement>('#comic-config-status'); status.textContent = error instanceof Error ? error.message : String(error); });
-    });
-    this.q<HTMLButtonElement>('#comic-link-project').addEventListener('click', () => {
-      void this.linkExistingComicProject().catch((error: unknown) => { const status = this.q<HTMLElement>('#comic-config-status'); status.textContent = error instanceof Error ? error.message : String(error); });
-    });
-    this.q<HTMLButtonElement>('#comic-export-project').addEventListener('click', () => {
-      void this.exportComicProjectCopy().catch((error: unknown) => { const status = this.q<HTMLElement>('#comic-config-status'); status.textContent = error instanceof Error ? error.message : String(error); });
-    });
+  }
+
+  private handleComicConfigInputChange(): void {
+    this.readComicFields();
+    this.persistComicConfig();
+    this.renderComicManager();
+  }
+
+  private bindComicPresetSelector(): void {
     this.q<HTMLSelectElement>('#comic-preset').addEventListener('change', () => {
       const preset = this.q<HTMLSelectElement>('#comic-preset').value;
       const presets: Record<string, { width: number; height: number; direction?: 'ltr' | 'rtl'; facing?: boolean }> = {
@@ -1138,127 +1358,257 @@ export class App {
         manhwa: { width: 1600, height: 2560, direction: 'ltr', facing: false },
       };
       const selected = presets[preset];
-      if (selected) {
-        this.comicConfig.pageWidth = selected.width; this.comicConfig.pageHeight = selected.height;
-        if (selected.direction) this.comicConfig.readingDirection = selected.direction;
-        if (selected.facing !== undefined) this.comicConfig.facingPages = selected.facing;
-      }
-      this.renderComicManager(); this.persistComicConfig('Formato actualizado y guardado localmente.');
+      if (!selected) return;
+      this.comicConfig.pageWidth = selected.width;
+      this.comicConfig.pageHeight = selected.height;
+      if (selected.direction) this.comicConfig.readingDirection = selected.direction;
+      if (selected.facing !== undefined) this.comicConfig.facingPages = selected.facing;
+      this.renderComicManager();
+      this.persistComicConfig('Formato actualizado y guardado localmente.');
     });
-    this.q<HTMLButtonElement>('#comic-add-page').addEventListener('click', () => {
-      this.readComicFields();
-      const number = this.comicConfig.pages.length + 1;
-      const page: ComicPageEntry = {
-        id: crypto.randomUUID(), number, name: `Página ${number}`,
-        fileName: `comic-page-${String(number).padStart(3, '0')}.nvtsphoto`,
-        width: this.comicConfig.pageWidth, height: this.comicConfig.pageHeight, notes: '',
-      };
-      this.comicConfig.pages.push(page); this.comicActivePageId = page.id;
-      this.persistComicConfig('Página añadida. Configuración guardada localmente.'); this.renderComicManager();
+  }
+
+  private bindComicProjectActions(): void {
+    this.bindComicAsyncAction('#comic-select-location', () => this.chooseComicParentDirectory());
+    this.bindComicAsyncAction('#comic-create-project', () => this.createComicProjectStructure());
+    this.bindComicAsyncAction('#comic-link-project', () => this.linkExistingComicProject());
+    this.bindComicAsyncAction('#comic-export-project', () => this.exportComicProjectCopy());
+  }
+
+  private bindComicAsyncAction(selector: string, action: () => Promise<unknown>): void {
+    this.q<HTMLButtonElement>(selector).addEventListener('click', () => {
+      void action().catch((error: unknown) => this.setComicManagerError(error));
     });
-    this.q<HTMLButtonElement>('#comic-duplicate-page').addEventListener('click', () => {
-      const selected = this.comicConfig.pages.find((page) => page.id === this.comicActivePageId); if (!selected) return;
-      const number = this.comicConfig.pages.length + 1;
-      const copy: ComicPageEntry = { ...selected, id: crypto.randomUUID(), number, name: `${selected.name} (copia)`, fileName: `comic-page-${String(number).padStart(3, '0')}.nvtsphoto` };
-      this.comicConfig.pages.splice(this.comicConfig.pages.indexOf(selected) + 1, 0, copy); this.comicActivePageId = copy.id;
-      this.comicConfig.pages.forEach((page, index) => page.number = index + 1); this.persistComicConfig('Página duplicada.'); this.renderComicManager();
-    });
-    this.q<HTMLButtonElement>('#comic-delete-page').addEventListener('click', () => {
-      const index = this.comicConfig.pages.findIndex((page) => page.id === this.comicActivePageId); if (index < 0) return;
-      const page = this.comicConfig.pages[index]; if (!confirm(`¿Eliminar «${page.name}» de la configuración? No se borrará ningún archivo del disco.`)) return;
-      this.comicConfig.pages.splice(index, 1); this.comicConfig.pages.forEach((entry, i) => entry.number = i + 1);
-      this.comicActivePageId = this.comicConfig.pages[Math.min(index, this.comicConfig.pages.length - 1)]?.id ?? null;
-      this.persistComicConfig('Página eliminada de la configuración.'); this.renderComicManager();
-    });
-    const move = (delta: number) => {
-      const index = this.comicConfig.pages.findIndex((page) => page.id === this.comicActivePageId); const next = index + delta;
-      if (index < 0 || next < 0 || next >= this.comicConfig.pages.length) return;
-      [this.comicConfig.pages[index], this.comicConfig.pages[next]] = [this.comicConfig.pages[next], this.comicConfig.pages[index]];
-      this.comicConfig.pages.forEach((page, i) => page.number = i + 1);
-      this.persistComicConfig('Orden de páginas actualizado.'); this.renderComicManager();
+  }
+
+  private setComicManagerError(error: unknown): void {
+    const status = this.q<HTMLElement>('#comic-config-status');
+    status.textContent = error instanceof Error ? error.message : String(error);
+  }
+
+  private bindComicPageActions(): void {
+    this.bindAddComicPageAction();
+    this.bindDuplicateComicPageAction();
+    this.bindDeleteComicPageAction();
+    this.bindComicPageOrderActions();
+    this.bindComicPageCanvasActions();
+    this.bindComicPageFileActions();
+  }
+
+  private bindAddComicPageAction(): void {
+    this.q<HTMLButtonElement>('#comic-add-page').addEventListener('click', () => this.addComicPage());
+  }
+
+  private addComicPage(): void {
+    this.readComicFields();
+    const number = this.comicConfig.pages.length + 1;
+    const page: ComicPageEntry = {
+      id: crypto.randomUUID(), number, name: `Página ${number}`,
+      fileName: `comic-page-${String(number).padStart(3, '0')}.nvtsphoto`,
+      width: this.comicConfig.pageWidth, height: this.comicConfig.pageHeight, notes: '',
     };
-    this.q<HTMLButtonElement>('#comic-page-up').addEventListener('click', () => move(-1));
-    this.q<HTMLButtonElement>('#comic-page-down').addEventListener('click', () => move(1));
+    this.comicConfig.pages.push(page);
+    this.comicActivePageId = page.id;
+    this.persistComicConfig('Página añadida. Configuración guardada localmente.');
+    this.renderComicManager();
+  }
+
+  private bindDuplicateComicPageAction(): void {
+    this.q<HTMLButtonElement>('#comic-duplicate-page').addEventListener('click', () => this.duplicateActiveComicPage());
+  }
+
+  private duplicateActiveComicPage(): void {
+    const selected = this.comicConfig.pages.find((page) => page.id === this.comicActivePageId);
+    if (!selected) return;
+    const number = this.comicConfig.pages.length + 1;
+    const copy: ComicPageEntry = {
+      ...selected,
+      id: crypto.randomUUID(),
+      number,
+      name: `${selected.name} (copia)`,
+      fileName: `comic-page-${String(number).padStart(3, '0')}.nvtsphoto`,
+    };
+    this.comicConfig.pages.splice(this.comicConfig.pages.indexOf(selected) + 1, 0, copy);
+    this.comicActivePageId = copy.id;
+    this.renumberComicPages();
+    this.persistComicConfig('Página duplicada.');
+    this.renderComicManager();
+  }
+
+  private bindDeleteComicPageAction(): void {
+    this.q<HTMLButtonElement>('#comic-delete-page').addEventListener('click', () => this.deleteActiveComicPage());
+  }
+
+  private deleteActiveComicPage(): void {
+    const index = this.comicConfig.pages.findIndex((page) => page.id === this.comicActivePageId);
+    if (index < 0) return;
+    const page = this.comicConfig.pages[index];
+    const message = `¿Eliminar «${page.name}» de la configuración? No se borrará ningún archivo del disco.`;
+    if (!confirm(message)) return;
+    this.comicConfig.pages.splice(index, 1);
+    this.renumberComicPages();
+    this.comicActivePageId = this.comicConfig.pages[Math.min(index, this.comicConfig.pages.length - 1)]?.id ?? null;
+    this.persistComicConfig('Página eliminada de la configuración.');
+    this.renderComicManager();
+  }
+
+  private renumberComicPages(): void {
+    this.comicConfig.pages.forEach((page, index) => { page.number = index + 1; });
+  }
+
+  private bindComicPageOrderActions(): void {
+    this.q<HTMLButtonElement>('#comic-page-up').addEventListener('click', () => this.moveActiveComicPage(-1));
+    this.q<HTMLButtonElement>('#comic-page-down').addEventListener('click', () => this.moveActiveComicPage(1));
+  }
+
+  private moveActiveComicPage(delta: number): void {
+    const index = this.comicConfig.pages.findIndex((page) => page.id === this.comicActivePageId);
+    const next = index + delta;
+    if (index < 0 || next < 0 || next >= this.comicConfig.pages.length) return;
+    [this.comicConfig.pages[index], this.comicConfig.pages[next]] = [this.comicConfig.pages[next], this.comicConfig.pages[index]];
+    this.renumberComicPages();
+    this.persistComicConfig('Orden de páginas actualizado.');
+    this.renderComicManager();
+  }
+
+  private bindComicPageCanvasActions(): void {
     this.q<HTMLButtonElement>('#comic-create-canvas').addEventListener('click', () => {
-      void (async () => {
-        const page = this.comicConfig.pages.find((entry) => entry.id === this.comicActivePageId); if (!page) return;
-        if (!confirm(`Se reemplazará el documento abierto por un lienzo de ${page.width} × ${page.height} px para «${page.name}». Guardá primero el documento actual si querés conservarlo. ¿Continuar?`)) return;
-        this.readComicFields();
-        const safeTitle = this.comicConfig.title.trim() || 'Cómic';
-        const fileName = safeComicFileName(page.fileName, `comic-page-${String(page.number).padStart(3, '0')}.nvtsphoto`);
-        const pageHandle = await this.prepareComicPageFile({ ...page, fileName });
-        if (this.comicPagesDirectoryHandle && !pageHandle) return;
-        this.newDocument(page.width, page.height, `${safeTitle} - ${page.name}`);
-        this.fileHandle = pageHandle;
-        page.fileName = fileName;
-        page.width = this.ctl.doc.width; page.height = this.ctl.doc.height;
-        this.persistComicConfig(this.comicPagesDirectoryHandle
-          ? `Lienzo creado para «${page.name}». Guardar escribirá directamente en páginas/${fileName}.`
-          : `Lienzo creado para «${page.name}». Configurá una carpeta de proyecto para guardar páginas automáticamente.`);
-        this.renderComicManager();
-        this.applyWorkspace('comics', false);
-      })().catch((error: unknown) => { const status = this.q<HTMLElement>('#comic-config-status'); status.textContent = error instanceof Error ? error.message : String(error); });
+      void this.createComicCanvasForActivePage().catch((error: unknown) => this.setComicManagerError(error));
     });
-    const pageOpenInput = this.q<HTMLInputElement>('#comic-page-open-input');
-    this.q<HTMLButtonElement>('#comic-page-open-file').addEventListener('click', () => pageOpenInput.click());
-    pageOpenInput.addEventListener('change', () => {
-      const file = pageOpenInput.files?.[0]; if (!file) return;
-      const page = this.comicConfig.pages.find((entry) => entry.id === this.comicActivePageId);
-      if (!page) { pageOpenInput.value = ''; return; }
-      if (!confirm(`Abrir «${file.name}» como «${page.name}» reemplazará el documento actual. Guardá primero lo que necesites conservar. ¿Continuar?`)) { pageOpenInput.value = ''; return; }
-      void (async () => {
-        try {
-          const bytes = new Uint8Array(await file.arrayBuffer());
-          const unpacked = unpackNvtsPhoto(bytes);
-          unpacked.doc.name = documentNameFromFile(file.name);
-          this.fileHandle = null;
-          this.setDocument(DocumentController.fromUnpacked(this.engine.module, unpacked));
-          await this.refreshLinkedFileLayers(false);
-          page.fileName = safeComicFileName(this.comicPagesDirectoryHandle ? page.fileName : file.name, `comic-page-${String(page.number).padStart(3, '0')}.nvtsphoto`);
-          if (this.comicPagesDirectoryHandle) {
-            const target = await this.comicPagesDirectoryHandle.getFileHandle(page.fileName, { create: true });
-            await writeFileHandleBytes(target, bytes);
-            this.fileHandle = target;
-          }
-          page.width = this.ctl.doc.width; page.height = this.ctl.doc.height;
-          this.persistComicConfig(this.comicPagesDirectoryHandle
-            ? `Página «${page.name}» copiada a páginas/${page.fileName}. Guardar actualizará esa copia.`
-            : `Página «${page.name}» cargada desde ${file.name}. Configurá una carpeta de proyecto para guardarla allí.`);
-          this.renderComicManager(); this.applyWorkspace('comics', false);
-        } catch (error) {
-          const status = this.q<HTMLElement>('#comic-config-status');
-          status.textContent = error instanceof Error ? error.message : String(error);
-        } finally { pageOpenInput.value = ''; }
-      })();
+  }
+
+  private async createComicCanvasForActivePage(): Promise<void> {
+    const page = this.getActiveComicPage();
+    if (!page) return;
+    const message = `Se reemplazará el documento abierto por un lienzo de ${page.width} × ${page.height} px para «${page.name}». Guardá primero el documento actual si querés conservarlo. ¿Continuar?`;
+    if (!confirm(message)) return;
+    this.readComicFields();
+    const fileName = safeComicFileName(page.fileName, `comic-page-${String(page.number).padStart(3, '0')}.nvtsphoto`);
+    const pageHandle = await this.prepareComicPageFile({ ...page, fileName });
+    if (this.comicPagesDirectoryHandle && !pageHandle) return;
+    this.installComicPageCanvas(page, fileName, pageHandle);
+  }
+
+  private getActiveComicPage(): ComicPageEntry | undefined {
+    return this.comicConfig.pages.find((page) => page.id === this.comicActivePageId);
+  }
+
+  private installComicPageCanvas(page: ComicPageEntry, fileName: string, pageHandle: FileSystemFileHandle | null): void {
+    const safeTitle = this.comicConfig.title.trim() || 'Cómic';
+    this.newDocument(page.width, page.height, `${safeTitle} - ${page.name}`);
+    this.fileHandle = pageHandle;
+    page.fileName = fileName;
+    page.width = this.ctl.doc.width;
+    page.height = this.ctl.doc.height;
+    const status = this.comicPagesDirectoryHandle
+      ? `Lienzo creado para «${page.name}». Guardar escribirá directamente en páginas/${fileName}.`
+      : `Lienzo creado para «${page.name}». Configurá una carpeta de proyecto para guardar páginas automáticamente.`;
+    this.persistComicConfig(status);
+    this.renderComicManager();
+    this.applyWorkspace('comics', false);
+  }
+
+  private bindComicPageFileActions(): void {
+    const input = this.q<HTMLInputElement>('#comic-page-open-input');
+    this.q<HTMLButtonElement>('#comic-page-open-file').addEventListener('click', () => input.click());
+    input.addEventListener('change', () => this.handleComicPageFileSelection(input));
+  }
+
+  private handleComicPageFileSelection(input: HTMLInputElement): void {
+    const file = input.files?.[0];
+    if (!file) return;
+    const page = this.getActiveComicPage();
+    if (!page) {
+      input.value = '';
+      return;
+    }
+    const message = `Abrir «${file.name}» como «${page.name}» reemplazará el documento actual. Guardá primero lo que necesites conservar. ¿Continuar?`;
+    if (!confirm(message)) {
+      input.value = '';
+      return;
+    }
+    void this.loadComicPageFile(file, page).catch((error: unknown) => this.setComicManagerError(error)).finally(() => {
+      input.value = '';
     });
+  }
+
+  private async loadComicPageFile(file: File, page: ComicPageEntry): Promise<void> {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const unpacked = unpackNvtsPhoto(bytes);
+    unpacked.doc.name = documentNameFromFile(file.name);
+    this.fileHandle = null;
+    this.setDocument(DocumentController.fromUnpacked(this.engine.module, unpacked));
+    await this.refreshLinkedFileLayers(false);
+    await this.saveComicPageCopyIfLinked(page, file, bytes);
+    page.width = this.ctl.doc.width;
+    page.height = this.ctl.doc.height;
+    this.persistComicPageLoadStatus(page, file.name);
+    this.renderComicManager();
+    this.applyWorkspace('comics', false);
+  }
+
+  private async saveComicPageCopyIfLinked(page: ComicPageEntry, file: File, bytes: Uint8Array): Promise<void> {
+    page.fileName = safeComicFileName(
+      this.comicPagesDirectoryHandle ? page.fileName : file.name,
+      `comic-page-${String(page.number).padStart(3, '0')}.nvtsphoto`,
+    );
+    if (!this.comicPagesDirectoryHandle) return;
+    const target = await this.comicPagesDirectoryHandle.getFileHandle(page.fileName, { create: true });
+    await writeFileHandleBytes(target, copyBytesToArrayBuffer(bytes));
+    this.fileHandle = target;
+  }
+
+  private persistComicPageLoadStatus(page: ComicPageEntry, originalFileName: string): void {
+    const message = this.comicPagesDirectoryHandle
+      ? `Página «${page.name}» copiada a páginas/${page.fileName}. Guardar actualizará esa copia.`
+      : `Página «${page.name}» cargada desde ${originalFileName}. Configurá una carpeta de proyecto para guardarla allí.`;
+    this.persistComicConfig(message);
+  }
+
+  private bindComicConfigTransferActions(): void {
     this.q<HTMLButtonElement>('#comic-config-export').addEventListener('click', () => {
-      this.readComicFields();
-      this.persistComicConfig('Guardando comicConfig.json…');
-      void (async () => {
-        if (this.comicProjectDirectoryHandle) {
-          const written = await this.writeComicConfigToProject(true);
-          if (written) return;
-        }
-        const data = JSON.stringify({ ...this.comicConfig, format: 'nvts-comic-config', version: 1 }, null, 2);
-        const blob = new Blob([data], { type: 'application/json;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a'); link.href = url; link.download = 'comicConfig.json'; link.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-        const status = this.q<HTMLElement>('#comic-config-status'); status.textContent = 'Descargando copia de comicConfig.json';
-      })().catch((error: unknown) => { const status = this.q<HTMLElement>('#comic-config-status'); status.textContent = error instanceof Error ? error.message : String(error); });
+      void this.exportComicConfig().catch((error: unknown) => this.setComicManagerError(error));
     });
-    const fileInput = this.q<HTMLInputElement>('#comic-config-file');
-    this.q<HTMLButtonElement>('#comic-config-import').addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', () => {
-      const file = fileInput.files?.[0]; if (!file) return;
-      void file.text().then((raw) => {
-        const parsed = normalizeComicConfig(JSON.parse(raw) as unknown);
-        this.comicConfig = parsed; this.comicActivePageId = parsed.pages[0]?.id ?? null;
-        this.renderComicManager(); this.persistComicConfig(`Configuración importada desde ${file.name}.`);
-      }).catch((error: unknown) => {
-        const status = this.q<HTMLElement>('#comic-config-status'); status.textContent = error instanceof Error ? error.message : String(error);
-      }).finally(() => { fileInput.value = ''; });
-    });
+    const input = this.q<HTMLInputElement>('#comic-config-file');
+    this.q<HTMLButtonElement>('#comic-config-import').addEventListener('click', () => input.click());
+    input.addEventListener('change', () => this.importComicConfigFile(input));
+  }
+
+  private async exportComicConfig(): Promise<void> {
+    this.readComicFields();
+    this.persistComicConfig('Guardando comicConfig.json…');
+    const written = this.comicProjectDirectoryHandle
+      ? await this.writeComicConfigToProject(true)
+      : false;
+    if (!written) this.downloadComicConfig();
+  }
+
+  private downloadComicConfig(): void {
+    const data = JSON.stringify({ ...this.comicConfig, format: 'nvts-comic-config', version: 1 }, null, 2);
+    const blob = new Blob([data], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'comicConfig.json';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    this.q<HTMLElement>('#comic-config-status').textContent = 'Descargando copia de comicConfig.json';
+  }
+
+  private importComicConfigFile(input: HTMLInputElement): void {
+    const file = input.files?.[0];
+    if (!file) return;
+    void file.text().then((raw) => this.applyImportedComicConfig(raw, file.name))
+      .catch((error: unknown) => this.setComicManagerError(error))
+      .finally(() => { input.value = ''; });
+  }
+
+  private applyImportedComicConfig(raw: string, fileName: string): void {
+    const parsed = normalizeComicConfig(JSON.parse(raw) as unknown);
+    this.comicConfig = parsed;
+    this.comicActivePageId = parsed.pages[0]?.id ?? null;
+    this.renderComicManager();
+    this.persistComicConfig(`Configuración importada desde ${fileName}.`);
   }
 
   private syncUI(): void {
@@ -1316,52 +1666,87 @@ export class App {
   /** Mantiene sincronizadas las propiedades de capa; los controles superiores son solo de herramienta. */
   private syncToolbarProps(): void {
     const layer = this.ctl ? this.active() : undefined;
-    const layerOpacity = this.root.querySelector<HTMLInputElement>('#layer-opacity');
-    const dockBlend = this.root.querySelector<HTMLSelectElement>('#dock-blend');
-    if (layer && layerOpacity) layerOpacity.value = String(Math.round(layer.opacity * 100));
-    if (layer && dockBlend) dockBlend.value = layer.blendMode;
-    const fillButton = this.root.querySelector<HTMLButtonElement>('#l-fill-color');
-    const filterButton = this.root.querySelector<HTMLButtonElement>('#l-filter-options');
-    const vectorButton = this.root.querySelector<HTMLButtonElement>('#l-vector-add');
-    const textEditButton = this.root.querySelector<HTMLButtonElement>('#l-text-edit');
-    if (fillButton) { fillButton.hidden = layer?.type !== 'fill'; if (layer?.type === 'fill') fillButton.textContent = `Color ${layer.fillColor ?? '#ffffff'}…`; }
-    if (filterButton) filterButton.hidden = layer?.type !== 'filter';
-    if (vectorButton) vectorButton.hidden = layer?.type !== 'vector';
-    if (textEditButton) textEditButton.hidden = layer?.type !== 'text';
-    if (this.tool === 'text' && layer?.type === 'text') {
-      this.textSettings = this.textSettingsFromLayer(layer);
-      const font = this.root.querySelector<HTMLSelectElement>('#tool-text-font'); if (font) font.value = this.textSettings.fontFamily;
-      const style = this.root.querySelector<HTMLSelectElement>('#tool-text-style'); if (style) style.value = this.textSettings.style;
-      const size = this.root.querySelector<HTMLInputElement>('#tool-text-size'); if (size) size.value = String(this.textSettings.fontSize);
-      const color = this.root.querySelector<HTMLInputElement>('#tool-text-color'); if (color) color.value = this.textSettings.color;
-      const align = this.root.querySelector<HTMLSelectElement>('#advanced-text-align'); if (align) align.value = this.textSettings.align;
-      const lineHeight = this.root.querySelector<HTMLInputElement>('#advanced-text-line-height'); if (lineHeight) lineHeight.value = String(this.textSettings.lineHeight);
-      const letterSpacing = this.root.querySelector<HTMLInputElement>('#advanced-text-letter-spacing'); if (letterSpacing) letterSpacing.value = String(this.textSettings.letterSpacing);
-      const strokeColor = this.root.querySelector<HTMLInputElement>('#advanced-text-stroke-color'); if (strokeColor) strokeColor.value = this.textSettings.strokeColor;
-      const strokeWidth = this.root.querySelector<HTMLInputElement>('#advanced-text-stroke-width'); if (strokeWidth) strokeWidth.value = String(this.textSettings.strokeWidth);
-      const background = this.root.querySelector<HTMLSelectElement>('#advanced-text-background'); if (background) background.value = this.textSettings.backgroundColor;
+    this.syncLayerControlValues(layer);
+    this.syncLayerActionAvailability(layer);
+    this.syncToolAvailability(layer);
+  }
+
+  private syncLayerControlValues(layer: LayerNode | undefined): void {
+    const opacity = this.root.querySelector<HTMLInputElement>('#layer-opacity');
+    const blend = this.root.querySelector<HTMLSelectElement>('#dock-blend');
+    if (layer && opacity) opacity.value = String(Math.round(layer.opacity * 100));
+    if (layer && blend) blend.value = layer.blendMode;
+    this.updateLayerTypeButtons(layer);
+    if (this.tool === 'text' && layer?.type === 'text') this.syncTextLayerSettings(layer);
+  }
+
+  private updateLayerTypeButtons(layer: LayerNode | undefined): void {
+    const fill = this.root.querySelector<HTMLButtonElement>('#l-fill-color');
+    const filter = this.root.querySelector<HTMLButtonElement>('#l-filter-options');
+    const vector = this.root.querySelector<HTMLButtonElement>('#l-vector-add');
+    const text = this.root.querySelector<HTMLButtonElement>('#l-text-edit');
+    if (fill) {
+      fill.hidden = layer?.type !== 'fill';
+      fill.textContent = layer?.type === 'fill' ? `Color ${layer.fillColor ?? '#ffffff'}…` : fill.textContent;
     }
+    if (filter) filter.hidden = layer?.type !== 'filter';
+    if (vector) vector.hidden = layer?.type !== 'vector';
+    if (text) text.hidden = layer?.type !== 'text';
+  }
+
+  private syncTextLayerSettings(layer: LayerNode): void {
+    if (layer.type !== 'text') return;
+    this.textSettings = this.textSettingsFromLayer(layer);
+    const settings = this.textSettings;
+    const values: Array<[string, string]> = [
+      ['#tool-text-font', settings.fontFamily],
+      ['#tool-text-style', settings.style],
+      ['#tool-text-size', String(settings.fontSize)],
+      ['#tool-text-color', settings.color],
+      ['#advanced-text-align', settings.align],
+      ['#advanced-text-line-height', String(settings.lineHeight)],
+      ['#advanced-text-letter-spacing', String(settings.letterSpacing)],
+      ['#advanced-text-stroke-color', settings.strokeColor],
+      ['#advanced-text-stroke-width', String(settings.strokeWidth)],
+      ['#advanced-text-background', settings.backgroundColor],
+    ];
+    values.forEach(([selector, value]) => this.setInputValue(selector, value));
+  }
+
+  private setInputValue(selector: string, value: string): void {
+    const input = this.root.querySelector<HTMLInputElement | HTMLSelectElement>(selector);
+    if (input) input.value = value;
+  }
+
+  private syncLayerActionAvailability(layer: LayerNode | undefined): void {
+    const canUseVectorTool = layer?.type === 'vector'
+      && !this.ctl.isEffectivelyLocked(layer.id)
+      && this.ctl.isEffectivelyVisible(layer.id);
     const vectorTool = this.root.querySelector<HTMLButtonElement>('#rail-vector-select');
-    if (vectorTool) vectorTool.disabled = layer?.type !== 'vector' || this.ctl.isEffectivelyLocked(layer.id) || !this.ctl.isEffectivelyVisible(layer.id);
+    if (vectorTool) vectorTool.disabled = !canUseVectorTool;
     const duplicate = this.root.querySelector<HTMLButtonElement>('#l-duplicate');
     const remove = this.root.querySelector<HTMLButtonElement>('#l-del');
     if (duplicate) duplicate.disabled = !layer;
     if (remove) remove.disabled = !layer;
-    const canPaint = !!layer && (layer.type === 'paint' || layer.type === 'raster') && !this.ctl.isEffectivelyLocked(layer.id) && this.ctl.isEffectivelyVisible(layer.id);
-    for (const selector of ['#rail-brush', '#rail-eraser', '#rail-line', '#rail-rectangle', '#rail-ellipse', '#rail-fill']) {
-      const button = this.root.querySelector<HTMLButtonElement>(selector);
-      if (button) button.disabled = !canPaint;
-    }
-    const eyedropper = this.root.querySelector<HTMLButtonElement>('#rail-eyedropper');
-    const hand = this.root.querySelector<HTMLButtonElement>('#rail-hand');
-    if (eyedropper) eyedropper.disabled = false;
-    if (hand) hand.disabled = false;
-    const brightnessDown = this.root.querySelector<HTMLButtonElement>('#advanced-brightness-down');
-    const brightnessUp = this.root.querySelector<HTMLButtonElement>('#advanced-brightness-up');
-    if (brightnessDown) brightnessDown.disabled = !canPaint;
-    if (brightnessUp) brightnessUp.disabled = !canPaint;
+  }
+
+  private syncToolAvailability(layer: LayerNode | undefined): void {
+    const canPaint = !!layer
+      && (layer.type === 'paint' || layer.type === 'raster')
+      && !this.ctl.isEffectivelyLocked(layer.id)
+      && this.ctl.isEffectivelyVisible(layer.id);
+    this.setToolButtonsDisabled(['#rail-brush', '#rail-eraser', '#rail-line', '#rail-rectangle', '#rail-ellipse', '#rail-fill'], !canPaint);
+    this.setToolButtonsDisabled(['#advanced-brightness-down', '#advanced-brightness-up'], !canPaint);
+    this.setToolButtonsDisabled(['#rail-eyedropper', '#rail-hand'], false);
     const swatch = this.root.querySelector<HTMLElement>('#foreground-swatch');
     if (swatch) swatch.style.background = this.foregroundHex();
+  }
+
+  private setToolButtonsDisabled(selectors: string[], disabled: boolean): void {
+    selectors.forEach((selector) => {
+      const button = this.root.querySelector<HTMLButtonElement>(selector);
+      if (button) button.disabled = disabled;
+    });
   }
 
   private foregroundHex(): string {
@@ -1378,49 +1763,145 @@ export class App {
   }
 
   private renderToolOptions(): void {
-    const selectedText = this.active();
-    if (this.tool === 'text' && selectedText?.type === 'text') this.textSettings = this.textSettingsFromLayer(selectedText);
-    const host = this.q<HTMLElement>('#toolbar');
-    const labels: Record<Tool, string> = { brush: 'Pincel', eraser: 'Borrador', eyedropper: 'Cuentagotas', line: 'Línea', rectangle: 'Rectángulo', ellipse: 'Elipse', fill: 'Relleno', hand: 'Mover lienzo', text: 'Texto', 'vector-select': 'Selección vectorial' };
-    this.q<HTMLElement>('#tool-current-label').textContent = labels[this.tool];
-    const colorField = `<label class="tool-setting">Color <input id="tool-color" type="color" value="${this.foregroundHex()}" /></label>`;
-    const sizeField = `<label class="tool-setting">${this.tool === 'line' || this.tool === 'rectangle' || this.tool === 'ellipse' ? 'Grosor' : 'Tamaño'} <input id="tool-size" type="range" min="1" max="256" value="${this.brush.size}" /><output id="tool-size-value">${this.brush.size}px</output></label>`;
-    const opacityField = `<label class="tool-setting">Opacidad <input id="tool-opacity" type="range" min="1" max="100" value="${this.brush.opacity}" /><output id="tool-opacity-value">${this.brush.opacity}%</output></label>`;
-    const fontOptions = ['Arial','Inter','Georgia','Times New Roman','Verdana','Tahoma','Trebuchet MS','Courier New','monospace','serif','sans-serif'].map((name) => `<option value="${name}" ${this.textSettings.fontFamily === name ? 'selected' : ''}>${name}</option>`).join('');
-    if (this.tool === 'brush') host.innerHTML = `${colorField}${sizeField}${opacityField}`;
-    else if (this.tool === 'eraser') host.innerHTML = `${sizeField}${opacityField}`;
-    else if (this.tool === 'line') host.innerHTML = `${colorField}${sizeField}${opacityField}`;
-    else if (this.tool === 'rectangle' || this.tool === 'ellipse') host.innerHTML = `${colorField}${sizeField}${opacityField}<label class="tool-setting tool-check"><input id="tool-shape-fill" type="checkbox" ${this.brush.shapeFill ? 'checked' : ''}/> Rellenar figura</label>`;
-    else if (this.tool === 'fill') host.innerHTML = `${colorField}<label class="tool-setting">Tolerancia <input id="tool-tolerance" type="range" min="0" max="255" value="${this.brush.tolerance}"/><output id="tool-tolerance-value">${this.brush.tolerance}</output></label><label class="tool-setting">Opacidad <input id="tool-opacity" type="range" min="1" max="100" value="${this.brush.opacity}"/><output id="tool-opacity-value">${this.brush.opacity}%</output></label>`;
-    else if (this.tool === 'text') host.innerHTML = `<label class="tool-setting">Fuente <select id="tool-text-font">${fontOptions}</select></label><label class="tool-setting">Estilo <select id="tool-text-style"><option value="normal" ${this.textSettings.style==='normal'?'selected':''}>Normal</option><option value="bold" ${this.textSettings.style==='bold'?'selected':''}>Negrita</option><option value="italic" ${this.textSettings.style==='italic'?'selected':''}>Cursiva</option><option value="bold-italic" ${this.textSettings.style==='bold-italic'?'selected':''}>Negrita cursiva</option></select></label><label class="tool-setting">Tamaño <input id="tool-text-size" type="number" min="1" max="1000" value="${this.textSettings.fontSize}"/></label><label class="tool-setting">Color <input id="tool-text-color" type="color" value="${this.textSettings.color}"/></label>`;
-    else if (this.tool === 'eyedropper') host.innerHTML = '<span class="tool-help">Hacé clic en el lienzo para tomar un color.</span>';
-    else if (this.tool === 'vector-select') host.innerHTML = '<span class="tool-help">Seleccioná un objeto vectorial; arrastralo para moverlo o usá el control inferior derecho para cambiar su tamaño.</span>';
-    else host.innerHTML = '<span class="tool-help">Arrastrá el lienzo para desplazarte. Usá − / + o la rueda con Ctrl para cambiar el zoom.</span>';
+    this.prepareToolOptions();
+    this.mountToolOptions(this.q<HTMLElement>('#toolbar'));
+    this.refreshToolOptionsView();
+  }
 
+  private prepareToolOptions(): void {
+    const selectedText = this.active();
+    if (this.tool === 'text' && selectedText?.type === 'text') {
+      this.textSettings = this.textSettingsFromLayer(selectedText);
+    }
+    const labels: Record<Tool, string> = {
+      brush: 'Pincel', eraser: 'Borrador', eyedropper: 'Cuentagotas', line: 'Línea',
+      rectangle: 'Rectángulo', ellipse: 'Elipse', fill: 'Relleno', hand: 'Mover lienzo',
+      text: 'Texto', 'vector-select': 'Selección vectorial',
+    };
+    this.q<HTMLElement>('#tool-current-label').textContent = labels[this.tool];
+  }
+
+  private mountToolOptions(host: HTMLElement): void {
+    host.innerHTML = this.createToolOptionsMarkup();
+    this.bindToolOptionEvents(host);
+  }
+
+  private createToolOptionsMarkup(): string {
+    const colorField = `<label class="tool-setting">Color <input id="tool-color" type="color" value="${this.foregroundHex()}" /></label>`;
+    const sizeLabel = this.tool === 'line' || this.tool === 'rectangle' || this.tool === 'ellipse' ? 'Grosor' : 'Tamaño';
+    const sizeField = `<label class="tool-setting">${sizeLabel} <input id="tool-size" type="range" min="1" max="256" value="${this.brush.size}" /><output id="tool-size-value">${this.brush.size}px</output></label>`;
+    const opacityField = `<label class="tool-setting">Opacidad <input id="tool-opacity" type="range" min="1" max="100" value="${this.brush.opacity}" /><output id="tool-opacity-value">${this.brush.opacity}%</output></label>`;
+    const fontOptions = ['Arial','Inter','Georgia','Times New Roman','Verdana','Tahoma','Trebuchet MS','Courier New','monospace','serif','sans-serif']
+      .map((name) => `<option value="${name}" ${this.textSettings.fontFamily === name ? 'selected' : ''}>${name}</option>`)
+      .join('');
+    if (this.tool === 'brush') return `${colorField}${sizeField}${opacityField}`;
+    if (this.tool === 'eraser') return `${sizeField}${opacityField}`;
+    if (this.tool === 'line') return `${colorField}${sizeField}${opacityField}`;
+    if (this.tool === 'rectangle' || this.tool === 'ellipse') {
+      return `${colorField}${sizeField}${opacityField}<label class="tool-setting tool-check"><input id="tool-shape-fill" type="checkbox" ${this.brush.shapeFill ? 'checked' : ''}/> Rellenar figura</label>`;
+    }
+    if (this.tool === 'fill') {
+      return `${colorField}<label class="tool-setting">Tolerancia <input id="tool-tolerance" type="range" min="0" max="255" value="${this.brush.tolerance}"/><output id="tool-tolerance-value">${this.brush.tolerance}</output></label><label class="tool-setting">Opacidad <input id="tool-opacity" type="range" min="1" max="100" value="${this.brush.opacity}"/><output id="tool-opacity-value">${this.brush.opacity}%</output></label>`;
+    }
+    if (this.tool === 'text') return this.createTextToolMarkup(fontOptions);
+    if (this.tool === 'eyedropper') return '<span class="tool-help">Hacé clic en el lienzo para tomar un color.</span>';
+    if (this.tool === 'vector-select') return '<span class="tool-help">Seleccioná un objeto vectorial; arrastralo para moverlo o usá el control inferior derecho para cambiar su tamaño.</span>';
+    return '<span class="tool-help">Arrastrá el lienzo para desplazarte. Usá − / + o la rueda con Ctrl para cambiar el zoom.</span>';
+  }
+
+  private createTextToolMarkup(fontOptions: string): string {
+    const settings = this.textSettings;
+    const styles: Array<[TextLayerStyle, string]> = [
+      ['normal', 'Normal'], ['bold', 'Negrita'], ['italic', 'Cursiva'], ['bold-italic', 'Negrita cursiva'],
+    ];
+    const styleOptions = styles.map(([value, label]) =>
+      `<option value="${value}" ${settings.style === value ? 'selected' : ''}>${label}</option>`).join('');
+    return `<label class="tool-setting">Fuente <select id="tool-text-font">${fontOptions}</select></label><label class="tool-setting">Estilo <select id="tool-text-style">${styleOptions}</select></label><label class="tool-setting">Tamaño <input id="tool-text-size" type="number" min="1" max="1000" value="${settings.fontSize}"/></label><label class="tool-setting">Color <input id="tool-text-color" type="color" value="${settings.color}"/></label>`;
+  }
+
+  private bindToolOptionEvents(host: HTMLElement): void {
+    this.bindBrushToolControls(host);
+    this.bindFillToolControls(host);
+    this.bindTextToolControls(host);
+  }
+
+  private bindBrushToolControls(host: HTMLElement): void {
     const color = host.querySelector<HTMLInputElement>('#tool-color');
     if (color) color.oninput = () => this.setForegroundHex(color.value);
     const size = host.querySelector<HTMLInputElement>('#tool-size');
-    if (size) size.oninput = () => { this.brush.size = Number(size.value); const output = host.querySelector<HTMLOutputElement>('#tool-size-value'); if (output) output.value = `${this.brush.size}px`; };
+    if (size) size.oninput = () => {
+      this.brush.size = Number(size.value);
+      this.updateToolOutput(host, '#tool-size-value', `${this.brush.size}px`);
+    };
     const opacity = host.querySelector<HTMLInputElement>('#tool-opacity');
-    if (opacity) opacity.oninput = () => { this.brush.opacity = Number(opacity.value); const output = host.querySelector<HTMLOutputElement>('#tool-opacity-value'); if (output) output.value = `${this.brush.opacity}%`; };
+    if (opacity) opacity.oninput = () => {
+      this.brush.opacity = Number(opacity.value);
+      this.updateToolOutput(host, '#tool-opacity-value', `${this.brush.opacity}%`);
+    };
+  }
+
+  private bindFillToolControls(host: HTMLElement): void {
     const shapeFill = host.querySelector<HTMLInputElement>('#tool-shape-fill');
     if (shapeFill) shapeFill.onchange = () => { this.brush.shapeFill = shapeFill.checked; };
     const tolerance = host.querySelector<HTMLInputElement>('#tool-tolerance');
-    if (tolerance) tolerance.oninput = () => { this.brush.tolerance = Number(tolerance.value); const output = host.querySelector<HTMLOutputElement>('#tool-tolerance-value'); if (output) output.value = tolerance.value; };
-    const font = host.querySelector<HTMLSelectElement>('#tool-text-font');
-    if (font) font.onchange = () => { this.textSettings.fontFamily = font.value; this.applyTextSettingsToSelectedLayer(); };
-    const style = host.querySelector<HTMLSelectElement>('#tool-text-style');
-    if (style) style.onchange = () => { this.textSettings.style = style.value as TextLayerStyle; this.applyTextSettingsToSelectedLayer(); };
-    const fontSize = host.querySelector<HTMLInputElement>('#tool-text-size');
-    if (fontSize) fontSize.onchange = () => { this.textSettings.fontSize = Math.max(1, Math.min(1000, Number(fontSize.value) || 64)); fontSize.value = String(this.textSettings.fontSize); this.applyTextSettingsToSelectedLayer(); };
-    const textColor = host.querySelector<HTMLInputElement>('#tool-text-color');
-    if (textColor) textColor.onchange = () => { this.textSettings.color = textColor.value; this.applyTextSettingsToSelectedLayer(); };
+    if (tolerance) tolerance.oninput = () => {
+      this.brush.tolerance = Number(tolerance.value);
+      this.updateToolOutput(host, '#tool-tolerance-value', tolerance.value);
+    };
+  }
 
-    const toolButtons: Record<Tool, string> = { hand: '#rail-hand', brush: '#rail-brush', eraser: '#rail-eraser', line: '#rail-line', rectangle: '#rail-rectangle', ellipse: '#rail-ellipse', fill: '#rail-fill', eyedropper: '#rail-eyedropper', text: '#rail-text', 'vector-select': '#rail-vector-select' };
+  private bindTextToolControls(host: HTMLElement): void {
+    const font = host.querySelector<HTMLSelectElement>('#tool-text-font');
+    if (font) font.onchange = () => {
+      this.textSettings.fontFamily = font.value;
+      this.applyTextSettingsToSelectedLayer();
+    };
+    const style = host.querySelector<HTMLSelectElement>('#tool-text-style');
+    if (style) style.onchange = () => {
+      this.textSettings.style = style.value as TextLayerStyle;
+      this.applyTextSettingsToSelectedLayer();
+    };
+    const fontSize = host.querySelector<HTMLInputElement>('#tool-text-size');
+    if (fontSize) fontSize.onchange = () => {
+      this.textSettings.fontSize = Math.max(1, Math.min(1000, Number(fontSize.value) || 64));
+      fontSize.value = String(this.textSettings.fontSize);
+      this.applyTextSettingsToSelectedLayer();
+    };
+    const textColor = host.querySelector<HTMLInputElement>('#tool-text-color');
+    if (textColor) textColor.onchange = () => {
+      this.textSettings.color = textColor.value;
+      this.applyTextSettingsToSelectedLayer();
+    };
+  }
+
+  private updateToolOutput(host: HTMLElement, selector: string, value: string): void {
+    const output = host.querySelector<HTMLOutputElement>(selector);
+    if (output) output.value = value;
+  }
+
+  private refreshToolOptionsView(): void {
+    this.updateSelectedToolButton();
+    this.updateToolCursor();
+    this.syncToolbarProps();
+  }
+
+  private updateSelectedToolButton(): void {
+    const toolButtons: Record<Tool, string> = {
+      hand: '#rail-hand', brush: '#rail-brush', eraser: '#rail-eraser', line: '#rail-line',
+      rectangle: '#rail-rectangle', ellipse: '#rail-ellipse', fill: '#rail-fill',
+      eyedropper: '#rail-eyedropper', text: '#rail-text', 'vector-select': '#rail-vector-select',
+    };
     Object.values(toolButtons).forEach((selector) => this.root.querySelector<HTMLElement>(selector)?.classList.remove('selected'));
     this.root.querySelector<HTMLElement>(toolButtons[this.tool])?.classList.add('selected');
-    this.canvas.style.cursor = this.tool === 'hand' ? 'grab' : this.tool === 'eyedropper' ? 'copy' : this.tool === 'text' ? 'text' : this.tool === 'vector-select' ? 'default' : 'crosshair';
-    this.syncToolbarProps();
+  }
+
+  private updateToolCursor(): void {
+    const cursors: Record<Tool, string> = {
+      hand: 'grab', eyedropper: 'copy', text: 'text', 'vector-select': 'default',
+      brush: 'crosshair', eraser: 'crosshair', line: 'crosshair', rectangle: 'crosshair',
+      ellipse: 'crosshair', fill: 'crosshair',
+    };
+    this.canvas.style.cursor = cursors[this.tool];
   }
 
   private renderAdvancedToolOptions(): void {
@@ -1450,33 +1931,83 @@ export class App {
   }
 
   private rasterizeText(content: string, x: number, y: number, settings: TextToolSettings): Uint8Array {
-    const canvas = document.createElement('canvas'); canvas.width = this.ctl.doc.width; canvas.height = this.ctl.doc.height;
+    const canvas = this.createTextCanvas();
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) throw new Error('No se pudo preparar el contenido de texto.');
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    this.drawTextContent(ctx, content, x, y, settings);
+    return new Uint8Array(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
+  }
+
+  private createTextCanvas(): HTMLCanvasElement {
+    const canvas = document.createElement('canvas');
+    canvas.width = this.ctl.doc.width;
+    canvas.height = this.ctl.doc.height;
+    return canvas;
+  }
+
+  private drawTextContent(
+    ctx: CanvasRenderingContext2D,
+    content: string,
+    x: number,
+    y: number,
+    settings: TextToolSettings,
+  ): void {
+    const layout = this.prepareTextLayout(ctx, content, settings);
+    this.drawTextBackground(ctx, x, y, settings, layout);
+    this.drawTextLines(ctx, layout.lines, x, y, settings, layout.lineHeight);
+  }
+
+  private prepareTextLayout(
+    ctx: CanvasRenderingContext2D,
+    content: string,
+    settings: TextToolSettings,
+  ): { lines: string[]; maxWidth: number; lineHeight: number; totalHeight: number } {
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     const fontWeight = settings.style === 'bold' || settings.style === 'bold-italic' ? 'bold' : 'normal';
     const fontStyle = settings.style === 'italic' || settings.style === 'bold-italic' ? 'italic' : 'normal';
     ctx.font = `${fontStyle} ${fontWeight} ${Math.max(1, settings.fontSize)}px "${settings.fontFamily.replace(/["\\]/g, '')}"`;
-    ctx.textBaseline = 'top'; ctx.textAlign = settings.align;
+    ctx.textBaseline = 'top';
+    ctx.textAlign = settings.align;
     const spacingCtx = ctx as CanvasRenderingContext2D & { letterSpacing?: string };
     if ('letterSpacing' in spacingCtx) spacingCtx.letterSpacing = `${settings.letterSpacing}px`;
     const lines = content.split('\n');
     const measuredWidths = lines.map((line) => ctx.measureText(line).width + Math.max(0, line.length - 1) * settings.letterSpacing);
     const maxWidth = Math.max(1, ...measuredWidths);
     const lineHeight = settings.fontSize * settings.lineHeight;
-    const totalHeight = Math.max(settings.fontSize, lines.length * lineHeight);
-    const bg = settings.backgroundColor;
-    if (bg && bg !== 'transparent') {
-      const rectX = settings.align === 'left' ? x : settings.align === 'center' ? x - maxWidth / 2 : x - maxWidth;
-      ctx.fillStyle = bg; ctx.fillRect(rectX - 6, y - 4, maxWidth + 12, totalHeight + 8);
-    }
-    ctx.lineJoin = 'round'; ctx.lineWidth = settings.strokeWidth; ctx.strokeStyle = settings.strokeColor; ctx.fillStyle = settings.color;
+    return { lines, maxWidth, lineHeight, totalHeight: Math.max(settings.fontSize, lines.length * lineHeight) };
+  }
+
+  private drawTextBackground(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    settings: TextToolSettings,
+    layout: { maxWidth: number; totalHeight: number },
+  ): void {
+    const background = settings.backgroundColor;
+    if (!background || background === 'transparent') return;
+    const rectX = settings.align === 'left' ? x : settings.align === 'center' ? x - layout.maxWidth / 2 : x - layout.maxWidth;
+    ctx.fillStyle = background;
+    ctx.fillRect(rectX - 6, y - 4, layout.maxWidth + 12, layout.totalHeight + 8);
+  }
+
+  private drawTextLines(
+    ctx: CanvasRenderingContext2D,
+    lines: string[],
+    x: number,
+    y: number,
+    settings: TextToolSettings,
+    lineHeight: number,
+  ): void {
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = settings.strokeWidth;
+    ctx.strokeStyle = settings.strokeColor;
+    ctx.fillStyle = settings.color;
     lines.forEach((line, index) => {
       const lineY = y + index * lineHeight;
       if (settings.strokeWidth > 0) ctx.strokeText(line, x, lineY);
       ctx.fillText(line, x, lineY);
     });
-    return new Uint8Array(ctx.getImageData(0, 0, canvas.width, canvas.height).data);
   }
 
   private async createTextAt(point: { x: number; y: number }, existing?: LayerNode): Promise<void> {
@@ -1485,21 +2016,32 @@ export class App {
     const content = prompt(existing ? 'Editar texto de la capa' : 'Texto nuevo (podés usar saltos de línea)', existing?.textContent ?? 'Nuevo texto');
     if (content === null || !content.length) return;
     try {
-      if (existing) {
-        const settings = currentSettings;
-        const px = this.rasterizeText(content, existing.textX ?? point.x, existing.textY ?? point.y, settings);
-        this.ctl.replaceTextContent(existing.id, this.textLayerPatch(content, existing.textX ?? point.x, existing.textY ?? point.y, settings), px);
-        this.activeId = existing.id;
-      } else {
-        const layer = this.ctl.addLayer('text', content.split('\n')[0].slice(0, 48) || 'Texto');
-        this.activeId = layer.id;
-        const settings = { ...this.textSettings };
-        const px = this.rasterizeText(content, Math.round(point.x), Math.round(point.y), settings);
-        this.ctl.replaceTextContent(layer.id, this.textLayerPatch(content, Math.round(point.x), Math.round(point.y), settings), px);
-      }
+      this.writeTextLayerContent(point, content, existing, currentSettings);
       this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
       this.q<HTMLElement>('#status').textContent = 'Texto actualizado en su propia capa editable.';
     } catch (error) { this.fail(error); }
+  }
+
+  private writeTextLayerContent(
+    point: { x: number; y: number },
+    content: string,
+    existing: LayerNode | undefined,
+    settings: TextToolSettings,
+  ): void {
+    if (existing) {
+      const x = existing.textX ?? point.x;
+      const y = existing.textY ?? point.y;
+      const pixels = this.rasterizeText(content, x, y, settings);
+      this.ctl.replaceTextContent(existing.id, this.textLayerPatch(content, x, y, settings), pixels);
+      this.activeId = existing.id;
+      return;
+    }
+    const x = Math.round(point.x);
+    const y = Math.round(point.y);
+    const layer = this.ctl.addLayer('text', content.split('\n')[0].slice(0, 48) || 'Texto');
+    this.activeId = layer.id;
+    const pixels = this.rasterizeText(content, x, y, settings);
+    this.ctl.replaceTextContent(layer.id, this.textLayerPatch(content, x, y, settings), pixels);
   }
 
   private applyTextSettingsToSelectedLayer(): void {
@@ -1600,85 +2142,188 @@ export class App {
     const context = canvas.getContext('2d', { willReadFrequently: true });
     if (!context) return;
     context.clearRect(0, 0, canvas.width, canvas.height);
+    if (this.drawSpecialLayerThumbnail(context, canvas, layer)) return;
+    this.drawRasterLayerThumbnail(context, canvas, layer);
+  }
+
+  private drawSpecialLayerThumbnail(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, layer: LayerNode): boolean {
     if (layer.type === 'filter') {
-      context.fillStyle = '#fcebed'; context.fillRect(0, 0, canvas.width, canvas.height);
-      context.fillStyle = '#c92334'; context.font = 'bold 19px system-ui'; context.textAlign = 'center'; context.textBaseline = 'middle'; context.fillText('fx', canvas.width / 2, canvas.height / 2);
-      return;
+      context.fillStyle = '#fcebed';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.fillStyle = '#c92334';
+      context.font = 'bold 19px system-ui';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.fillText('fx', canvas.width / 2, canvas.height / 2);
+      return true;
     }
     if (layer.type === 'fill') {
-      context.fillStyle = layer.fillColor ?? '#ffffff'; context.fillRect(0, 0, canvas.width, canvas.height); return;
+      context.fillStyle = layer.fillColor ?? '#ffffff';
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      return true;
     }
     if (layer.type === 'group') {
-      context.fillStyle = '#9c9caa'; context.font = '20px system-ui'; context.textAlign = 'center'; context.textBaseline = 'middle'; context.fillText('▱', canvas.width / 2, canvas.height / 2); return;
+      context.fillStyle = '#9c9caa';
+      context.font = '20px system-ui';
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.fillText('▱', canvas.width / 2, canvas.height / 2);
+      return true;
     }
-    // Lee solo 52 filas muestreadas a tamaño completo de ancho, no todo el lienzo RGBA.
-    // Así una miniatura en un documento 4K no necesita reservar otros 64 MiB por capa.
+    return false;
+  }
+
+  private drawRasterLayerThumbnail(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement, layer: LayerNode): void {
+    // Lee filas del ancho original sin reservar otra copia RGBA de todo el documento.
     const image = context.createImageData(canvas.width, canvas.height);
-    const docW = this.ctl.doc.width, docH = this.ctl.doc.height;
+    const docW = this.ctl.doc.width;
+    const docH = this.ctl.doc.height;
     const rowBytes = new Uint8Array(docW * 4);
     let anyPixels = false;
     for (let y = 0; y < canvas.height; y++) {
       const srcY = Math.min(docH - 1, Math.floor((y / canvas.height) * docH));
       rowBytes.fill(0);
       anyPixels = this.ctl.readLayerRect(layer, 0, srcY, docW, 1, rowBytes) || anyPixels;
-      for (let x = 0; x < canvas.width; x++) {
-        const srcX = Math.min(docW - 1, Math.floor((x / canvas.width) * docW));
-        const src = srcX * 4, dst = (y * canvas.width + x) * 4;
-        image.data[dst] = rowBytes[src]; image.data[dst + 1] = rowBytes[src + 1]; image.data[dst + 2] = rowBytes[src + 2]; image.data[dst + 3] = rowBytes[src + 3];
-      }
+      this.copyThumbnailRow(image.data, rowBytes, y, canvas.width, docW);
     }
     if (anyPixels) context.putImageData(image, 0, 0);
   }
 
+  private copyThumbnailRow(target: Uint8ClampedArray, source: Uint8Array, y: number, thumbnailWidth: number, sourceWidth: number): void {
+    for (let x = 0; x < thumbnailWidth; x++) {
+      const sourceX = Math.min(sourceWidth - 1, Math.floor((x / thumbnailWidth) * sourceWidth));
+      const src = sourceX * 4;
+      const dst = (y * thumbnailWidth + x) * 4;
+      target[dst] = source[src];
+      target[dst + 1] = source[src + 1];
+      target[dst + 2] = source[src + 2];
+      target[dst + 3] = source[src + 3];
+    }
+  }
+
   private showLayerContextMenu(x: number, y: number, layer: LayerNode): void {
-    this.layerContextMenu?.remove();
+    this.closeLayerContextMenu();
+    const menu = this.createLayerContextMenu(x, y, layer);
+    document.body.append(menu);
+    this.layerContextMenu = menu;
+    this.bindLayerContextMenuDismissal(menu);
+  }
+
+  private createLayerContextMenu(x: number, y: number, layer: LayerNode): HTMLDivElement {
     const menu = document.createElement('div');
-    menu.className = 'layer-context-menu'; menu.setAttribute('role', 'menu');
+    menu.className = 'layer-context-menu';
+    menu.setAttribute('role', 'menu');
     menu.style.left = `${Math.max(6, Math.min(x, window.innerWidth - 225))}px`;
     menu.style.top = `${Math.max(6, Math.min(y, window.innerHeight - 270))}px`;
-    const options: Array<[string, () => void]> = [
+    this.getLayerContextActions(layer).forEach(([label, action]) => {
+      menu.append(this.createLayerContextMenuItem(menu, layer, label, action));
+    });
+    return menu;
+  }
+
+  private getLayerContextActions(layer: LayerNode): Array<[string, () => void]> {
+    const actions: Array<[string, () => void]> = this.getCommonLayerContextActions(layer);
+    this.appendLayerSpecificContextActions(actions, layer);
+    actions.push(['Eliminar capa', () => this.deleteLayerFromContext(layer)]);
+    return actions;
+  }
+
+  private getCommonLayerContextActions(layer: LayerNode): Array<[string, () => void]> {
+    return [
       ['Renombrar…', () => this.renameLayer(layer)],
-      ['Duplicar capa', () => { const clone = this.ctl.duplicateLayer(layer.id); if (clone) this.activeId = clone.id; this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh(); }],
+      ['Duplicar capa', () => this.duplicateLayerFromContext(layer)],
       ['Subir capa', () => this.moveLayerById(layer.id, +1)],
       ['Bajar capa', () => this.moveLayerById(layer.id, -1)],
       ['Mover a grupo…', () => this.moveLayerIntoGroup(layer)],
     ];
-    if (layer.type === 'fill') options.push(['Cambiar color de relleno…', () => this.changeFillColor(layer)]);
-    if (layer.type === 'filter') options.push(['Configurar filtro…', () => this.openFilterEditor(layer)]);
-    if (layer.type === 'vector') options.push(['Editar objetos vectoriales…', () => this.editVectorLayer(layer)]);
-    if (layer.type === 'text') options.push(['Editar texto…', () => { this.activeId = layer.id; void this.createTextAt({ x: layer.textX ?? 0, y: layer.textY ?? 0 }, layer); }]);
-    if (layer.type === 'file') {
-      options.push([`${layer.sourceLinkId ? 'Vínculo externo configurado' : 'Sin vínculo externo'}: ${layer.sourceName ?? layer.name}`, () => {}]);
-      options.push(['Actualizar desde archivo vinculado', () => { void this.refreshLinkedFileLayer(layer, true); }]);
-      options.push(['Vincular / reemplazar archivo fuente…', () => { void this.replaceFileLayer(layer); }]);
-      if (layer.sourceLinkId) options.push(['Quitar vínculo externo', () => {
-        this.ctl.setProps(layer.id, { sourceLinkId: undefined, sourceLastModified: undefined, sourceFileSize: undefined });
-        this.syncUI(); this.updateHistoryUI();
+  }
+
+  private appendLayerSpecificContextActions(actions: Array<[string, () => void]>, layer: LayerNode): void {
+    if (layer.type === 'fill') actions.push(['Cambiar color de relleno…', () => this.changeFillColor(layer)]);
+    if (layer.type === 'filter') actions.push(['Configurar filtro…', () => this.openFilterEditor(layer)]);
+    if (layer.type === 'vector') actions.push(['Editar objetos vectoriales…', () => this.editVectorLayer(layer)]);
+    if (layer.type === 'text') {
+      actions.push(['Editar texto…', () => {
+        this.activeId = layer.id;
+        void this.createTextAt({ x: layer.textX ?? 0, y: layer.textY ?? 0 }, layer);
       }]);
     }
-    options.push(['Eliminar capa', () => { if (this.ctl.removeLayer(layer.id)) { this.activeId = this.topRaster()?.id ?? this.ctl.doc.layers.at(-1)?.id ?? ''; this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh(); } }]);
-    let dismiss: (event: PointerEvent) => void;
-    for (const [label, action] of options) {
-      const button = document.createElement('button'); button.type = 'button'; button.textContent = label; button.setAttribute('role', 'menuitem');
-      if (label === 'Eliminar capa') {
-        const reason = this.ctl.getLayerDeletionBlockReason(layer.id);
-        button.disabled = Boolean(reason);
-        if (reason) button.title = reason;
-      }
-      button.onclick = () => {
-        if (button.disabled) return;
-        menu.remove(); document.removeEventListener('pointerdown', dismiss);
-        if (this.layerContextMenu === menu) this.layerContextMenu = null;
-        action();
-      };
-      menu.append(button);
-    }
-    document.body.append(menu); this.layerContextMenu = menu;
-    dismiss = (event: PointerEvent) => {
-      if (event.target instanceof Node && !menu.contains(event.target)) { menu.remove(); document.removeEventListener('pointerdown', dismiss); if (this.layerContextMenu === menu) this.layerContextMenu = null; }
+    if (layer.type === 'file') this.appendFileLayerContextActions(actions, layer);
+  }
+
+  private appendFileLayerContextActions(actions: Array<[string, () => void]>, layer: LayerNode): void {
+    const linkLabel = layer.sourceLinkId ? 'Vínculo externo configurado' : 'Sin vínculo externo';
+    actions.push([`${linkLabel}: ${layer.sourceName ?? layer.name}`, () => {}]);
+    actions.push(['Actualizar desde archivo vinculado', () => { void this.refreshLinkedFileLayer(layer, true); }]);
+    actions.push(['Vincular / reemplazar archivo fuente…', () => { void this.replaceFileLayer(layer); }]);
+    if (!layer.sourceLinkId) return;
+    actions.push(['Quitar vínculo externo', () => {
+      this.ctl.setProps(layer.id, { sourceLinkId: undefined, sourceLastModified: undefined, sourceFileSize: undefined });
+      this.syncUI();
+      this.updateHistoryUI();
+    }]);
+  }
+
+  private createLayerContextMenuItem(
+    menu: HTMLElement,
+    layer: LayerNode,
+    label: string,
+    action: () => void,
+  ): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = label;
+    button.setAttribute('role', 'menuitem');
+    this.applyLayerContextItemAvailability(button, layer, label);
+    button.onclick = () => {
+      if (button.disabled) return;
+      this.closeLayerContextMenu(menu);
+      action();
     };
-    document.addEventListener('pointerdown', dismiss);
-    menu.addEventListener('keydown', (event) => { if (event.key === 'Escape') { menu.remove(); document.removeEventListener('pointerdown', dismiss); } });
+    return button;
+  }
+
+  private applyLayerContextItemAvailability(button: HTMLButtonElement, layer: LayerNode, label: string): void {
+    if (label !== 'Eliminar capa') return;
+    const reason = this.ctl.getLayerDeletionBlockReason(layer.id);
+    button.disabled = Boolean(reason);
+    if (reason) button.title = reason;
+  }
+
+  private bindLayerContextMenuDismissal(menu: HTMLElement): void {
+    this.layerContextDismiss = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || menu.contains(event.target)) return;
+      this.closeLayerContextMenu(menu);
+    };
+    document.addEventListener('pointerdown', this.layerContextDismiss);
+    menu.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') this.closeLayerContextMenu(menu);
+    });
+  }
+
+  private closeLayerContextMenu(menu = this.layerContextMenu): void {
+    menu?.remove();
+    if (this.layerContextDismiss) {
+      document.removeEventListener('pointerdown', this.layerContextDismiss);
+      this.layerContextDismiss = null;
+    }
+    if (!menu || this.layerContextMenu === menu) this.layerContextMenu = null;
+  }
+
+  private duplicateLayerFromContext(layer: LayerNode): void {
+    const clone = this.ctl.duplicateLayer(layer.id);
+    if (clone) this.activeId = clone.id;
+    this.syncUI();
+    this.updateHistoryUI();
+    this.scheduleRefresh();
+  }
+
+  private deleteLayerFromContext(layer: LayerNode): void {
+    if (!this.ctl.removeLayer(layer.id)) return;
+    this.activeId = this.topRaster()?.id ?? this.ctl.doc.layers.at(-1)?.id ?? '';
+    this.syncUI();
+    this.updateHistoryUI();
+    this.scheduleRefresh();
   }
 
   private moveLayerIntoGroup(layer: LayerNode): void {
@@ -1765,101 +2410,178 @@ export class App {
   }
 
   private applyFilterDialog(): void {
-    const layer = this.active();
-    const activeButton = this.q('#filters-panel').querySelector<HTMLButtonElement>('[data-filter].active');
-    if (!layer || !activeButton) return;
-    const kind = activeButton.dataset.filter as FilterKind;
-    const strength = Math.max(0.01, Math.min(1, Number(this.q<HTMLInputElement>('#filter-radius').value) / 100));
-    if (this.filterEditLayerId && layer.id === this.filterEditLayerId && layer.type === 'filter') {
-      this.ctl.setProps(layer.id, { filterKind: kind, filterStrength: strength });
-      this.q<HTMLElement>('#filters-panel').hidden = true;
-      this.filterEditLayerId = null;
-      this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
+    const selection = this.getActiveFilterSelection();
+    if (!selection) return;
+    if (this.updateExistingFilterLayer(selection.layer, selection.kind, selection.strength)) return;
+    if (!this.canApplyDestructiveFilter(selection.layer)) {
+      this.closeFilterDialog();
       return;
     }
-    if (!isPixelLayerType(layer.type) || this.ctl.isEffectivelyLocked(layer.id)) { this.q<HTMLElement>('#filters-panel').hidden = true; return; }
+    this.applyDestructiveFilter(selection.layer, selection.kind, selection.strength);
+  }
+
+  private getActiveFilterSelection(): { layer: LayerNode; kind: FilterKind; strength: number } | null {
+    const layer = this.active();
+    const activeButton = this.q('#filters-panel').querySelector<HTMLButtonElement>('[data-filter].active');
+    if (!layer || !activeButton) return null;
+    const kind = activeButton.dataset.filter as FilterKind;
+    const strength = Math.max(0.01, Math.min(1, Number(this.q<HTMLInputElement>('#filter-radius').value) / 100));
+    return { layer, kind, strength };
+  }
+
+  private updateExistingFilterLayer(layer: LayerNode, kind: FilterKind, strength: number): boolean {
+    if (!this.filterEditLayerId || layer.id !== this.filterEditLayerId || layer.type !== 'filter') return false;
+    this.ctl.setProps(layer.id, { filterKind: kind, filterStrength: strength });
+    this.closeFilterDialog();
+    this.syncUI();
+    this.updateHistoryUI();
+    this.scheduleRefresh();
+    this.filterEditLayerId = null;
+    return true;
+  }
+
+  private canApplyDestructiveFilter(layer: LayerNode): boolean {
+    return isPixelLayerType(layer.type) && !this.ctl.isEffectivelyLocked(layer.id);
+  }
+
+  private applyDestructiveFilter(layer: LayerNode, kind: FilterKind, strength: number): void {
     try {
-      const { width, height } = this.ctl.doc;
-      const original = this.ctl.readPixels(layer) ?? new Uint8Array(width * height * 4);
-      const source = document.createElement('canvas'); source.width = width; source.height = height;
-      const sourceCtx = source.getContext('2d', { willReadFrequently: true });
-      const output = document.createElement('canvas'); output.width = width; output.height = height;
-      const outputCtx = output.getContext('2d', { willReadFrequently: true });
-      if (!sourceCtx || !outputCtx) throw new Error('El navegador no pudo preparar el filtro.');
-      const data = sourceCtx.createImageData(width, height); data.data.set(original); sourceCtx.putImageData(data, 0, 0);
-      outputCtx.filter = this.filterCss(kind, strength); outputCtx.drawImage(source, 0, 0); outputCtx.filter = 'none';
-      const transformed = new Uint8Array(outputCtx.getImageData(0, 0, width, height).data);
+      const transformed = this.createFilteredPixelData(layer, kind, strength);
       runEdit(this.ctx, layer.engineId, `Filtro: ${this.filterLabel(kind)}`, (surface) => {
-        if (!surface.writeRectFromJS(0, 0, width, height, transformed)) throw new Error('No se pudo escribir el resultado del filtro.');
+        if (!surface.writeRectFromJS(0, 0, this.ctl.doc.width, this.ctl.doc.height, transformed)) {
+          throw new Error('No se pudo escribir el resultado del filtro.');
+        }
       });
-      this.q<HTMLElement>('#filters-panel').hidden = true;
-      this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
-    } catch (error) { this.fail(error); }
+      this.closeFilterDialog();
+      this.syncUI();
+      this.updateHistoryUI();
+      this.scheduleRefresh();
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  private createFilteredPixelData(layer: LayerNode, kind: FilterKind, strength: number): Uint8Array {
+    const { width, height } = this.ctl.doc;
+    const original = this.ctl.readPixels(layer) ?? new Uint8Array(width * height * 4);
+    const source = this.createPixelCanvas(width, height, original);
+    const output = document.createElement('canvas');
+    output.width = width;
+    output.height = height;
+    const outputContext = output.getContext('2d', { willReadFrequently: true });
+    if (!outputContext) throw new Error('El navegador no pudo preparar el filtro.');
+    outputContext.filter = this.filterCss(kind, strength);
+    outputContext.drawImage(source, 0, 0);
+    outputContext.filter = 'none';
+    return new Uint8Array(outputContext.getImageData(0, 0, width, height).data);
+  }
+
+  private createPixelCanvas(width: number, height: number, pixels: Uint8Array): HTMLCanvasElement {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('El navegador no pudo preparar el filtro.');
+    const imageData = context.createImageData(width, height);
+    imageData.data.set(pixels);
+    context.putImageData(imageData, 0, 0);
+    return canvas;
+  }
+
+  private closeFilterDialog(): void {
+    this.q<HTMLElement>('#filters-panel').hidden = true;
   }
 
   private async createLayerOfType(type: LayerType): Promise<void> {
     this.q<HTMLElement>('#layer-create-menu').hidden = true;
     if (type === 'file') { await this.createFileLayer(); return; }
     if (type === 'text') { await this.createTextAt({ x: Math.round(this.ctl.doc.width * 0.25), y: Math.round(this.ctl.doc.height * 0.25) }); return; }
-    if (type === 'fill') {
-      const color = prompt('Color inicial de la capa de relleno', '#ffffff');
-      if (!color) return;
-      if (!/^#?[0-9a-f]{6}$/i.test(color.trim())) { alert('Color inválido; usá por ejemplo #ffffff.'); return; }
-      const node = this.ctl.addLayer('fill', 'Relleno', undefined, -1, { fillColor: color.startsWith('#') ? color : `#${color}` });
-      this.activeId = node.id;
-    } else {
-      const name = ({ paint: `Pintura ${this.ctl.doc.layers.length}`, filter: 'Filtro', vector: 'Vectorial', text: 'Texto', group: 'Grupo', raster: 'Capa', fill: 'Relleno', file: 'Archivo' } as Record<LayerType, string>)[type];
-      const node = this.ctl.addLayer(type, name);
-      this.activeId = node.id;
-      if (type === 'vector') this.editVectorLayer(node);
-    }
+    if (type === 'fill') await this.createFillLayer();
+    else this.createStandardLayer(type);
     this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
+  }
+
+  private async createFillLayer(): Promise<void> {
+    const color = prompt('Color inicial de la capa de relleno', '#ffffff');
+    if (!color) return;
+    if (!/^#?[0-9a-f]{6}$/i.test(color.trim())) { alert('Color inválido; usá por ejemplo #ffffff.'); return; }
+    const node = this.ctl.addLayer('fill', 'Relleno', undefined, -1, { fillColor: color.startsWith('#') ? color : `#${color}` });
+    this.activeId = node.id;
+  }
+
+  private createStandardLayer(type: LayerType): void {
+    const name = ({ paint: `Pintura ${this.ctl.doc.layers.length}`, filter: 'Filtro', vector: 'Vectorial', text: 'Texto', group: 'Grupo', raster: 'Capa', fill: 'Relleno', file: 'Archivo' } as Record<LayerType, string>)[type];
+    const node = this.ctl.addLayer(type, name);
+    this.activeId = node.id;
+    if (type === 'vector') this.editVectorLayer(node);
   }
 
   private async createFileLayer(): Promise<void> {
     const source = await this.pickImageSource();
     if (!source) return;
-    try {
-      const pixels = await this.imageFileToDocumentPixels(source.file);
-      let sourceLinkId = source.handle ? crypto.randomUUID() : undefined;
-      if (source.handle && sourceLinkId) {
-        try { await rememberLinkedFile(sourceLinkId, source.handle); }
-        catch (error) { console.warn('La imagen se importó, pero el navegador no pudo conservar el vínculo externo:', error); sourceLinkId = undefined; }
-      }
-      const node = this.ctl.addFileLayer(
-        documentNameFromFile(source.file.name) || 'Archivo', pixels, source.file.name, sourceLinkId,
-        source.file.lastModified, source.file.size,
-      );
-      this.activeId = node.id; this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
-      this.q<HTMLElement>('#status').textContent = sourceLinkId
-        ? `Capa de archivo vinculada: ${source.file.name}`
-        : `Capa de archivo importada: ${source.file.name} (sin vínculo externo en este navegador)`;
-    } catch (error) { this.fail(error); }
+    try { await this.createFileLayerFromSource(source); }
+    catch (error) { this.fail(error); }
+  }
+
+  private async createFileLayerFromSource(source: { file: File; handle: FileSystemFileHandle | null }): Promise<void> {
+    const pixels = await this.imageFileToDocumentPixels(source.file);
+    const candidateLinkId = source.handle ? crypto.randomUUID() : undefined;
+    const remembered = Boolean(candidateLinkId && source.handle && await this.rememberLinkedFileSafely(candidateLinkId, source.handle));
+    const sourceLinkId = remembered ? candidateLinkId : undefined;
+    const node = this.ctl.addFileLayer(
+      documentNameFromFile(source.file.name) || 'Archivo', pixels, source.file.name, sourceLinkId,
+      source.file.lastModified, source.file.size,
+    );
+    this.activeId = node.id; this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
+    this.q<HTMLElement>('#status').textContent = sourceLinkId
+      ? `Capa de archivo vinculada: ${source.file.name}`
+      : `Capa de archivo importada: ${source.file.name} (sin vínculo externo en este navegador)`;
+  }
+
+  private async rememberLinkedFileSafely(linkId: string, handle: FileSystemFileHandle): Promise<boolean> {
+    try { await rememberLinkedFile(linkId, handle); return true; }
+    catch (error) { console.warn('No se pudo conservar el vínculo en este navegador:', error); return false; }
   }
 
   private async pickImageSource(): Promise<{ file: File; handle: FileSystemFileHandle | null } | null> {
-    if (typeof window.showOpenFilePicker === 'function') {
-      try {
-        const [handle] = await window.showOpenFilePicker({
-          multiple: false,
-          types: [{ description: 'Archivos de imagen', accept: {
-            'image/png': ['.png'], 'image/jpeg': ['.jpg', '.jpeg'], 'image/webp': ['.webp'],
-            'image/gif': ['.gif'], 'image/bmp': ['.bmp'], 'image/tiff': ['.tif', '.tiff'], 'image/svg+xml': ['.svg'],
-          } }],
-        });
-        if (!handle) return null;
-        const file = await handle.getFile();
-        if (!file.type.startsWith('image/') && !/\.(png|jpe?g|webp|gif|bmp|tiff?|svg)$/i.test(file.name)) {
-          throw new Error('El archivo seleccionado no parece ser una imagen compatible.');
-        }
-        return { file, handle };
-      } catch (error) {
-        if (error instanceof DOMException && error.name === 'AbortError') return null;
-        throw error;
-      }
+    if (typeof window.showOpenFilePicker !== 'function') {
+      const file = await this.pickImageFile();
+      return file ? { file, handle: null } : null;
     }
-    const file = await this.pickImageFile();
-    return file ? { file, handle: null } : null;
+    return this.pickImageSourceFromPicker();
+  }
+
+  private async pickImageSourceFromPicker(): Promise<{ file: File; handle: FileSystemFileHandle } | null> {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        multiple: false,
+        types: [{ description: 'Archivos de imagen', accept: {
+          'image/png': ['.png'], 'image/jpeg': ['.jpg', '.jpeg'], 'image/webp': ['.webp'],
+          'image/gif': ['.gif'], 'image/bmp': ['.bmp'], 'image/tiff': ['.tif', '.tiff'], 'image/svg+xml': ['.svg'],
+        } }],
+      });
+      return this.readPickedImage(handle);
+    } catch (error) {
+      return this.handleImagePickerError(error);
+    }
+  }
+
+  private async readPickedImage(handle: FileSystemFileHandle | undefined): Promise<{ file: File; handle: FileSystemFileHandle } | null> {
+    if (!handle) return null;
+    const file = await handle.getFile();
+    return this.validatePickedImage(file, handle);
+  }
+
+  private validatePickedImage(file: File, handle: FileSystemFileHandle): { file: File; handle: FileSystemFileHandle } {
+    if (!file.type.startsWith('image/') && !/\.(png|jpe?g|webp|gif|bmp|tiff?|svg)$/i.test(file.name)) {
+      throw new Error('El archivo seleccionado no parece ser una imagen compatible.');
+    }
+    return { file, handle };
+  }
+
+  private handleImagePickerError(error: unknown): null {
+    if (error instanceof DOMException && error.name === 'AbortError') return null;
+    throw error;
   }
 
   private async imageFileToDocumentPixels(file: File): Promise<Uint8Array> {
@@ -1879,46 +2601,86 @@ export class App {
 
   private async refreshLinkedFileLayer(layer: LayerNode, askForPermission: boolean): Promise<void> {
     if (layer.type !== 'file') return;
-    if (this.ctl.isEffectivelyLocked(layer.id)) { alert('La capa o su grupo está bloqueado.'); return; }
-    if (!layer.sourceLinkId) {
-      if (askForPermission) await this.replaceFileLayer(layer);
-      else return;
+    if (this.ctl.isEffectivelyLocked(layer.id)) {
+      alert('La capa o su grupo está bloqueado.');
       return;
     }
-    try {
-      const handle = await getLinkedFile(layer.sourceLinkId);
-      if (!handle) {
-        if (askForPermission) alert('No se encontró el vínculo en este navegador. Usá «Vincular / reemplazar archivo fuente…» para volver a vincularlo. La imagen guardada en el proyecto sigue disponible.');
-        return;
-      }
-      let permission = await handle.queryPermission({ mode: 'read' });
-      if (permission !== 'granted' && askForPermission) permission = await handle.requestPermission({ mode: 'read' });
-      if (permission !== 'granted') {
-        if (askForPermission) alert('El navegador no concedió permiso para leer el archivo vinculado.');
-        return;
-      }
-      const file = await handle.getFile();
-      // En la apertura automática solo actualizamos si los metadatos de la fuente cambiaron.
-      if (!askForPermission && file.lastModified === layer.sourceLastModified && file.size === layer.sourceFileSize) return;
-      const pixels = await this.imageFileToDocumentPixels(file);
-      if (this.ctl.replaceFileLayerContent(layer.id, pixels, file.name, layer.sourceLinkId, file.lastModified, file.size)) {
-        this.activeId = layer.id; this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
-        this.q<HTMLElement>('#status').textContent = `Imagen vinculada actualizada: ${file.name}`;
-      }
-    } catch (error) {
-      if (askForPermission) this.fail(error);
-      else console.warn(`No se pudo actualizar la capa vinculada «${layer.name}»:`, error);
+    if (!layer.sourceLinkId) {
+      await this.replaceFileLayerIfRequested(layer, askForPermission);
+      return;
     }
+    await this.refreshExistingLinkedFileLayer(layer, layer.sourceLinkId, askForPermission);
+  }
+
+  private async replaceFileLayerIfRequested(layer: LayerNode, askForPermission: boolean): Promise<void> {
+    if (!askForPermission) return;
+    await this.replaceFileLayer(layer);
+  }
+
+  private async refreshExistingLinkedFileLayer(layer: LayerNode, linkId: string, askForPermission: boolean): Promise<void> {
+    try { await this.refreshAndApplyExistingLinkedFile(layer, linkId, askForPermission); }
+    catch (error) { this.reportLinkedFileRefreshError(error, layer, askForPermission); }
+  }
+
+  private async refreshAndApplyExistingLinkedFile(layer: LayerNode, linkId: string, askForPermission: boolean): Promise<void> {
+    const file = await this.getPermittedLinkedSourceFile(linkId, askForPermission);
+    if (!file || this.isLinkedFileUnchanged(layer, file, askForPermission)) return;
+    await this.applyLinkedFileUpdate(layer, file, linkId);
+  }
+
+  private async getPermittedLinkedSourceFile(linkId: string, askForPermission: boolean): Promise<File | null> {
+    const handle = await getLinkedFile(linkId);
+    if (!handle) return this.reportMissingLinkedFile(askForPermission);
+    let permission = await handle.queryPermission({ mode: 'read' });
+    if (permission !== 'granted' && askForPermission) permission = await handle.requestPermission({ mode: 'read' });
+    if (permission !== 'granted') return this.reportLinkedFilePermissionDenied(askForPermission);
+    return handle.getFile();
+  }
+
+  private reportMissingLinkedFile(askForPermission: boolean): null {
+    if (askForPermission) alert('No se encontró el vínculo en este navegador. Usá «Vincular / reemplazar archivo fuente…» para volver a vincularlo. La imagen guardada en el proyecto sigue disponible.');
+    return null;
+  }
+
+  private reportLinkedFilePermissionDenied(askForPermission: boolean): null {
+    if (askForPermission) alert('El navegador no concedió permiso para leer el archivo vinculado.');
+    return null;
+  }
+
+  private isLinkedFileUnchanged(layer: LayerNode, file: File, askForPermission: boolean): boolean {
+    return !askForPermission && file.lastModified === layer.sourceLastModified && file.size === layer.sourceFileSize;
+  }
+
+  private async applyLinkedFileUpdate(layer: LayerNode, file: File, linkId: string): Promise<void> {
+    const pixels = await this.imageFileToDocumentPixels(file);
+    const updated = this.ctl.replaceFileLayerContent(layer.id, pixels, file.name, linkId, file.lastModified, file.size);
+    if (!updated) return;
+    this.activeId = layer.id;
+    this.syncUI();
+    this.updateHistoryUI();
+    this.scheduleRefresh();
+    this.q<HTMLElement>('#status').textContent = `Imagen vinculada actualizada: ${file.name}`;
+  }
+
+  private reportLinkedFileRefreshError(error: unknown, layer: LayerNode, askForPermission: boolean): void {
+    if (askForPermission) {
+      this.fail(error);
+      return;
+    }
+    console.warn(`No se pudo actualizar la capa vinculada «${layer.name}»:`, error);
   }
 
   private async refreshLinkedFileLayers(askForPermission = false): Promise<void> {
-    const walk = async (nodes: LayerNode[]): Promise<void> => {
-      for (const layer of nodes) {
-        if (layer.type === 'file' && layer.sourceLinkId) await this.refreshLinkedFileLayer(layer, askForPermission);
-        if (layer.children.length) await walk(layer.children);
-      }
-    };
-    await walk(this.ctl.doc.layers);
+    await this.walkLinkedFileLayerTree(this.ctl.doc.layers, askForPermission);
+  }
+
+  private async walkLinkedFileLayerTree(nodes: LayerNode[], askForPermission: boolean): Promise<void> {
+    for (const layer of nodes) await this.refreshLinkedFileLayerTreeNode(layer, askForPermission);
+  }
+
+  private async refreshLinkedFileLayerTreeNode(layer: LayerNode, askForPermission: boolean): Promise<void> {
+    if (layer.type === 'file' && layer.sourceLinkId) await this.refreshLinkedFileLayer(layer, askForPermission);
+    if (layer.children.length) await this.walkLinkedFileLayerTree(layer.children, askForPermission);
   }
 
   private pickImageFile(): Promise<File | null> {
@@ -1935,20 +2697,24 @@ export class App {
     if (this.ctl.isEffectivelyLocked(layer.id)) { alert('La capa o su grupo está bloqueado.'); return; }
     const source = await this.pickImageSource();
     if (!source) return;
-    try {
-      const pixels = await this.imageFileToDocumentPixels(source.file);
-      let nextLinkId = source.handle ? crypto.randomUUID() : undefined;
-      if (source.handle && nextLinkId) {
-        try { await rememberLinkedFile(nextLinkId, source.handle); }
-        catch (error) { console.warn('No se pudo conservar el vínculo en este navegador:', error); nextLinkId = undefined; }
-      }
-      if (this.ctl.replaceFileLayerContent(layer.id, pixels, source.file.name, nextLinkId, source.file.lastModified, source.file.size)) {
-        this.activeId = layer.id; this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
-        this.q<HTMLElement>('#status').textContent = nextLinkId
-          ? `Vínculo externo actualizado: ${source.file.name}`
-          : `Imagen reemplazada (sin vínculo externo): ${source.file.name}`;
-      }
-    } catch (error) { this.fail(error); }
+    try { await this.replaceFileLayerFromSource(layer, source); }
+    catch (error) { this.fail(error); }
+  }
+
+  private async replaceFileLayerFromSource(
+    layer: LayerNode,
+    source: { file: File; handle: FileSystemFileHandle | null },
+  ): Promise<void> {
+    const pixels = await this.imageFileToDocumentPixels(source.file);
+    const candidateLinkId = source.handle ? crypto.randomUUID() : undefined;
+    const remembered = Boolean(candidateLinkId && source.handle && await this.rememberLinkedFileSafely(candidateLinkId, source.handle));
+    const nextLinkId = remembered ? candidateLinkId : undefined;
+    const updated = this.ctl.replaceFileLayerContent(layer.id, pixels, source.file.name, nextLinkId, source.file.lastModified, source.file.size);
+    if (!updated) return;
+    this.activeId = layer.id; this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
+    this.q<HTMLElement>('#status').textContent = nextLinkId
+      ? `Vínculo externo actualizado: ${source.file.name}`
+      : `Imagen reemplazada (sin vínculo externo): ${source.file.name}`;
   }
 
   private editVectorLayer(layer: LayerNode): void {
@@ -2010,46 +2776,81 @@ export class App {
   private updateVectorShapeFromFields(): void {
     const shape = this.vectorDraft.find((item) => item.id === this.vectorSelectedId);
     if (!shape) return;
-    const val = (id: string, fallback: number) => {
-      const parsed = Number(this.q<HTMLInputElement>(`#${id}`).value);
-      return Number.isFinite(parsed) ? parsed : fallback;
-    };
+    this.updateVectorShapeGeometry(shape);
+    this.updateVectorShapePaintStyle(shape);
+    this.updateVectorShapeTextStyle(shape);
+    this.updateVectorShapePoints(shape);
+    this.updateVectorShapeSummary(shape);
+  }
+
+  private updateVectorShapeGeometry(shape: VectorShape): void {
     shape.kind = this.q<HTMLSelectElement>('#vector-kind').value as VectorShape['kind'];
-    shape.x = val('vector-x', shape.x); shape.y = val('vector-y', shape.y);
-    shape.width = Math.max(1, val('vector-width', shape.width)); shape.height = Math.max(1, val('vector-height', shape.height));
-    shape.rotation = Math.max(-360, Math.min(360, val('vector-rotation', shape.rotation ?? 0)));
+    const read = (id: string, fallback: number) => this.readVectorNumber(id, fallback);
+    shape.x = read('vector-x', shape.x);
+    shape.y = read('vector-y', shape.y);
+    shape.width = Math.max(1, read('vector-width', shape.width));
+    shape.height = Math.max(1, read('vector-height', shape.height));
+    shape.rotation = Math.max(-360, Math.min(360, read('vector-rotation', shape.rotation ?? 0)));
+  }
+
+  private updateVectorShapePaintStyle(shape: VectorShape): void {
     shape.color = this.q<HTMLInputElement>('#vector-color').value;
     shape.fillColor = shape.color;
     shape.strokeColor = this.q<HTMLInputElement>('#vector-stroke-color').value;
-    shape.opacity = Math.max(0, Math.min(1, val('vector-opacity', shape.opacity * 100) / 100));
-    shape.strokeWidth = Math.max(0, Math.min(500, val('vector-stroke', shape.strokeWidth)));
+    shape.opacity = Math.max(0, Math.min(1, this.readVectorNumber('vector-opacity', shape.opacity * 100) / 100));
+    shape.strokeWidth = Math.max(0, Math.min(500, this.readVectorNumber('vector-stroke', shape.strokeWidth)));
     shape.fillEnabled = this.q<HTMLSelectElement>('#vector-fill-enabled').value === 'yes';
     shape.strokeEnabled = this.q<HTMLSelectElement>('#vector-stroke-enabled').value === 'yes';
     shape.strokeDash = this.q<HTMLSelectElement>('#vector-dash').value as NonNullable<VectorShape['strokeDash']>;
     shape.lineCap = this.q<HTMLSelectElement>('#vector-line-cap').value as NonNullable<VectorShape['lineCap']>;
     shape.lineJoin = this.q<HTMLSelectElement>('#vector-line-join').value as NonNullable<VectorShape['lineJoin']>;
-    shape.cornerRadius = Math.max(0, Math.min(500, val('vector-corner-radius', shape.cornerRadius ?? 20)));
-    shape.starPoints = Math.max(3, Math.min(64, Math.round(val('vector-star-points', shape.starPoints ?? 5))));
+    shape.cornerRadius = Math.max(0, Math.min(500, this.readVectorNumber('vector-corner-radius', shape.cornerRadius ?? 20)));
+    shape.starPoints = Math.max(3, Math.min(64, Math.round(this.readVectorNumber('vector-star-points', shape.starPoints ?? 5))));
+  }
+
+  private updateVectorShapeTextStyle(shape: VectorShape): void {
     shape.text = this.q<HTMLInputElement>('#vector-text').value;
     shape.fontFamily = this.q<HTMLSelectElement>('#vector-font-family').value;
-    shape.fontSize = Math.max(1, Math.min(2000, val('vector-font-size', shape.fontSize ?? 64)));
+    shape.fontSize = Math.max(1, Math.min(2000, this.readVectorNumber('vector-font-size', shape.fontSize ?? 64)));
     shape.fontStyle = this.q<HTMLSelectElement>('#vector-font-style').value as NonNullable<VectorShape['fontStyle']>;
     shape.fontWeight = this.q<HTMLSelectElement>('#vector-font-weight').value as NonNullable<VectorShape['fontWeight']>;
     shape.textAlign = this.q<HTMLSelectElement>('#vector-text-align').value as NonNullable<VectorShape['textAlign']>;
+  }
+
+  private updateVectorShapePoints(shape: VectorShape): void {
     const pointsValue = this.q<HTMLTextAreaElement>('#vector-points').value.trim();
-    if (pointsValue) {
-      try {
-        const parsed = JSON.parse(pointsValue) as unknown;
-        if (!Array.isArray(parsed) || parsed.some((p) => !p || typeof p.x !== 'number' || typeof p.y !== 'number')) throw new Error('Los nodos deben ser una lista JSON de puntos con coordenadas x e y.');
-        shape.points = parsed as NonNullable<VectorShape['points']>;
-      } catch (error) {
-        this.q<HTMLElement>('#status').textContent = error instanceof Error ? `Nodos vectoriales: ${error.message}` : 'El JSON de nodos no es válido.';
-      }
-    } else shape.points = undefined;
+    if (!pointsValue) {
+      shape.points = undefined;
+      return;
+    }
+    try { shape.points = this.parseVectorShapePoints(pointsValue); }
+    catch (error) { this.reportVectorShapePointsError(error); }
+  }
+
+  private parseVectorShapePoints(value: string): NonNullable<VectorShape['points']> {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed) || parsed.some((point) => !point || typeof point.x !== 'number' || typeof point.y !== 'number')) {
+      throw new Error('Los nodos deben ser una lista JSON de puntos con coordenadas x e y.');
+    }
+    return parsed as NonNullable<VectorShape['points']>;
+  }
+
+  private reportVectorShapePointsError(error: unknown): void {
+    this.q<HTMLElement>('#status').textContent = error instanceof Error
+      ? `Nodos vectoriales: ${error.message}`
+      : 'El JSON de nodos no es válido.';
+  }
+
+  private updateVectorShapeSummary(shape: VectorShape): void {
     this.q<HTMLElement>('#vector-opacity-value').textContent = `${Math.round(shape.opacity * 100)}%`;
     const index = this.vectorDraft.indexOf(shape);
     const listButton = this.q<HTMLElement>('#vector-shape-list').children[index] as HTMLButtonElement | undefined;
     if (listButton) listButton.textContent = `${this.vectorKindLabel(shape.kind)} · ${Math.round(shape.x)}, ${Math.round(shape.y)}`;
+  }
+
+  private readVectorNumber(id: string, fallback: number): number {
+    const parsed = Number(this.q<HTMLInputElement>(`#${id}`).value);
+    return Number.isFinite(parsed) ? parsed : fallback;
   }
 
   private duplicateSelectedVectorShape(): void {
@@ -2100,117 +2901,227 @@ export class App {
   }
 
   private drawVectorShape(ctx: CanvasRenderingContext2D, shape: VectorShape): void {
-    const fill = shape.fillColor ?? shape.color ?? '#e03030';
-    const stroke = shape.strokeColor ?? shape.color ?? '#e03030';
-    const defaultFill = !['line','polyline','bezier','freehand','spiral'].includes(shape.kind);
-    const doFill = shape.fillEnabled ?? defaultFill;
-    const doStroke = shape.strokeEnabled ?? ['line','polyline','bezier','freehand','spiral'].includes(shape.kind);
-    const cx = shape.x + shape.width / 2, cy = shape.y + shape.height / 2;
+    const paint = this.getVectorPaintOptions(shape);
     ctx.save();
-    ctx.globalAlpha = Math.max(0, Math.min(1, shape.opacity));
-    ctx.translate(cx, cy); ctx.rotate(((shape.rotation ?? 0) * Math.PI) / 180); ctx.translate(-cx, -cy);
-    ctx.fillStyle = fill; ctx.strokeStyle = stroke; ctx.lineWidth = Math.max(0, shape.strokeWidth);
-    ctx.lineCap = shape.lineCap ?? 'round'; ctx.lineJoin = shape.lineJoin ?? 'round';
-    ctx.setLineDash(shape.strokeDash === 'dash' ? [Math.max(4, shape.strokeWidth * 3), Math.max(3, shape.strokeWidth * 2)] : shape.strokeDash === 'dot' ? [1, Math.max(3, shape.strokeWidth * 2)] : []);
-    const x = shape.x, y = shape.y, w = shape.width, h = shape.height;
-    const closeAndPaint = (close = true) => { if (close) ctx.closePath(); if (doFill) ctx.fill(); if (doStroke && shape.strokeWidth > 0) ctx.stroke(); };
-    const points = shape.points ?? [];
-    switch (shape.kind) {
-      case 'rectangle': ctx.beginPath(); ctx.rect(x, y, w, h); closeAndPaint(); break;
-      case 'rounded-rectangle': {
-        const r = Math.max(0, Math.min(shape.cornerRadius ?? 20, Math.abs(w) / 2, Math.abs(h) / 2));
-        ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-        ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h); ctx.lineTo(x + r, y + h);
-        ctx.quadraticCurveTo(x, y + h, x, y + h - r); ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); closeAndPaint(); break;
-      }
-      case 'ellipse': ctx.beginPath(); ctx.ellipse(x + w / 2, y + h / 2, Math.abs(w / 2), Math.abs(h / 2), 0, 0, Math.PI * 2); closeAndPaint(); break;
-      case 'line': ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w, y + h); closeAndPaint(false); break;
-      case 'polygon': case 'polyline': case 'freehand': case 'bezier': {
-        const path = points.length ? points : [{ x, y }, { x: x + w, y: y + h }];
-        ctx.beginPath(); ctx.moveTo(path[0].x, path[0].y);
-        for (let i = 1; i < path.length; i++) {
-          const previous = path[i - 1], next = path[i];
-          if (shape.kind === 'bezier' && (previous.outX !== undefined || next.inX !== undefined)) {
-            ctx.bezierCurveTo(previous.outX ?? previous.x, previous.outY ?? previous.y, next.inX ?? next.x, next.inY ?? next.y, next.x, next.y);
-          } else ctx.lineTo(next.x, next.y);
-        }
-        closeAndPaint(shape.kind === 'polygon'); break;
-      }
-      case 'star': {
-        const spikes = Math.max(3, Math.min(64, Math.round(shape.starPoints ?? 5)));
-        const outer = Math.min(Math.abs(w), Math.abs(h)) / 2, inner = outer * .44;
-        ctx.beginPath();
-        for (let i = 0; i < spikes * 2; i++) {
-          const radius = i % 2 === 0 ? outer : inner; const angle = (Math.PI * i / spikes) - Math.PI / 2;
-          const px = x + w / 2 + Math.cos(angle) * radius, py = y + h / 2 + Math.sin(angle) * radius;
-          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-        }
-        closeAndPaint(); break;
-      }
-      case 'spiral': {
-        const turns = 4.5, radius = Math.min(Math.abs(w), Math.abs(h)) / 2;
-        ctx.beginPath();
-        for (let i = 0; i <= 360; i++) {
-          const t = i / 360, a = t * Math.PI * 2 * turns, r = radius * t;
-          const px = x + w / 2 + Math.cos(a) * r, py = y + h / 2 + Math.sin(a) * r;
-          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-        }
-        closeAndPaint(false); break;
-      }
-      case 'text': {
-        ctx.font = `${shape.fontStyle ?? 'normal'} ${shape.fontWeight ?? 'normal'} ${Math.max(1, shape.fontSize ?? 64)}px ${shape.fontFamily ?? 'Arial'}`;
-        ctx.textAlign = shape.textAlign ?? 'left'; ctx.textBaseline = 'top';
-        if (doFill) ctx.fillText(shape.text ?? 'Texto vectorial', x, y, Math.max(1, w));
-        if (doStroke && shape.strokeWidth > 0) ctx.strokeText(shape.text ?? 'Texto vectorial', x, y, Math.max(1, w));
-        break;
-      }
-    }
+    this.applyVectorShapeStyles(ctx, shape);
+    this.drawVectorShapeGeometry(ctx, shape, paint);
     ctx.restore();
   }
 
-  private exportVectorLayerSvg(): void {
-    const layer = this.vectorEditLayerId ? this.ctl.find(this.vectorEditLayerId) : undefined;
-    if (!layer || layer.type !== 'vector') return;
-    const esc = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    const shapeToSvg = (shape: VectorShape): string => {
-      const cx = shape.x + shape.width / 2, cy = shape.y + shape.height / 2;
-      const transform = shape.rotation ? ` transform="rotate(${shape.rotation} ${cx} ${cy})"` : '';
-      const fill = (shape.fillEnabled ?? !['line','polyline','bezier','freehand','spiral'].includes(shape.kind)) ? (shape.fillColor ?? shape.color) : 'none';
-      const stroke = (shape.strokeEnabled ?? ['line','polyline','bezier','freehand','spiral'].includes(shape.kind)) && shape.strokeWidth > 0 ? (shape.strokeColor ?? shape.color) : 'none';
-      const dash = shape.strokeDash === 'dash' ? ` stroke-dasharray="${Math.max(4, shape.strokeWidth * 3)} ${Math.max(3, shape.strokeWidth * 2)}"` : shape.strokeDash === 'dot' ? ` stroke-dasharray="1 ${Math.max(3, shape.strokeWidth * 2)}"` : '';
-      const style = `fill="${esc(fill)}" stroke="${esc(stroke)}" stroke-width="${shape.strokeWidth}" stroke-linecap="${shape.lineCap ?? 'round'}" stroke-linejoin="${shape.lineJoin ?? 'round'}"${dash} opacity="${shape.opacity}"`;
-      const x = shape.x, y = shape.y, w = shape.width, h = shape.height;
-      const points = shape.points ?? [];
-      if (shape.kind === 'rectangle') return `<rect x="${x}" y="${y}" width="${w}" height="${h}" ${style}${transform}/>`;
-      if (shape.kind === 'rounded-rectangle') return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${shape.cornerRadius ?? 20}" ${style}${transform}/>`;
-      if (shape.kind === 'ellipse') return `<ellipse cx="${cx}" cy="${cy}" rx="${Math.abs(w/2)}" ry="${Math.abs(h/2)}" ${style}${transform}/>`;
-      if (shape.kind === 'line') return `<line x1="${x}" y1="${y}" x2="${x+w}" y2="${y+h}" ${style}${transform}/>`;
-      if (shape.kind === 'star') {
-        const count = Math.max(3, Math.min(64, shape.starPoints ?? 5)), outer = Math.min(Math.abs(w), Math.abs(h))/2, inner = outer*.44;
-        const pointsString = Array.from({ length: count*2 }, (_, i) => { const r = i%2===0?outer:inner, a=Math.PI*i/count-Math.PI/2; return `${cx+Math.cos(a)*r},${cy+Math.sin(a)*r}`; }).join(' ');
-        return `<polygon points="${pointsString}" ${style}${transform}/>`;
-      }
-      if (shape.kind === 'spiral') {
-        const d = Array.from({ length: 361 }, (_, i) => { const t=i/360, a=t*Math.PI*9, r=Math.min(Math.abs(w),Math.abs(h))/2*t; return `${i?'L':'M'} ${cx+Math.cos(a)*r} ${cy+Math.sin(a)*r}`; }).join(' ');
-        return `<path d="${d}" ${style.replace(/fill="[^"]*"/, 'fill="none"')}${transform}/>`;
-      }
-      if (shape.kind === 'text') return `<text x="${x}" y="${y+Math.max(1,shape.fontSize??64)}" font-family="${esc(shape.fontFamily??'Arial')}" font-size="${shape.fontSize??64}" font-weight="${shape.fontWeight??'normal'}" font-style="${shape.fontStyle??'normal'}" text-anchor="${shape.textAlign==='center'?'middle':shape.textAlign==='right'?'end':'start'}" ${style}${transform}>${esc(shape.text??'Texto vectorial')}</text>`;
-      const path = points.length ? points : [{x,y},{x:x+w,y:y+h}];
-      let d = `M ${path[0].x} ${path[0].y}`;
-      for (let i=1;i<path.length;i++) {
-        const prev=path[i-1], next=path[i];
-        d += shape.kind==='bezier' && (prev.outX!==undefined || next.inX!==undefined)
-          ? ` C ${prev.outX??prev.x} ${prev.outY??prev.y} ${next.inX??next.x} ${next.inY??next.y} ${next.x} ${next.y}`
-          : ` L ${next.x} ${next.y}`;
-      }
-      if (shape.kind==='polygon') d+=' Z';
-      return `<path d="${d}" ${style}${transform}/>`;
+  private getVectorPaintOptions(shape: VectorShape): VectorPaintOptions {
+    const noFillKinds = ['line', 'polyline', 'bezier', 'freehand', 'spiral'];
+    const fill = shape.fillEnabled ?? !noFillKinds.includes(shape.kind);
+    const stroke = shape.strokeEnabled ?? noFillKinds.includes(shape.kind);
+    return { fill, stroke, strokeWidth: shape.strokeWidth };
+  }
+
+  private applyVectorShapeStyles(ctx: CanvasRenderingContext2D, shape: VectorShape): void {
+    const fill = shape.fillColor ?? shape.color ?? '#e03030';
+    const stroke = shape.strokeColor ?? shape.color ?? '#e03030';
+    const centerX = shape.x + shape.width / 2;
+    const centerY = shape.y + shape.height / 2;
+    ctx.globalAlpha = Math.max(0, Math.min(1, shape.opacity));
+    ctx.translate(centerX, centerY);
+    ctx.rotate(((shape.rotation ?? 0) * Math.PI) / 180);
+    ctx.translate(-centerX, -centerY);
+    ctx.fillStyle = fill;
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = Math.max(0, shape.strokeWidth);
+    ctx.lineCap = shape.lineCap ?? 'round';
+    ctx.lineJoin = shape.lineJoin ?? 'round';
+    ctx.setLineDash(this.vectorShapeLineDash(shape));
+  }
+
+  private vectorShapeLineDash(shape: VectorShape): number[] {
+    if (shape.strokeDash === 'dash') {
+      return [Math.max(4, shape.strokeWidth * 3), Math.max(3, shape.strokeWidth * 2)];
+    }
+    if (shape.strokeDash === 'dot') return [1, Math.max(3, shape.strokeWidth * 2)];
+    return [];
+  }
+
+  private drawVectorShapeGeometry(ctx: CanvasRenderingContext2D, shape: VectorShape, paint: VectorPaintOptions): void {
+    const closeAndPaint = (close = true) => {
+      if (close) ctx.closePath();
+      if (paint.fill) ctx.fill();
+      if (paint.stroke && paint.strokeWidth > 0) ctx.stroke();
     };
-    const shapes = this.vectorDraft.map(shapeToSvg).join('\n  ');
-    const svg = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${this.ctl.doc.width}" height="${this.ctl.doc.height}" viewBox="0 0 ${this.ctl.doc.width} ${this.ctl.doc.height}">\n  ${shapes}\n</svg>`;
+    if (this.drawBasicVectorShape(ctx, shape, closeAndPaint)) return;
+    if (this.drawVectorPathShape(ctx, shape, closeAndPaint)) return;
+    if (shape.kind === 'star') {
+      this.drawVectorStar(ctx, shape, closeAndPaint);
+      return;
+    }
+    if (shape.kind === 'spiral') {
+      this.drawVectorSpiral(ctx, shape, closeAndPaint);
+      return;
+    }
+    if (shape.kind === 'text') this.drawVectorText(ctx, shape, paint);
+  }
+
+  private drawBasicVectorShape(
+    ctx: CanvasRenderingContext2D,
+    shape: VectorShape,
+    closeAndPaint: (close?: boolean) => void,
+  ): boolean {
+    const { x, y, width, height } = shape;
+    if (shape.kind === 'rectangle') {
+      ctx.beginPath();
+      ctx.rect(x, y, width, height);
+      closeAndPaint();
+      return true;
+    }
+    if (shape.kind === 'rounded-rectangle') {
+      this.drawRoundedVectorRectangle(ctx, shape, closeAndPaint);
+      return true;
+    }
+    if (shape.kind === 'ellipse') {
+      ctx.beginPath();
+      ctx.ellipse(x + width / 2, y + height / 2, Math.abs(width / 2), Math.abs(height / 2), 0, 0, Math.PI * 2);
+      closeAndPaint();
+      return true;
+    }
+    if (shape.kind === 'line') {
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + width, y + height);
+      closeAndPaint(false);
+      return true;
+    }
+    return false;
+  }
+
+  private drawRoundedVectorRectangle(
+    ctx: CanvasRenderingContext2D,
+    shape: VectorShape,
+    closeAndPaint: (close?: boolean) => void,
+  ): void {
+    const { x, y, width, height } = shape;
+    const radius = Math.max(0, Math.min(shape.cornerRadius ?? 20, Math.abs(width) / 2, Math.abs(height) / 2));
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + width - radius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+    ctx.lineTo(x + width, y + height - radius);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    ctx.lineTo(x + radius, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    closeAndPaint();
+  }
+
+  private drawVectorPathShape(
+    ctx: CanvasRenderingContext2D,
+    shape: VectorShape,
+    closeAndPaint: (close?: boolean) => void,
+  ): boolean {
+    if (!['polygon', 'polyline', 'freehand', 'bezier'].includes(shape.kind)) return false;
+    const points = shape.points?.length ? shape.points : [
+      { x: shape.x, y: shape.y },
+      { x: shape.x + shape.width, y: shape.y + shape.height },
+    ];
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let index = 1; index < points.length; index++) {
+      const previous = points[index - 1];
+      const next = points[index];
+      this.drawVectorPathSegment(ctx, shape, previous, next);
+    }
+    closeAndPaint(shape.kind === 'polygon');
+    return true;
+  }
+
+  private drawVectorPathSegment(
+    ctx: CanvasRenderingContext2D,
+    shape: VectorShape,
+    previous: NonNullable<VectorShape['points']>[number],
+    next: NonNullable<VectorShape['points']>[number],
+  ): void {
+    const isBezier = shape.kind === 'bezier' && (previous.outX !== undefined || next.inX !== undefined);
+    if (!isBezier) {
+      ctx.lineTo(next.x, next.y);
+      return;
+    }
+    ctx.bezierCurveTo(
+      previous.outX ?? previous.x, previous.outY ?? previous.y,
+      next.inX ?? next.x, next.inY ?? next.y, next.x, next.y,
+    );
+  }
+
+  private drawVectorStar(
+    ctx: CanvasRenderingContext2D,
+    shape: VectorShape,
+    closeAndPaint: (close?: boolean) => void,
+  ): void {
+    const spikes = Math.max(3, Math.min(64, Math.round(shape.starPoints ?? 5)));
+    const outer = Math.min(Math.abs(shape.width), Math.abs(shape.height)) / 2;
+    const inner = outer * 0.44;
+    ctx.beginPath();
+    for (let index = 0; index < spikes * 2; index++) {
+      const radius = index % 2 === 0 ? outer : inner;
+      const angle = (Math.PI * index / spikes) - Math.PI / 2;
+      const px = shape.x + shape.width / 2 + Math.cos(angle) * radius;
+      const py = shape.y + shape.height / 2 + Math.sin(angle) * radius;
+      index === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    closeAndPaint();
+  }
+
+  private drawVectorSpiral(
+    ctx: CanvasRenderingContext2D,
+    shape: VectorShape,
+    closeAndPaint: (close?: boolean) => void,
+  ): void {
+    const turns = 4.5;
+    const radius = Math.min(Math.abs(shape.width), Math.abs(shape.height)) / 2;
+    ctx.beginPath();
+    for (let index = 0; index <= 360; index++) {
+      const t = index / 360;
+      const angle = t * Math.PI * 2 * turns;
+      const distance = radius * t;
+      const px = shape.x + shape.width / 2 + Math.cos(angle) * distance;
+      const py = shape.y + shape.height / 2 + Math.sin(angle) * distance;
+      index === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    closeAndPaint(false);
+  }
+
+  private drawVectorText(ctx: CanvasRenderingContext2D, shape: VectorShape, paint: VectorPaintOptions): void {
+    ctx.font = `${shape.fontStyle ?? 'normal'} ${shape.fontWeight ?? 'normal'} ${Math.max(1, shape.fontSize ?? 64)}px ${shape.fontFamily ?? 'Arial'}`;
+    ctx.textAlign = shape.textAlign ?? 'left';
+    ctx.textBaseline = 'top';
+    const text = shape.text ?? 'Texto vectorial';
+    const width = Math.max(1, shape.width);
+    if (paint.fill) ctx.fillText(text, shape.x, shape.y, width);
+    if (paint.stroke && paint.strokeWidth > 0) ctx.strokeText(text, shape.x, shape.y, width);
+  }
+
+  private exportVectorLayerSvg(): void {
+    const layer = this.getVectorLayerForExport();
+    if (!layer) return;
+    this.downloadVectorLayerSvg(layer, this.createVectorLayerSvg());
+  }
+
+  private getVectorLayerForExport(): LayerNode | undefined {
+    const layer = this.vectorEditLayerId ? this.ctl.find(this.vectorEditLayerId) : undefined;
+    return layer?.type === 'vector' ? layer : undefined;
+  }
+
+  private createVectorLayerSvg(): string {
+    const width = this.ctl.doc.width;
+    const height = this.ctl.doc.height;
+    const shapes = this.vectorDraft.map(vectorShapeToSvg).join('\n  ');
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">\n  ${shapes}\n</svg>`;
+  }
+
+  private downloadVectorLayerSvg(layer: LayerNode, svg: string): void {
     const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob); const a = document.createElement('a');
-    a.href = url; a.download = `${layer.name.replace(/[\\/:*?"<>|]/g, '_') || 'Capa-vectorial'}.svg`; a.click();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${layer.name.replace(/[\\/:*?"<>|]/g, '_') || 'Capa-vectorial'}.svg`;
+    link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
@@ -2222,187 +3133,340 @@ export class App {
   // ───────────── Eventos ─────────────
 
   private bind(): void {
+    this.bindPluginAndLayerPanels();
+    this.wireComicManager();
+    this.initializeToolPanels();
+    this.bindMenuDropdowns();
+    this.bindWorkspaceSelector();
+    this.bindPanelVisibilityMenu();
+    this.bindToolAndViewControls();
+    this.bindEditorPanels();
+    this.bindFileToolbar();
+    this.bindCanvasEvents();
+    this.bindKeyboardShortcuts();
+  }
+
+  private bindPluginAndLayerPanels(): void {
     wirePlugins(this.root, () => this.createPluginApiContext());
     wireLayersPanel(this.root, {
       createLayer: (type) => { void this.createLayerOfType(type); },
-      deleteActiveLayer: () => {
-        if (this.stroke) return;
-        const layer = this.active();
-        if (!layer) return;
-        const reason = this.ctl.getLayerDeletionBlockReason(layer.id);
-        if (reason) {
-          this.syncUI();
-          const status = this.root.querySelector<HTMLElement>('#status');
-          if (status) status.textContent = reason;
-          return;
-        }
-        if (!this.ctl.removeLayer(layer.id)) return;
-        this.activeId = this.topRaster()?.id ?? this.ctl.doc.layers.at(-1)?.id ?? '';
-        this.ctl.comp.invalidateAll(); this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
-      },
-      duplicateActiveLayer: () => {
-        if (this.stroke || !this.active()) return;
-        const copy = this.ctl.duplicateLayer(this.activeId);
-        if (copy) this.activeId = copy.id;
-        this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
-      },
+      deleteActiveLayer: () => this.deleteActiveLayer(),
+      duplicateActiveLayer: () => this.duplicateActiveLayer(),
       moveActiveLayer: (delta) => this.moveActive(delta),
-      changeFillColor: () => { const layer = this.active(); if (layer?.type === 'fill') this.changeFillColor(layer); },
-      configureFilter: () => { const layer = this.active(); if (layer?.type === 'filter') this.openFilterEditor(layer); },
-      editVectorLayer: () => { const layer = this.active(); if (layer?.type === 'vector') this.editVectorLayer(layer); },
-      editTextLayer: () => { const layer = this.active(); if (layer?.type === 'text') void this.createTextAt({ x: layer.textX ?? 0, y: layer.textY ?? 0 }, layer); },
-      setOpacity: (opacity) => {
-        const layer = this.active(); if (!layer) return;
-        this.ctl.setProps(layer.id, { opacity }); this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
+      changeFillColor: () => {
+        const layer = this.active();
+        if (layer?.type === 'fill') this.changeFillColor(layer);
       },
-      setBlendMode: (blendMode) => {
-        const layer = this.active(); if (!layer) return;
-        this.ctl.setProps(layer.id, { blendMode }); this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
+      configureFilter: () => {
+        const layer = this.active();
+        if (layer?.type === 'filter') this.openFilterEditor(layer);
       },
+      editVectorLayer: () => {
+        const layer = this.active();
+        if (layer?.type === 'vector') this.editVectorLayer(layer);
+      },
+      editTextLayer: () => {
+        const layer = this.active();
+        if (layer?.type === 'text') void this.createTextAt({ x: layer.textX ?? 0, y: layer.textY ?? 0 }, layer);
+      },
+      setOpacity: (opacity) => this.setActiveLayerOpacity(opacity),
+      setBlendMode: (blendMode) => this.setActiveLayerBlendMode(blendMode),
     });
-    this.wireComicManager();
+  }
+
+  private deleteActiveLayer(): void {
+    if (this.stroke) return;
+    const layer = this.active();
+    if (!layer) return;
+    const reason = this.ctl.getLayerDeletionBlockReason(layer.id);
+    if (reason) {
+      this.syncUI();
+      this.reportLayerDeletionBlockReason(reason);
+      return;
+    }
+    if (!this.ctl.removeLayer(layer.id)) return;
+    this.activeId = this.topRaster()?.id ?? this.ctl.doc.layers.at(-1)?.id ?? '';
+    this.refreshAfterLayerStructureChange();
+  }
+
+  private reportLayerDeletionBlockReason(reason: string): void {
+    const status = this.root.querySelector<HTMLElement>('#status');
+    if (status) status.textContent = reason;
+  }
+
+  private duplicateActiveLayer(): void {
+    if (this.stroke || !this.active()) return;
+    const copy = this.ctl.duplicateLayer(this.activeId);
+    if (copy) this.activeId = copy.id;
+    this.refreshAfterLayerPropertyChange();
+  }
+
+  private setActiveLayerOpacity(opacity: number): void {
+    const layer = this.active();
+    if (!layer) return;
+    this.ctl.setProps(layer.id, { opacity });
+    this.refreshAfterLayerPropertyChange();
+  }
+
+  private setActiveLayerBlendMode(blendMode: LayerNode['blendMode']): void {
+    const layer = this.active();
+    if (!layer) return;
+    this.ctl.setProps(layer.id, { blendMode });
+    this.refreshAfterLayerPropertyChange();
+  }
+
+  private refreshAfterLayerStructureChange(): void {
+    this.ctl.comp.invalidateAll();
+    this.syncUI();
+    this.updateHistoryUI();
+    this.scheduleRefresh();
+  }
+
+  private refreshAfterLayerPropertyChange(): void {
+    this.syncUI();
+    this.updateHistoryUI();
+    this.scheduleRefresh();
+  }
+
+  private initializeToolPanels(): void {
     this.renderToolOptions();
     this.renderAdvancedToolOptions();
     this.applyCanvasView();
     this.updatePreviewCanvasSize();
+  }
 
-    const on = (id: string, fn: () => void) => { this.q(id).onclick = fn; };
-    const openPanel = (id: string) => { this.q<HTMLElement>('#' + id).hidden = false; };
-    const menus = [
+  private getMenuEntries() {
+    return [
       { button: this.q<HTMLButtonElement>('#menu-file'), dropdown: this.q<HTMLElement>('#file-menu-dropdown') },
       { button: this.q<HTMLButtonElement>('#menu-edit'), dropdown: this.q<HTMLElement>('#edit-menu-dropdown') },
       { button: this.q<HTMLButtonElement>('#menu-view'), dropdown: this.q<HTMLElement>('#view-menu-dropdown') },
       { button: this.q<HTMLButtonElement>('#menu-workspace'), dropdown: this.q<HTMLElement>('#workspace-menu-dropdown') },
     ];
-    const closeMenu = (menu: typeof menus[number]) => {
-      menu.dropdown.hidden = true;
-      menu.button.setAttribute('aria-expanded', 'false');
-    };
+  }
+
+  private closeMenu(menu: { button: HTMLButtonElement; dropdown: HTMLElement }): void {
+    menu.dropdown.hidden = true;
+    menu.button.setAttribute('aria-expanded', 'false');
+  }
+
+  private bindMenuDropdowns(): void {
+    const menus = this.getMenuEntries();
     for (const menu of menus) {
-      menu.button.addEventListener('click', (e) => {
-        e.stopPropagation();
+      menu.button.addEventListener('click', (event) => {
+        event.stopPropagation();
         const shouldOpen = menu.dropdown.hidden;
-        menus.forEach(closeMenu);
+        menus.forEach((entry) => this.closeMenu(entry));
         menu.dropdown.hidden = !shouldOpen;
         menu.button.setAttribute('aria-expanded', String(shouldOpen));
       });
-      menu.dropdown.addEventListener('click', (e) => {
-        if ((e.target as HTMLElement).closest('button[role^="menuitem"]')) closeMenu(menu);
+      menu.dropdown.addEventListener('click', (event) => {
+        if ((event.target as HTMLElement).closest('button[role^="menuitem"]')) this.closeMenu(menu);
       });
-      menu.dropdown.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') { closeMenu(menu); menu.button.focus(); }
+      menu.dropdown.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        this.closeMenu(menu);
+        menu.button.focus();
       });
     }
-    document.addEventListener('pointerdown', (e) => {
-      const target = e.target;
+    document.addEventListener('pointerdown', (event) => {
+      const target = event.target;
       if (!(target instanceof Node)) return;
       menus.forEach((menu) => {
-        if (!menu.dropdown.contains(target) && !menu.button.contains(target)) closeMenu(menu);
+        if (!menu.dropdown.contains(target) && !menu.button.contains(target)) this.closeMenu(menu);
       });
     });
+  }
 
-    const workspaceMenu = menus[3];
-    const refreshWorkspaceMenu = () => this.q<HTMLElement>('#workspace-menu-dropdown').querySelectorAll<HTMLButtonElement>('[data-workspace]').forEach((button) => {
-      const selected = button.dataset.workspace === this.workspace;
-      button.setAttribute('aria-checked', String(selected));
-      const check = button.querySelector<HTMLElement>('.menu-check'); if (check) check.textContent = selected ? '✓' : '';
+  private bindWorkspaceSelector(): void {
+    const workspaceMenu = this.getMenuEntries()[3];
+    const dropdown = workspaceMenu.dropdown;
+    const refresh = () => {
+      dropdown.querySelectorAll<HTMLButtonElement>('[data-workspace]').forEach((button) => {
+        const selected = button.dataset.workspace === this.workspace;
+        button.setAttribute('aria-checked', String(selected));
+        const check = button.querySelector<HTMLElement>('.menu-check');
+        if (check) check.textContent = selected ? '✓' : '';
+      });
+    };
+    dropdown.querySelectorAll<HTMLButtonElement>('[data-workspace]').forEach((button) => {
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const candidate = button.dataset.workspace as WorkspaceId;
+        if (!WORKSPACES.some((entry) => entry.id === candidate)) return;
+        this.applyWorkspace(candidate);
+        this.closeMenu(workspaceMenu);
+        refresh();
+      });
     });
-    this.q<HTMLElement>('#workspace-menu-dropdown').querySelectorAll<HTMLButtonElement>('[data-workspace]').forEach((button) => button.addEventListener('click', (event) => {
-      event.preventDefault(); event.stopPropagation();
-      const candidate = button.dataset.workspace as WorkspaceId;
-      if (!WORKSPACES.some((entry) => entry.id === candidate)) return;
-      this.applyWorkspace(candidate);
-      closeMenu(workspaceMenu);
-      refreshWorkspaceMenu();
-    }));
-    refreshWorkspaceMenu();
+    refresh();
+  }
 
-    const viewMenu = menus[2];
-    const panelsDropdown = this.q<HTMLElement>('#panels-menu-dropdown');
-    const panelsMenuButton = this.q<HTMLButtonElement>('#menu-panels');
-    const panelEntries = [
+  private getPanelVisibilityEntries() {
+    return [
       { button: this.q<HTMLButtonElement>('#toggle-panel-advanced'), panel: this.q<HTMLElement>('.advanced-tool-panel') },
       { button: this.q<HTMLButtonElement>('#toggle-panel-history'), panel: this.q<HTMLElement>('.history-panel') },
       { button: this.q<HTMLButtonElement>('#toggle-panel-layers'), panel: this.q<HTMLElement>('.layers-panel') },
       { button: this.q<HTMLButtonElement>('#toggle-panel-comic'), panel: this.q<HTMLElement>('.comic-manager-panel') },
+      { button: this.q<HTMLButtonElement>('#toggle-panel-storyboard'), panel: this.q<HTMLElement>('.storyboard-panel') },
+      { button: this.q<HTMLButtonElement>('#toggle-panel-timeline'), panel: this.q<HTMLElement>('.animation-timeline-panel') },
     ];
-    const updatePanelMenu = () => {
-      for (const entry of panelEntries) {
-        const visible = !entry.panel.hidden;
-        entry.button.setAttribute('aria-checked', String(visible));
-        const check = entry.button.querySelector<HTMLElement>('.menu-check');
-        if (check) check.textContent = visible ? '✓' : '';
-      }
-      const dock = this.q<HTMLElement>('.right-dock');
-      dock.classList.toggle('panels-empty', panelEntries.every((entry) => entry.panel.hidden || !entry.panel.closest('.dock-panel-slot')));
-      const allHidden = dock.classList.contains('panels-hidden') || this.q<HTMLElement>('.workspace').classList.contains('panels-hidden');
-      this.q<HTMLButtonElement>('#toggle-panels').setAttribute('aria-pressed', String(!allHidden));
-      panelsMenuButton.setAttribute('aria-expanded', String(!panelsDropdown.hidden));
-    };
+  }
+
+  private bindPanelVisibilityMenu(): void {
+    const viewMenu = this.getMenuEntries()[2];
+    const panelsDropdown = this.q<HTMLElement>('#panels-menu-dropdown');
+    const panelsMenuButton = this.q<HTMLButtonElement>('#menu-panels');
+    this.bindPanelDropdownEvents(viewMenu, panelsDropdown, panelsMenuButton);
+    this.bindPanelVisibilityItems(viewMenu, panelsDropdown, panelsMenuButton);
+    this.q<HTMLButtonElement>('#toggle-panels').onclick = () => this.toggleAllPanels(panelsDropdown, panelsMenuButton, viewMenu);
+    this.updatePanelVisibilityMenu(panelsDropdown, panelsMenuButton);
+    this.applyWorkspace(this.workspace, false);
+    this.dockLayout = createDockLayoutManager(this.root, this.workspace);
+    this.updatePanelVisibilityMenu(panelsDropdown, panelsMenuButton);
+  }
+
+  private bindPanelDropdownEvents(
+    viewMenu: { button: HTMLButtonElement; dropdown: HTMLElement },
+    panelsDropdown: HTMLElement,
+    panelsMenuButton: HTMLButtonElement,
+  ): void {
     viewMenu.button.addEventListener('click', () => {
-      if (viewMenu.dropdown.hidden) {
-        panelsDropdown.hidden = true;
-        panelsMenuButton.setAttribute('aria-expanded', 'false');
-      }
+      if (!viewMenu.dropdown.hidden) return;
+      panelsDropdown.hidden = true;
+      panelsMenuButton.setAttribute('aria-expanded', 'false');
     });
     panelsMenuButton.addEventListener('click', (event) => {
-      event.preventDefault(); event.stopPropagation();
+      event.preventDefault();
+      event.stopPropagation();
       panelsDropdown.hidden = !panelsDropdown.hidden;
-      updatePanelMenu();
+      this.updatePanelVisibilityMenu(panelsDropdown, panelsMenuButton);
     });
     panelsDropdown.addEventListener('click', (event) => event.stopPropagation());
     panelsDropdown.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') { panelsDropdown.hidden = true; updatePanelMenu(); panelsMenuButton.focus(); }
+      if (event.key !== 'Escape') return;
+      panelsDropdown.hidden = true;
+      this.updatePanelVisibilityMenu(panelsDropdown, panelsMenuButton);
+      panelsMenuButton.focus();
     });
-    panelEntries.forEach((entry) => {
+  }
+
+  private bindPanelVisibilityItems(
+    viewMenu: { button: HTMLButtonElement; dropdown: HTMLElement },
+    panelsDropdown: HTMLElement,
+    panelsMenuButton: HTMLButtonElement,
+  ): void {
+    this.getPanelVisibilityEntries().forEach((entry) => {
       entry.button.addEventListener('click', (event) => {
-        event.preventDefault(); event.stopPropagation();
+        event.preventDefault();
+        event.stopPropagation();
         entry.panel.hidden = !entry.panel.hidden;
         panelsDropdown.hidden = true;
-        closeMenu(viewMenu);
-        updatePanelMenu();
+        this.closeMenu(viewMenu);
+        this.updatePanelVisibilityMenu(panelsDropdown, panelsMenuButton);
         this.dockLayout?.refreshVisibility();
       });
     });
-    const toggleAllPanels = () => {
-      const dock = this.q<HTMLElement>('.right-dock');
-      const everyPanelIndividuallyHidden = panelEntries.every((entry) => entry.panel.hidden);
-      const workspace = this.q<HTMLElement>('.workspace');
-      if (dock.classList.contains('panels-hidden') || workspace.classList.contains('panels-hidden')) {
-        dock.classList.remove('panels-hidden');
-        workspace.classList.remove('panels-hidden');
-        if (everyPanelIndividuallyHidden) panelEntries.forEach((entry) => { entry.panel.hidden = false; });
-      } else if (everyPanelIndividuallyHidden) {
-        panelEntries.forEach((entry) => { entry.panel.hidden = false; });
-      } else {
-        dock.classList.add('panels-hidden');
-        workspace.classList.add('panels-hidden');
-      }
-      panelsDropdown.hidden = true;
-      closeMenu(viewMenu);
-      updatePanelMenu();
-      this.dockLayout?.refreshVisibility();
-    };
-    on('#toggle-panels', toggleAllPanels);
-    updatePanelMenu();
-    this.applyWorkspace(this.workspace, false);
-    this.dockLayout = createDockLayoutManager(this.root, this.workspace);
-    updatePanelMenu();
+  }
 
+  private updatePanelVisibilityMenu(panelsDropdown: HTMLElement, panelsMenuButton: HTMLButtonElement): void {
+    const entries = this.getPanelVisibilityEntries();
+    entries.forEach((entry) => {
+      const visible = !entry.panel.hidden;
+      entry.button.setAttribute('aria-checked', String(visible));
+      const check = entry.button.querySelector<HTMLElement>('.menu-check');
+      if (check) check.textContent = visible ? '✓' : '';
+    });
+    const dock = this.q<HTMLElement>('.right-dock');
+    dock.classList.toggle('panels-empty', entries.every((entry) => entry.panel.hidden || !entry.panel.closest('.dock-panel-slot')));
+    const workspace = this.q<HTMLElement>('.workspace');
+    const allHidden = dock.classList.contains('panels-hidden') || workspace.classList.contains('panels-hidden');
+    this.q<HTMLButtonElement>('#toggle-panels').setAttribute('aria-pressed', String(!allHidden));
+    panelsMenuButton.setAttribute('aria-expanded', String(!panelsDropdown.hidden));
+  }
+
+  private toggleAllPanels(panelsDropdown?: HTMLElement, panelsMenuButton?: HTMLButtonElement, viewMenu?: { button: HTMLButtonElement; dropdown: HTMLElement }): void {
+    const entries = this.getPanelVisibilityEntries();
+    const dock = this.q<HTMLElement>('.right-dock');
+    const workspace = this.q<HTMLElement>('.workspace');
+    const everyPanelHidden = entries.every((entry) => entry.panel.hidden);
+    const dockWasHidden = dock.classList.contains('panels-hidden') || workspace.classList.contains('panels-hidden');
+    if (dockWasHidden) {
+      dock.classList.remove('panels-hidden');
+      workspace.classList.remove('panels-hidden');
+      this.revealPanelsWhenAllHidden(entries, everyPanelHidden);
+    } else if (everyPanelHidden) {
+      entries.forEach((entry) => { entry.panel.hidden = false; });
+    } else {
+      dock.classList.add('panels-hidden');
+      workspace.classList.add('panels-hidden');
+    }
+    if (panelsDropdown) panelsDropdown.hidden = true;
+    if (viewMenu) this.closeMenu(viewMenu);
+    if (panelsMenuButton && panelsDropdown) this.updatePanelVisibilityMenu(panelsDropdown, panelsMenuButton);
+    else {
+      const dropdown = this.q<HTMLElement>('#panels-menu-dropdown');
+      const button = this.q<HTMLButtonElement>('#menu-panels');
+      this.updatePanelVisibilityMenu(dropdown, button);
+    }
+    this.dockLayout?.refreshVisibility();
+  }
+
+  private bindToolAndViewControls(): void {
+    this.bindToolButtons();
+    this.bindZoomButtons();
+    this.bindClosePanelControls();
+  }
+
+  private bindToolButtons(): void {
+    const on = (id: string, fn: () => void) => { this.q(id).onclick = fn; };
+    const openPanel = (id: string) => { this.q<HTMLElement>('#' + id).hidden = false; };
     on('#menu-filter', () => this.openDestructiveFilterPanel());
     on('#menu-layer', () => openPanel('effects-panel'));
     on('#rail-hand', () => this.setTool('hand'));
-    on('#rail-brush', () => this.setTool('brush')); on('#rail-eraser', () => this.setTool('eraser'));
-    on('#rail-eyedropper', () => this.setTool('eyedropper')); on('#rail-line', () => this.setTool('line'));
-    on('#rail-text', () => this.setTool('text')); on('#rail-vector-select', () => this.setTool('vector-select'));
-    on('#rail-rectangle', () => this.setTool('rectangle')); on('#rail-ellipse', () => this.setTool('ellipse')); on('#rail-fill', () => this.setTool('fill'));
-    on('#zoom-out', () => { this.zoom = Math.max(0.25, Math.round((this.zoom / 1.2) * 1000) / 1000); this.applyCanvasView(); });
-    on('#zoom-in', () => { this.zoom = Math.min(8, Math.round((this.zoom * 1.2) * 1000) / 1000); this.applyCanvasView(); });
-    on('#zoom-fit', () => { this.zoom = 1; this.panX = 0; this.panY = 0; this.applyCanvasView(); });
-    this.root.querySelectorAll<HTMLElement>('[data-close]').forEach((el) => el.addEventListener('click', () => {
-      const target = el.dataset.close; if (target) this.q<HTMLElement>('#' + target).hidden = true;
-    }));
-    wireFilterPanel(this.root, { labelForFilter: (kind) => this.filterLabel(kind), applyFilter: () => this.applyFilterDialog() });
+    on('#rail-brush', () => this.setTool('brush'));
+    on('#rail-eraser', () => this.setTool('eraser'));
+    on('#rail-eyedropper', () => this.setTool('eyedropper'));
+    on('#rail-line', () => this.setTool('line'));
+    on('#rail-text', () => this.setTool('text'));
+    on('#rail-vector-select', () => this.setTool('vector-select'));
+    on('#rail-rectangle', () => this.setTool('rectangle'));
+    on('#rail-ellipse', () => this.setTool('ellipse'));
+    on('#rail-fill', () => this.setTool('fill'));
+  }
+
+  private bindZoomButtons(): void {
+    this.q<HTMLButtonElement>('#zoom-out').onclick = () => {
+      this.zoom = Math.max(0.25, Math.round((this.zoom / 1.2) * 1000) / 1000);
+      this.applyCanvasView();
+    };
+    this.q<HTMLButtonElement>('#zoom-in').onclick = () => {
+      this.zoom = Math.min(8, Math.round((this.zoom * 1.2) * 1000) / 1000);
+      this.applyCanvasView();
+    };
+    this.q<HTMLButtonElement>('#zoom-fit').onclick = () => {
+      this.zoom = 1;
+      this.panX = 0;
+      this.panY = 0;
+      this.applyCanvasView();
+    };
+  }
+
+  private bindClosePanelControls(): void {
+    this.root.querySelectorAll<HTMLElement>('[data-close]').forEach((element) => {
+      element.addEventListener('click', () => {
+        const target = element.dataset.close;
+        if (!target) return;
+        this.q<HTMLElement>('#' + target).hidden = true;
+      });
+    });
+  }
+
+  private bindEditorPanels(): void {
+    wireFilterPanel(this.root, {
+      labelForFilter: (kind) => this.filterLabel(kind),
+      applyFilter: () => this.applyFilterDialog(),
+    });
     wireLayerEffectsPanel(this.root);
     wireVectorEditorPanel(this.root, {
       addShape: (kind) => this.addVectorShape(kind),
@@ -2412,57 +3476,117 @@ export class App {
       exportSvg: () => this.exportVectorLayerSvg(),
       apply: () => this.applyVectorEditor(),
       cancel: () => this.cancelVectorEditor(),
-      clear: () => { if (confirm('¿Vaciar todos los objetos de esta capa vectorial?')) { this.vectorDraft = []; this.vectorSelectedId = null; this.renderVectorEditor(); } },
+      clear: () => this.clearVectorEditor(),
       updateFromFields: () => this.updateVectorShapeFromFields(),
     });
+  }
 
-    on('#b-new', () => this.promptNew());
-    on('#b-open', () => void this.open());
-    on('#b-save', () => void this.save(false));
-    on('#b-save-as', () => void this.save(true));
+  private clearVectorEditor(): void {
+    if (!confirm('¿Vaciar todos los objetos de esta capa vectorial?')) return;
+    this.vectorDraft = [];
+    this.vectorSelectedId = null;
+    this.renderVectorEditor();
+  }
 
-    const c = this.canvas;
-    c.addEventListener('pointerdown', (e) => this.down(e));
-    c.addEventListener('pointermove', (e) => this.onPointerMove(e));
-    c.addEventListener('pointerup', (e) => this.up(e));
-    c.addEventListener('pointercancel', (e) => this.up(e));
-    c.addEventListener('contextmenu', (e) => { if (this.tool !== 'eyedropper') e.preventDefault(); });
-    const stage = this.root.querySelector<HTMLElement>('.canvas-stage')!;
-    stage.addEventListener('wheel', (e) => {
-      if (e.ctrlKey || e.metaKey) { e.preventDefault(); this.zoom = Math.max(0.25, Math.min(8, this.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1))); this.applyCanvasView(); }
-      else if (this.spaceDown || e.shiftKey) { e.preventDefault(); this.panX -= e.deltaX; this.panY -= e.deltaY; this.applyCanvasView(); }
-    }, { passive: false });
-    new ResizeObserver(() => { this.updatePreviewCanvasSize(); this.scheduleRefresh(); }).observe(stage);
+  private bindFileToolbar(): void {
+    this.q('#b-new').onclick = () => this.promptNew();
+    this.q('#b-open').onclick = () => { void this.open(); };
+    this.q('#b-save').onclick = () => { void this.save(false); };
+    this.q('#b-save-as').onclick = () => { void this.save(true); };
+  }
 
-    window.addEventListener('keydown', (e) => {
-      const mod = e.ctrlKey || e.metaKey;
-      const k = e.key.toLowerCase();
-      const target = e.target as HTMLElement | null;
-      const typing = !!target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
-      const insideMenuOrDialog = !!target?.closest('.menus, .preferences-overlay, .editor-panel');
-      if (e.key === 'Tab' && !e.shiftKey && !mod && !e.altKey && !typing && !insideMenuOrDialog) {
-        e.preventDefault();
-        toggleAllPanels();
-        return;
-      }
-      if (e.code === 'Space' && !typing) { e.preventDefault(); this.spaceDown = true; return; }
-      if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? this.doRedo() : this.doUndo(); }
-      else if (mod && k === 'y') { e.preventDefault(); this.doRedo(); }
-      else if (mod && k === 's') { e.preventDefault(); void this.save(e.shiftKey); }
-      else if (mod && k === 'o') { e.preventDefault(); void this.open(); }
-      else if (mod && k === 'n') { e.preventDefault(); this.promptNew(); }
-      else if (!mod && !typing && k === 'b') this.setTool('brush');
-      else if (!mod && !typing && k === 'e') this.setTool('eraser');
-      else if (!mod && !typing && k === 'i') this.setTool('eyedropper');
-      else if (!mod && !typing && k === 'l') this.setTool('line');
-      else if (!mod && !typing && k === 'r') this.setTool('rectangle');
-      else if (!mod && !typing && k === 'o') this.setTool('ellipse');
-      else if (!mod && !typing && k === 'g') this.setTool('fill');
-      else if (!mod && !typing && k === 'h') this.setTool('hand');
-      else if (!mod && !typing && k === 't') this.setTool('text');
-      else if (!mod && !typing && k === 'v') this.setTool('vector-select');
+  private bindCanvasEvents(): void {
+    const canvas = this.canvas;
+    canvas.addEventListener('pointerdown', (event) => this.down(event));
+    canvas.addEventListener('pointermove', (event) => this.onPointerMove(event));
+    canvas.addEventListener('pointerup', (event) => this.up(event));
+    canvas.addEventListener('pointercancel', (event) => this.up(event));
+    canvas.addEventListener('contextmenu', (event) => {
+      if (this.tool !== 'eyedropper') event.preventDefault();
     });
-    window.addEventListener('keyup', (e) => { if (e.code === 'Space') this.spaceDown = false; });
+    const stage = this.root.querySelector<HTMLElement>('.canvas-stage')!;
+    stage.addEventListener('wheel', (event) => this.handleCanvasWheel(event), { passive: false });
+    new ResizeObserver(() => {
+      this.updatePreviewCanvasSize();
+      this.scheduleRefresh();
+    }).observe(stage);
+  }
+
+  private handleCanvasWheel(event: WheelEvent): void {
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      this.zoom = Math.max(0.25, Math.min(8, this.zoom * (event.deltaY < 0 ? 1.1 : 1 / 1.1)));
+      this.applyCanvasView();
+      return;
+    }
+    if (!this.spaceDown && !event.shiftKey) return;
+    event.preventDefault();
+    this.panX -= event.deltaX;
+    this.panY -= event.deltaY;
+    this.applyCanvasView();
+  }
+
+  private bindKeyboardShortcuts(): void {
+    window.addEventListener('keydown', (event) => this.handleKeyDown(event));
+    window.addEventListener('keyup', (event) => {
+      if (event.code === 'Space') this.spaceDown = false;
+    });
+  }
+
+  private handleKeyDown(event: KeyboardEvent): void {
+    const mod = event.ctrlKey || event.metaKey;
+    const key = event.key.toLowerCase();
+    const target = event.target as HTMLElement | null;
+    const typing = this.isTypingTarget(target);
+    const insideMenuOrDialog = !!target?.closest('.menus, .preferences-overlay, .editor-panel');
+    if (this.shouldTogglePanelsFromKey(event, mod, typing, insideMenuOrDialog)) {
+      event.preventDefault();
+      this.toggleAllPanels();
+      return;
+    }
+    if (event.code === 'Space' && !typing) {
+      event.preventDefault();
+      this.spaceDown = true;
+      return;
+    }
+    if (this.handleDocumentShortcut(event, mod, key)) return;
+    this.handleToolShortcut(key, mod, typing);
+  }
+
+  private isTypingTarget(target: HTMLElement | null): boolean {
+    return !!target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+  }
+
+  private shouldTogglePanelsFromKey(event: KeyboardEvent, mod: boolean, typing: boolean, insideMenuOrDialog: boolean): boolean {
+    return event.key === 'Tab' && !event.shiftKey && !mod && !event.altKey && !typing && !insideMenuOrDialog;
+  }
+
+  private revealPanelsWhenAllHidden(entries: ReturnType<App['getPanelVisibilityEntries']>, everyPanelHidden: boolean): void {
+    if (everyPanelHidden) entries.forEach((entry) => { entry.panel.hidden = false; });
+  }
+
+  private handleDocumentShortcut(event: KeyboardEvent, mod: boolean, key: string): boolean {
+    if (!mod) return false;
+    if (key === 'z') {
+      event.preventDefault();
+      event.shiftKey ? this.doRedo() : this.doUndo();
+      return true;
+    }
+    if (key === 'y') { event.preventDefault(); this.doRedo(); return true; }
+    if (key === 's') { event.preventDefault(); void this.save(event.shiftKey); return true; }
+    if (key === 'o') { event.preventDefault(); void this.open(); return true; }
+    if (key === 'n') { event.preventDefault(); this.promptNew(); return true; }
+    return false;
+  }
+
+  private handleToolShortcut(key: string, mod: boolean, typing: boolean): void {
+    if (mod || typing) return;
+    const tools: Record<string, Tool> = {
+      b: 'brush', e: 'eraser', i: 'eyedropper', l: 'line', r: 'rectangle',
+      o: 'ellipse', g: 'fill', h: 'hand', t: 'text', v: 'vector-select',
+    };
+    const tool = tools[key];
+    if (tool) this.setTool(tool);
   }
 
   private createPluginApiContext(): Partial<PluginApi> {
@@ -2524,23 +3648,40 @@ export class App {
     const clone: VectorShape = { ...original, points: original.points?.map((point) => ({ ...point })) };
     if (mode === 'move') {
       clone.x = original.x + dx; clone.y = original.y + dy;
-      if (clone.points) clone.points = clone.points.map((point) => ({
-        ...point, x: point.x + dx, y: point.y + dy,
-        ...(point.inX !== undefined ? { inX: point.inX + dx } : {}), ...(point.inY !== undefined ? { inY: point.inY + dy } : {}),
-        ...(point.outX !== undefined ? { outX: point.outX + dx } : {}), ...(point.outY !== undefined ? { outY: point.outY + dy } : {}),
-      }));
+      clone.points = this.moveVectorPoints(clone.points, dx, dy);
       return clone;
     }
     const nextWidth = Math.max(1, original.width + dx), nextHeight = Math.max(1, original.height + dy);
     const sx = nextWidth / Math.max(1, original.width), sy = nextHeight / Math.max(1, original.height);
     clone.width = nextWidth; clone.height = nextHeight;
-    if (clone.points) clone.points = clone.points.map((point) => ({
+    clone.points = this.resizeVectorPoints(clone.points, original, sx, sy);
+    if (clone.kind === 'text') clone.fontSize = Math.max(1, (original.fontSize ?? 64) * Math.min(sx, sy));
+    return clone;
+  }
+
+  private moveVectorPoints(
+    points: VectorShape['points'],
+    dx: number,
+    dy: number,
+  ): VectorShape['points'] {
+    return points?.map((point) => ({
+      ...point, x: point.x + dx, y: point.y + dy,
+      ...(point.inX !== undefined ? { inX: point.inX + dx } : {}), ...(point.inY !== undefined ? { inY: point.inY + dy } : {}),
+      ...(point.outX !== undefined ? { outX: point.outX + dx } : {}), ...(point.outY !== undefined ? { outY: point.outY + dy } : {}),
+    }));
+  }
+
+  private resizeVectorPoints(
+    points: VectorShape['points'],
+    original: VectorShape,
+    sx: number,
+    sy: number,
+  ): VectorShape['points'] {
+    return points?.map((point) => ({
       ...point, x: original.x + (point.x - original.x) * sx, y: original.y + (point.y - original.y) * sy,
       ...(point.inX !== undefined ? { inX: original.x + (point.inX - original.x) * sx } : {}), ...(point.inY !== undefined ? { inY: original.y + (point.inY - original.y) * sy } : {}),
       ...(point.outX !== undefined ? { outX: original.x + (point.outX - original.x) * sx } : {}), ...(point.outY !== undefined ? { outY: original.y + (point.outY - original.y) * sy } : {}),
     }));
-    if (clone.kind === 'text') clone.fontSize = Math.max(1, (original.fontSize ?? 64) * Math.min(sx, sy));
-    return clone;
   }
 
   private updateVectorGesture(point: { x: number; y: number }): void {
@@ -2596,12 +3737,11 @@ export class App {
     const layer = this.active();
     const needsPaintTarget = !['hand', 'eyedropper', 'text', 'vector-select'].includes(t);
     if (t === 'vector-select' && (!layer || layer.type !== 'vector' || this.ctl.isEffectivelyLocked(layer.id) || !this.ctl.isEffectivelyVisible(layer.id))) {
-      const status = this.root.querySelector<HTMLElement>('#status'); if (status) status.textContent = 'Seleccioná una capa vectorial visible y desbloqueada para editar sus objetos directamente.';
+      this.reportVectorToolUnavailable();
       return;
     }
     if (needsPaintTarget && (!layer || (layer.type !== 'paint' && layer.type !== 'raster') || this.ctl.isEffectivelyLocked(layer.id) || !this.ctl.isEffectivelyVisible(layer.id))) {
-      const status = this.root.querySelector<HTMLElement>('#status');
-      if (status) status.textContent = !layer ? 'Creá o seleccioná una capa de pintura para usar esta herramienta' : layer.locked || this.ctl.isEffectivelyLocked(layer.id) ? 'La capa está bloqueada' : !this.ctl.isEffectivelyVisible(layer.id) ? 'La capa está oculta' : `${this.layerTypeLabel(layer.type)}: seleccioná una capa de pintura para dibujar`;
+      this.reportPaintToolUnavailable(layer);
       return;
     }
     this.tool = t;
@@ -2610,6 +3750,20 @@ export class App {
     this.renderAdvancedToolOptions();
     this.applyCanvasView();
     this.clearToolPreview();
+  }
+
+  private reportVectorToolUnavailable(): void {
+    const status = this.root.querySelector<HTMLElement>('#status');
+    if (status) status.textContent = 'Seleccioná una capa vectorial visible y desbloqueada para editar sus objetos directamente.';
+  }
+
+  private reportPaintToolUnavailable(layer: LayerNode | undefined): void {
+    const status = this.root.querySelector<HTMLElement>('#status');
+    if (!status) return;
+    status.textContent = !layer ? 'Creá o seleccioná una capa de pintura para usar esta herramienta'
+      : layer.locked || this.ctl.isEffectivelyLocked(layer.id) ? 'La capa está bloqueada'
+      : !this.ctl.isEffectivelyVisible(layer.id) ? 'La capa está oculta'
+      : `${this.layerTypeLabel(layer.type)}: seleccioná una capa de pintura para dibujar`;
   }
 
   private promptNew(): void {
@@ -2640,97 +3794,305 @@ export class App {
   }
 
   /** Borde suave configurado por dureza/opacidad; todas las escrituras quedan dentro de la acción del trazo. */
+  /** Borde suave configurado por dureza/opacidad; todas las escrituras quedan dentro de la acción del trazo. */
   private stamp(x: number, y: number): void {
     const layer = this.strokeLayer;
     if (!layer || !this.stroke) return;
+    const operation = this.createStampOperation(x, y);
+    if (!operation) return;
+    const pixels = this.readStampPixels(layer, operation.region);
+    const changed = this.applyStampToPixels(pixels, operation);
+    if (changed && layer.writeRectFromJS(
+      operation.region.left, operation.region.top, operation.region.width, operation.region.height, pixels,
+    )) this.scheduleRefresh();
+  }
+
+  private createStampOperation(x: number, y: number): StampOperation | null {
+    const region = this.getStampRegion(x, y);
+    if (!region) return null;
+    const radius = Math.max(0.5, this.brush.size / 2);
+    const hardEdge = radius * (this.brush.hardness / 100);
+    return {
+      region,
+      centerX: x,
+      centerY: y,
+      radius,
+      hardEdge,
+      fadeWidth: Math.max(0.5, radius + 0.5 - hardEdge),
+      erase: this.strokeTool === 'eraser',
+      color: [this.brush.rgb[0], this.brush.rgb[1], this.brush.rgb[2]],
+      opacity: this.brush.opacity / 100,
+    };
+  }
+
+  private getStampRegion(x: number, y: number): PixelRegion | null {
     const { width, height } = this.ctl.doc;
     const radius = Math.max(0.5, this.brush.size / 2);
     const left = Math.max(0, Math.floor(x - radius - 1));
     const top = Math.max(0, Math.floor(y - radius - 1));
     const right = Math.min(width, Math.ceil(x + radius + 1));
     const bottom = Math.min(height, Math.ceil(y + radius + 1));
-    const w = right - left, h = bottom - top;
-    if (w <= 0 || h <= 0) return;
-    const pixels = new Uint8Array(w * h * 4);
-    layer.readRectToJS(left, top, w, h, pixels);
-    const hardEdge = radius * (this.brush.hardness / 100);
-    const fadeWidth = Math.max(0.5, radius + 0.5 - hardEdge);
-    const erase = this.strokeTool === 'eraser';
-    const [cr, cg, cb] = this.brush.rgb;
-    const opacity = this.brush.opacity / 100;
-    let changed = false;
-    for (let py = 0; py < h; py++) {
-      for (let px = 0; px < w; px++) {
-        const distance = Math.hypot(left + px + 0.5 - x, top + py + 0.5 - y);
-        if (distance >= radius + 0.5) continue;
-        let coverage = 1;
-        if (distance > hardEdge) {
-          const t = Math.max(0, Math.min(1, (radius + 0.5 - distance) / fadeWidth));
-          coverage = t * t * (3 - 2 * t);
-        }
-        const srcA = coverage * opacity;
-        if (srcA <= 0) continue;
-        const i = (py * w + px) * 4;
-        const oldA = pixels[i + 3] / 255;
-        if (erase) {
-          const nextA = oldA * (1 - srcA);
-          if (nextA !== oldA) changed = true;
-          pixels[i + 3] = Math.round(nextA * 255);
-          if (nextA <= 0.0001) { pixels[i] = 0; pixels[i + 1] = 0; pixels[i + 2] = 0; pixels[i + 3] = 0; }
-        } else {
-          const nextA = srcA + oldA * (1 - srcA);
-          const oldWeight = oldA * (1 - srcA);
-          if (nextA > 0) {
-            pixels[i] = Math.round((cr * srcA + pixels[i] * oldWeight) / nextA);
-            pixels[i + 1] = Math.round((cg * srcA + pixels[i + 1] * oldWeight) / nextA);
-            pixels[i + 2] = Math.round((cb * srcA + pixels[i + 2] * oldWeight) / nextA);
-            pixels[i + 3] = Math.round(nextA * 255);
-            changed = true;
-          }
-        }
-      }
-    }
-    if (changed && layer.writeRectFromJS(left, top, w, h, pixels)) this.scheduleRefresh();
+    const region = { left, top, width: right - left, height: bottom - top };
+    return region.width > 0 && region.height > 0 ? region : null;
   }
 
-  private down(e: PointerEvent): void {
-    if (this.stroke || this.isPanning) return;
-    if (e.button === 1 || this.spaceDown || this.tool === 'hand') {
-      if (e.button !== 0 && e.button !== 1 && !this.spaceDown && this.tool !== 'hand') return;
-      e.preventDefault();
-      this.canvas.setPointerCapture(e.pointerId);
-      this.isPanning = true;
-      this.panStart = { clientX: e.clientX, clientY: e.clientY, x: this.panX, y: this.panY };
-      this.canvas.style.cursor = 'grabbing';
+  private readStampPixels(layer: NonNullable<App['strokeLayer']>, region: PixelRegion): Uint8Array {
+    const pixels = new Uint8Array(region.width * region.height * 4);
+    layer.readRectToJS(region.left, region.top, region.width, region.height, pixels);
+    return pixels;
+  }
+
+  private applyStampToPixels(pixels: Uint8Array, operation: StampOperation): boolean {
+    let changed = false;
+    const pixelCount = operation.region.width * operation.region.height;
+    for (let pixel = 0; pixel < pixelCount; pixel++) {
+      changed = this.applyStampPixel(pixels, pixel, operation) || changed;
+    }
+    return changed;
+  }
+
+  private applyStampPixel(pixels: Uint8Array, pixel: number, operation: StampOperation): boolean {
+    const { region, centerX, centerY, radius } = operation;
+    const x = region.left + pixel % region.width + 0.5;
+    const y = region.top + Math.floor(pixel / region.width) + 0.5;
+    const distance = Math.hypot(x - centerX, y - centerY);
+    if (distance >= radius + 0.5) return false;
+    const coverage = this.stampCoverage(distance, operation);
+    const sourceAlpha = coverage * operation.opacity;
+    if (sourceAlpha <= 0) return false;
+    const offset = pixel * 4;
+    return operation.erase
+      ? this.applyEraserPixel(pixels, offset, sourceAlpha)
+      : this.applyBrushPixel(pixels, offset, sourceAlpha, operation.color);
+  }
+
+  private stampCoverage(distance: number, operation: StampOperation): number {
+    if (distance <= operation.hardEdge) return 1;
+    const t = Math.max(0, Math.min(1, (operation.radius + 0.5 - distance) / operation.fadeWidth));
+    return t * t * (3 - 2 * t);
+  }
+
+  private applyEraserPixel(pixels: Uint8Array, offset: number, sourceAlpha: number): boolean {
+    const oldAlpha = pixels[offset + 3] / 255;
+    const nextAlpha = oldAlpha * (1 - sourceAlpha);
+    const changed = nextAlpha !== oldAlpha;
+    pixels[offset + 3] = Math.round(nextAlpha * 255);
+    if (nextAlpha <= 0.0001) {
+      pixels[offset] = 0;
+      pixels[offset + 1] = 0;
+      pixels[offset + 2] = 0;
+      pixels[offset + 3] = 0;
+    }
+    return changed;
+  }
+
+  private applyBrushPixel(
+    pixels: Uint8Array,
+    offset: number,
+    sourceAlpha: number,
+    color: readonly [number, number, number],
+  ): boolean {
+    const oldAlpha = pixels[offset + 3] / 255;
+    const nextAlpha = sourceAlpha + oldAlpha * (1 - sourceAlpha);
+    if (nextAlpha <= 0) return false;
+    const oldWeight = oldAlpha * (1 - sourceAlpha);
+    pixels[offset] = Math.round((color[0] * sourceAlpha + pixels[offset] * oldWeight) / nextAlpha);
+    pixels[offset + 1] = Math.round((color[1] * sourceAlpha + pixels[offset + 1] * oldWeight) / nextAlpha);
+    pixels[offset + 2] = Math.round((color[2] * sourceAlpha + pixels[offset + 2] * oldWeight) / nextAlpha);
+    pixels[offset + 3] = Math.round(nextAlpha * 255);
+    return true;
+  }
+
+  private commitShape(start: { x: number; y: number }, end: { x: number; y: number }, tool: Tool): void {
+    const layer = this.strokeLayer;
+    if (!layer) return;
+    const region = this.getShapeRegion(start, end);
+    if (!region) return;
+    const source = this.renderShapePixels(start, end, tool, region);
+    if (!source) return;
+    const target = this.blendShapePixels(layer, region, source);
+    if (target) layer.writeRectFromJS(region.left, region.top, region.width, region.height, target);
+  }
+
+  private getShapeRegion(start: { x: number; y: number }, end: { x: number; y: number }): PixelRegion | null {
+    const padding = Math.ceil(this.brush.size / 2) + 2;
+    const left = Math.max(0, Math.floor(Math.min(start.x, end.x) - padding));
+    const top = Math.max(0, Math.floor(Math.min(start.y, end.y) - padding));
+    const right = Math.min(this.ctl.doc.width, Math.ceil(Math.max(start.x, end.x) + padding));
+    const bottom = Math.min(this.ctl.doc.height, Math.ceil(Math.max(start.y, end.y) + padding));
+    const region = { left, top, width: right - left, height: bottom - top };
+    return region.width > 0 && region.height > 0 ? region : null;
+  }
+
+  private renderShapePixels(
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+    tool: Tool,
+    region: PixelRegion,
+  ): Uint8ClampedArray | null {
+    const scratch = document.createElement('canvas');
+    scratch.width = region.width;
+    scratch.height = region.height;
+    const ctx = scratch.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+    this.drawShapeSource(ctx, start, end, tool, region);
+    ctx.globalAlpha = 1;
+    return ctx.getImageData(0, 0, region.width, region.height).data;
+  }
+
+  private drawShapeSource(
+    ctx: CanvasRenderingContext2D,
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+    tool: Tool,
+    region: PixelRegion,
+  ): void {
+    ctx.clearRect(0, 0, region.width, region.height);
+    ctx.globalAlpha = this.brush.opacity / 100;
+    ctx.strokeStyle = this.foregroundHex();
+    ctx.fillStyle = this.foregroundHex();
+    ctx.lineWidth = this.brush.size;
+    ctx.lineCap = this.brush.lineCap;
+    ctx.lineJoin = this.brush.lineJoin;
+    const x1 = start.x - region.left;
+    const y1 = start.y - region.top;
+    const x2 = end.x - region.left;
+    const y2 = end.y - region.top;
+    if (tool === 'line') {
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
       return;
     }
-    if (e.button !== 0) return;
-    const point = this.toDoc(e);
+    if (tool === 'rectangle') {
+      this.drawRectangleSource(ctx, x1, y1, x2, y2);
+      return;
+    }
+    if (tool === 'ellipse') this.drawEllipseSource(ctx, x1, y1, x2, y2);
+  }
+
+  private drawRectangleSource(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number): void {
+    const x = Math.min(x1, x2);
+    const y = Math.min(y1, y2);
+    const width = Math.abs(x2 - x1);
+    const height = Math.abs(y2 - y1);
+    if (this.brush.shapeFill) ctx.fillRect(x, y, width, height);
+    ctx.strokeRect(x, y, width, height);
+  }
+
+  private drawEllipseSource(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number): void {
+    const cx = (x1 + x2) / 2;
+    const cy = (y1 + y2) / 2;
+    const rx = Math.abs(x2 - x1) / 2;
+    const ry = Math.abs(y2 - y1) / 2;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, Math.max(0.5, rx), Math.max(0.5, ry), 0, 0, Math.PI * 2);
+    if (this.brush.shapeFill) ctx.fill();
+    ctx.stroke();
+  }
+
+  private blendShapePixels(
+    layer: NonNullable<App['strokeLayer']>,
+    region: PixelRegion,
+    source: Uint8ClampedArray,
+  ): Uint8Array | null {
+    const target = new Uint8Array(region.width * region.height * 4);
+    layer.readRectToJS(region.left, region.top, region.width, region.height, target);
+    let changed = false;
+    for (let offset = 0; offset < target.length; offset += 4) {
+      changed = this.blendShapePixel(source, target, offset) || changed;
+    }
+    return changed ? target : null;
+  }
+
+  private blendShapePixel(source: Uint8ClampedArray, target: Uint8Array, offset: number): boolean {
+    const sourceAlpha = source[offset + 3] / 255;
+    if (sourceAlpha <= 0) return false;
+    const destinationAlpha = target[offset + 3] / 255;
+    const outputAlpha = sourceAlpha + destinationAlpha * (1 - sourceAlpha);
+    const oldWeight = destinationAlpha * (1 - sourceAlpha);
+    target[offset] = Math.round((source[offset] * sourceAlpha + target[offset] * oldWeight) / outputAlpha);
+    target[offset + 1] = Math.round((source[offset + 1] * sourceAlpha + target[offset + 1] * oldWeight) / outputAlpha);
+    target[offset + 2] = Math.round((source[offset + 2] * sourceAlpha + target[offset + 2] * oldWeight) / outputAlpha);
+    target[offset + 3] = Math.round(outputAlpha * 255);
+    return true;
+  }
+
+  private down(event: PointerEvent): void {
+    if (this.stroke || this.isPanning) return;
+    if (this.tryBeginPanning(event)) return;
+    if (event.button !== 0) return;
+    const point = this.toDoc(event);
     if (!this.onDocument(point)) return;
-    if (this.tool === 'eyedropper') { this.pickColorAt(Math.floor(point.x), Math.floor(point.y)); return; }
-    if (this.tool === 'text') { void this.createTextAt({ x: Math.round(point.x), y: Math.round(point.y) }); return; }
-    if (this.tool === 'vector-select') { this.beginVectorGesture(point, e); return; }
-    const layer = this.active();
+    if (this.handleImmediateTool(point, event)) return;
+    const layer = this.getEditablePaintLayer();
     if (!layer) return;
+    if (this.tool === 'fill') {
+      this.fillAt(point, layer);
+      return;
+    }
+    this.beginPaintStroke(event, point, layer);
+  }
+
+  private tryBeginPanning(event: PointerEvent): boolean {
+    const shouldPan = event.button === 1 || this.spaceDown || this.tool === 'hand';
+    if (!shouldPan) return false;
+    event.preventDefault();
+    this.canvas.setPointerCapture(event.pointerId);
+    this.isPanning = true;
+    this.panStart = { clientX: event.clientX, clientY: event.clientY, x: this.panX, y: this.panY };
+    this.canvas.style.cursor = 'grabbing';
+    return true;
+  }
+
+  private handleImmediateTool(point: { x: number; y: number }, event: PointerEvent): boolean {
+    if (this.tool === 'eyedropper') {
+      this.pickColorAt(Math.floor(point.x), Math.floor(point.y));
+      return true;
+    }
+    if (this.tool === 'text') {
+      void this.createTextAt({ x: Math.round(point.x), y: Math.round(point.y) });
+      return true;
+    }
+    if (this.tool === 'vector-select') {
+      this.beginVectorGesture(point, event);
+      return true;
+    }
+    return false;
+  }
+
+  private getEditablePaintLayer(): LayerNode | null {
+    const layer = this.active();
+    if (!layer) return null;
     if (layer.type !== 'paint' && layer.type !== 'raster') {
       this.q<HTMLElement>('#status').textContent = `${this.layerTypeLabel(layer.type)}: elegí una capa de pintura para editar píxeles`;
-      return;
+      return null;
     }
-    if (!this.ctl.isEffectivelyVisible(layer.id) || this.ctl.isEffectivelyLocked(layer.id)) {
-      this.q<HTMLElement>('#status').textContent = this.ctl.isEffectivelyLocked(layer.id) ? 'La capa o su grupo está bloqueado' : 'La capa o su grupo está oculto';
-      return;
+    const locked = this.ctl.isEffectivelyLocked(layer.id);
+    const visible = this.ctl.isEffectivelyVisible(layer.id);
+    if (!visible || locked) {
+      this.q<HTMLElement>('#status').textContent = locked
+        ? 'La capa o su grupo está bloqueado'
+        : 'La capa o su grupo está oculto';
+      return null;
     }
-    if (this.tool === 'fill') { this.fillAt(point, layer); return; }
-    this.canvas.setPointerCapture(e.pointerId);
+    return layer;
+  }
+
+  private beginPaintStroke(event: PointerEvent, point: { x: number; y: number }, layer: LayerNode): void {
+    this.canvas.setPointerCapture(event.pointerId);
     this.stroke = new StrokeSession(this.ctx, layer.engineId);
     this.strokeLayer = this.ctl.layerPixels(layer);
     this.strokeTool = this.tool;
     this.last = point;
-    if (this.tool === 'brush' || this.tool === 'eraser') this.stamp(point.x, point.y);
-    else if (this.tool === 'line' || this.tool === 'rectangle' || this.tool === 'ellipse') {
-      this.shapeStart = { ...point, clientX: e.clientX, clientY: e.clientY };
-      this.drawToolPreview(e);
+    if (this.tool === 'brush' || this.tool === 'eraser') {
+      this.stamp(point.x, point.y);
+      return;
     }
+    if (this.tool !== 'line' && this.tool !== 'rectangle' && this.tool !== 'ellipse') return;
+    this.shapeStart = { ...point, clientX: event.clientX, clientY: event.clientY };
+    this.drawToolPreview(event);
   }
 
   private onPointerMove(e: PointerEvent, finalPoint = false): void {
@@ -2757,8 +4119,14 @@ export class App {
     if (dist < step && !finalPoint) return;
     const n = Math.max(1, Math.floor(dist / step));
     if (dist > 0) {
-      for (let i = 1; i <= n; i++) this.stamp(this.last.x + (dx * i) / n, this.last.y + (dy * i) / n);
+      this.stampInterpolatedSegment(this.last, dx, dy, n);
       this.last = p;
+    }
+  }
+
+  private stampInterpolatedSegment(start: { x: number; y: number }, dx: number, dy: number, steps: number): void {
+    for (let index = 1; index <= steps; index++) {
+      this.stamp(start.x + (dx * index) / steps, start.y + (dy * index) / steps);
     }
   }
 
@@ -2783,63 +4151,14 @@ export class App {
     if (this.strokeTool === 'line') { ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); }
     else if (this.strokeTool === 'rectangle') {
       const x = Math.min(x1, x2), y = Math.min(y1, y2), w = Math.abs(x2 - x1), h = Math.abs(y2 - y1);
-      if (this.brush.shapeFill) ctx.fillRect(x, y, w, h);
+      this.brush.shapeFill ? ctx.fillRect(x, y, w, h) : undefined;
       ctx.strokeRect(x, y, w, h);
     } else if (this.strokeTool === 'ellipse') {
       const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2, rx = Math.abs(x2 - x1) / 2, ry = Math.abs(y2 - y1) / 2;
       ctx.beginPath(); ctx.ellipse(cx, cy, Math.max(0.5, rx), Math.max(0.5, ry), 0, 0, Math.PI * 2);
-      if (this.brush.shapeFill) ctx.fill(); ctx.stroke();
+      this.brush.shapeFill ? ctx.fill() : undefined; ctx.stroke();
     }
     ctx.globalAlpha = 1;
-  }
-
-  private commitShape(start: { x: number; y: number }, end: { x: number; y: number }, tool: Tool): void {
-    const layer = this.strokeLayer;
-    if (!layer) return;
-    const { width: docW, height: docH } = this.ctl.doc;
-    const padding = Math.ceil(this.brush.size / 2) + 2;
-    const left = Math.max(0, Math.floor(Math.min(start.x, end.x) - padding));
-    const top = Math.max(0, Math.floor(Math.min(start.y, end.y) - padding));
-    const right = Math.min(docW, Math.ceil(Math.max(start.x, end.x) + padding));
-    const bottom = Math.min(docH, Math.ceil(Math.max(start.y, end.y) + padding));
-    const w = right - left, h = bottom - top;
-    if (w <= 0 || h <= 0) return;
-    const scratch = document.createElement('canvas'); scratch.width = w; scratch.height = h;
-    const ctx = scratch.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return;
-    ctx.clearRect(0, 0, w, h);
-    ctx.globalAlpha = this.brush.opacity / 100;
-    ctx.strokeStyle = this.foregroundHex(); ctx.fillStyle = this.foregroundHex();
-    ctx.lineWidth = this.brush.size; ctx.lineCap = this.brush.lineCap; ctx.lineJoin = this.brush.lineJoin;
-    const x1 = start.x - left, y1 = start.y - top, x2 = end.x - left, y2 = end.y - top;
-    if (tool === 'line') { ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); }
-    else if (tool === 'rectangle') {
-      const x = Math.min(x1, x2), y = Math.min(y1, y2), rw = Math.abs(x2 - x1), rh = Math.abs(y2 - y1);
-      if (this.brush.shapeFill) ctx.fillRect(x, y, rw, rh);
-      ctx.strokeRect(x, y, rw, rh);
-    } else if (tool === 'ellipse') {
-      const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2, rx = Math.abs(x2 - x1) / 2, ry = Math.abs(y2 - y1) / 2;
-      ctx.beginPath(); ctx.ellipse(cx, cy, Math.max(0.5, rx), Math.max(0.5, ry), 0, 0, Math.PI * 2);
-      if (this.brush.shapeFill) ctx.fill(); ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-    const source = ctx.getImageData(0, 0, w, h).data;
-    const target = new Uint8Array(w * h * 4);
-    layer.readRectToJS(left, top, w, h, target);
-    let changed = false;
-    for (let i = 0; i < target.length; i += 4) {
-      const sa = source[i + 3] / 255;
-      if (sa <= 0) continue;
-      const da = target[i + 3] / 255;
-      const outA = sa + da * (1 - sa);
-      const oldWeight = da * (1 - sa);
-      target[i] = Math.round((source[i] * sa + target[i] * oldWeight) / outA);
-      target[i + 1] = Math.round((source[i + 1] * sa + target[i + 1] * oldWeight) / outA);
-      target[i + 2] = Math.round((source[i + 2] * sa + target[i + 2] * oldWeight) / outA);
-      target[i + 3] = Math.round(outA * 255);
-      changed = true;
-    }
-    if (changed) layer.writeRectFromJS(left, top, w, h, target);
   }
 
   private up(e?: PointerEvent): void {
@@ -2851,10 +4170,7 @@ export class App {
     if (!this.stroke) { this.clearToolPreview(); return; }
     const tool = this.strokeTool;
     try {
-      if (e && (tool === 'brush' || tool === 'eraser')) this.onPointerMove(e, true);
-      else if (e && this.shapeStart && (tool === 'line' || tool === 'rectangle' || tool === 'ellipse')) {
-        this.commitShape(this.shapeStart, this.toDoc(e), tool);
-      }
+      this.commitPointerUpAction(e, tool);
       const label: Record<Tool, string> = { brush: 'Pincel', eraser: 'Borrador', eyedropper: 'Cuentagotas', line: 'Línea', rectangle: 'Rectángulo', ellipse: 'Elipse', fill: 'Relleno', hand: 'Mover lienzo', text: 'Texto', 'vector-select': 'Selección vectorial' };
       this.stroke.end(label[tool ?? 'brush']);
     } catch (error) {
@@ -2867,113 +4183,322 @@ export class App {
   }
 
   private fillAt(point: { x: number; y: number }, node: LayerNode): void {
+    const limitMessage = this.fillLimitMessage();
+    if (limitMessage) {
+      this.q<HTMLElement>('#status').textContent = limitMessage;
+      return;
+    }
+    const operation = this.createFillOperation(point, node);
+    if (!operation) return;
+    const result = this.executeFillOperation(operation);
+    if (result.filled === 0) {
+      this.q<HTMLElement>('#status').textContent = 'No se encontraron píxeles dentro de la tolerancia.';
+      return;
+    }
+    this.commitFillResult(node, operation, result);
+    this.q<HTMLElement>('#status').textContent = `Relleno aplicado · ${result.filled.toLocaleString()} píxeles`;
+    this.updateHistoryUI();
+    if (this.hasFilterLayer()) this.scheduleRefresh();
+  }
+
+  private fillLimitMessage(): string | null {
+    const total = this.ctl.doc.width * this.ctl.doc.height;
+    if (total > 8_000_000) {
+      return 'El relleno está limitado a 8 millones de píxeles para proteger la memoria. Reducí el tamaño o usá un documento más pequeño.';
+    }
+    if (this.brush.sampleMerged && total > 4_000_000) {
+      return 'El muestreo de todas las capas en el bote de pintura admite hasta 4 millones de píxeles por operación.';
+    }
+    return null;
+  }
+
+  private createFillOperation(point: { x: number; y: number }, node: LayerNode): FillOperation | null {
+    if (!this.ctl.layerPixels(node)) return null;
     const { width, height } = this.ctl.doc;
-    const total = width * height;
-    if (total > 8_000_000) { this.q<HTMLElement>('#status').textContent = 'El relleno está limitado a 8 millones de píxeles para proteger la memoria. Reducí el tamaño o usá un documento más pequeño.'; return; }
-    if (this.brush.sampleMerged && total > 4_000_000) { this.q<HTMLElement>('#status').textContent = 'El muestreo de todas las capas en el bote de pintura admite hasta 4 millones de píxeles por operación.'; return; }
-    const targetLayer = this.ctl.layerPixels(node);
-    if (!targetLayer) return;
-    const original = this.ctl.readPixels(node) ?? new Uint8Array(total * 4);
+    const original = this.ctl.readPixels(node) ?? new Uint8Array(width * height * 4);
     const reference = this.brush.sampleMerged ? this.compositePixelsForSampling() : original;
-    if (!reference) return;
+    if (!reference) return null;
     const seedX = Math.max(0, Math.min(width - 1, Math.floor(point.x)));
     const seedY = Math.max(0, Math.min(height - 1, Math.floor(point.y)));
     const seed = (seedY * width + seedX) * 4;
-    const sr = reference[seed], sg = reference[seed + 1], sb = reference[seed + 2], sa = reference[seed + 3];
-    const tolerance = this.brush.tolerance;
-    const matches = (i: number) => Math.max(Math.abs(reference[i] - sr), Math.abs(reference[i + 1] - sg), Math.abs(reference[i + 2] - sb), Math.abs(reference[i + 3] - sa)) <= tolerance;
-    const result = new Uint8Array(original);
-    const [cr, cg, cb] = this.brush.rgb;
-    const srcA = this.brush.opacity / 100;
-    const paint = (pixel: number) => {
-      const i = pixel * 4, oldA = result[i + 3] / 255, outA = srcA + oldA * (1 - srcA), oldWeight = oldA * (1 - srcA);
-      if (outA <= 0) return;
-      result[i] = Math.round((cr * srcA + result[i] * oldWeight) / outA);
-      result[i + 1] = Math.round((cg * srcA + result[i + 1] * oldWeight) / outA);
-      result[i + 2] = Math.round((cb * srcA + result[i + 2] * oldWeight) / outA);
-      result[i + 3] = Math.round(outA * 255);
+    const seedColor: [number, number, number, number] = [
+      reference[seed], reference[seed + 1], reference[seed + 2], reference[seed + 3],
+    ];
+    const color: [number, number, number] = [this.brush.rgb[0], this.brush.rgb[1], this.brush.rgb[2]];
+    return {
+      width, height, original, reference, seedX, seedY, seedColor,
+      tolerance: this.brush.tolerance, color,
+      opacity: this.brush.opacity / 100, contiguous: this.brush.contiguous,
     };
-    let filled = 0;
-    let minX = width, minY = height, maxX = -1, maxY = -1;
-    const fillPixel = (pixel: number) => {
-      paint(pixel); filled++;
-      const px = pixel % width, py = Math.floor(pixel / width);
-      minX = Math.min(minX, px); minY = Math.min(minY, py); maxX = Math.max(maxX, px); maxY = Math.max(maxY, py);
+  }
+
+  private executeFillOperation(operation: FillOperation): FillResult {
+    const result: FillResult = {
+      pixels: new Uint8Array(operation.original), filled: 0,
+      minX: operation.width, minY: operation.height, maxX: -1, maxY: -1,
     };
-    if (!this.brush.contiguous) {
-      for (let pixel = 0; pixel < total; pixel++) {
-        if (matches(pixel * 4)) fillPixel(pixel);
-      }
-    } else {
-      const stack = new Uint32Array(total);
-      const seen = new Uint8Array(total);
-      let top = 0;
-      const seedPixel = seedY * width + seedX;
-      stack[top++] = seedPixel; seen[seedPixel] = 1;
-      while (top > 0) {
-        const pixel = stack[--top], refIndex = pixel * 4;
-        if (!matches(refIndex)) continue;
-        fillPixel(pixel);
-        const x = pixel % width, y = Math.floor(pixel / width);
-        const push = (next: number) => { if (!seen[next]) { seen[next] = 1; stack[top++] = next; } };
-        if (x > 0) push(pixel - 1); if (x + 1 < width) push(pixel + 1);
-        if (y > 0) push(pixel - width); if (y + 1 < height) push(pixel + width);
-      }
+    if (operation.contiguous) this.fillContiguousPixels(operation, result);
+    else this.fillAllMatchingPixels(operation, result);
+    return result;
+  }
+
+  private fillMatches(operation: FillOperation, offset: number): boolean {
+    const reference = operation.reference;
+    const seed = operation.seedColor;
+    const difference = Math.max(
+      Math.abs(reference[offset] - seed[0]),
+      Math.abs(reference[offset + 1] - seed[1]),
+      Math.abs(reference[offset + 2] - seed[2]),
+      Math.abs(reference[offset + 3] - seed[3]),
+    );
+    return difference <= operation.tolerance;
+  }
+
+  private fillAllMatchingPixels(operation: FillOperation, result: FillResult): void {
+    const total = operation.width * operation.height;
+    for (let pixel = 0; pixel < total; pixel++) this.fillMatchingPixel(operation, result, pixel);
+  }
+
+  private fillMatchingPixel(operation: FillOperation, result: FillResult, pixel: number): void {
+    if (!this.fillMatches(operation, pixel * 4)) return;
+    this.paintFillPixel(operation, result, pixel);
+  }
+
+  private fillContiguousPixels(operation: FillOperation, result: FillResult): void {
+    const { width, height } = operation;
+    const total = width * height;
+    const stack = new Uint32Array(total);
+    const seen = new Uint8Array(total);
+    let top = 0;
+    const seedPixel = operation.seedY * width + operation.seedX;
+    stack[top++] = seedPixel;
+    seen[seedPixel] = 1;
+    while (top > 0) top = this.processNextFillPixel(operation, result, stack, seen, top, width, height);
+  }
+
+  private processNextFillPixel(
+    operation: FillOperation,
+    result: FillResult,
+    stack: Uint32Array,
+    seen: Uint8Array,
+    top: number,
+    width: number,
+    height: number,
+  ): number {
+    const pixel = stack[--top];
+    if (!this.fillMatches(operation, pixel * 4)) return top;
+    this.paintFillPixel(operation, result, pixel);
+    return this.pushUnseenFillNeighbors(pixel, width, height, stack, seen, top);
+  }
+
+  private pushUnseenFillNeighbors(
+    pixel: number,
+    width: number,
+    height: number,
+    stack: Uint32Array,
+    seen: Uint8Array,
+    top: number,
+  ): number {
+    const x = pixel % width;
+    const y = Math.floor(pixel / width);
+    const push = (next: number): void => {
+      if (seen[next]) return;
+      seen[next] = 1;
+      stack[top++] = next;
+    };
+    if (x > 0) push(pixel - 1);
+    if (x + 1 < width) push(pixel + 1);
+    if (y > 0) push(pixel - width);
+    if (y + 1 < height) push(pixel + width);
+    return top;
+  }
+
+  private paintFillPixel(operation: FillOperation, result: FillResult, pixel: number): void {
+    const offset = pixel * 4;
+    const data = result.pixels;
+    const sourceAlpha = operation.opacity;
+    const oldAlpha = data[offset + 3] / 255;
+    const outputAlpha = sourceAlpha + oldAlpha * (1 - sourceAlpha);
+    if (outputAlpha > 0) {
+      const oldWeight = oldAlpha * (1 - sourceAlpha);
+      data[offset] = Math.round((operation.color[0] * sourceAlpha + data[offset] * oldWeight) / outputAlpha);
+      data[offset + 1] = Math.round((operation.color[1] * sourceAlpha + data[offset + 1] * oldWeight) / outputAlpha);
+      data[offset + 2] = Math.round((operation.color[2] * sourceAlpha + data[offset + 2] * oldWeight) / outputAlpha);
+      data[offset + 3] = Math.round(outputAlpha * 255);
     }
-    if (!filled) { this.q<HTMLElement>('#status').textContent = 'No se encontraron píxeles dentro de la tolerancia.'; return; }
-    const regionWidth = maxX - minX + 1, regionHeight = maxY - minY + 1;
+    result.filled++;
+    this.expandFillBounds(result, pixel, operation.width);
+  }
+
+  private expandFillBounds(result: FillResult, pixel: number, width: number): void {
+    const x = pixel % width;
+    const y = Math.floor(pixel / width);
+    result.minX = Math.min(result.minX, x);
+    result.minY = Math.min(result.minY, y);
+    result.maxX = Math.max(result.maxX, x);
+    result.maxY = Math.max(result.maxY, y);
+  }
+
+  private commitFillResult(node: LayerNode, operation: FillOperation, result: FillResult): void {
+    const regionWidth = result.maxX - result.minX + 1;
+    const regionHeight = result.maxY - result.minY + 1;
+    const region = this.extractFillRegion(operation, result, regionWidth, regionHeight);
+    runEdit(this.ctx, node.engineId, 'Bote de pintura', (layer) => {
+      layer.writeRectFromJS(result.minX, result.minY, regionWidth, regionHeight, region);
+    });
+  }
+
+  private extractFillRegion(
+    operation: FillOperation,
+    result: FillResult,
+    regionWidth: number,
+    regionHeight: number,
+  ): Uint8Array {
     const region = new Uint8Array(regionWidth * regionHeight * 4);
     for (let row = 0; row < regionHeight; row++) {
-      const sourceStart = ((minY + row) * width + minX) * 4;
-      region.set(result.subarray(sourceStart, sourceStart + regionWidth * 4), row * regionWidth * 4);
+      const sourceStart = ((result.minY + row) * operation.width + result.minX) * 4;
+      region.set(result.pixels.subarray(sourceStart, sourceStart + regionWidth * 4), row * regionWidth * 4);
     }
-    runEdit(this.ctx, node.engineId, 'Bote de pintura', (layer) => { layer.writeRectFromJS(minX, minY, regionWidth, regionHeight, region); });
-    this.q<HTMLElement>('#status').textContent = `Relleno aplicado · ${filled.toLocaleString()} píxeles`;
-    this.updateHistoryUI();
-    if (this.hasFilterLayer()) this.scheduleRefresh();
+    return region;
   }
 
   /** Renderiza la composición visible completa para el bote de pintura, con un límite de tamaño previo. */
   private compositePixelsForSampling(): Uint8Array | null {
     const { width, height } = this.ctl.doc;
-    const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return null;
-    const compose = (nodes: LayerNode[], target: HTMLCanvasElement): void => {
-      const targetCtx = target.getContext('2d', { willReadFrequently: true })!;
-      targetCtx.clearRect(0, 0, width, height);
-      const scratch = document.createElement('canvas'); scratch.width = width; scratch.height = height;
-      const scratchCtx = scratch.getContext('2d', { willReadFrequently: true })!;
-      for (const layer of nodes) {
-        if (!layer.visible || layer.opacity <= 0) continue;
-        if (layer.type === 'filter') {
-          const original = document.createElement('canvas'); original.width = width; original.height = height;
-          original.getContext('2d')!.drawImage(target, 0, 0);
-          const filtered = document.createElement('canvas'); filtered.width = width; filtered.height = height;
-          const filteredCtx = filtered.getContext('2d')!; filteredCtx.filter = this.filterCss(layer.filterKind ?? 'grayscale', layer.filterStrength ?? 1); filteredCtx.drawImage(original, 0, 0); filteredCtx.filter = 'none';
-          const originalCtx = original.getContext('2d', { willReadFrequently: true })!;
-          const originalImage = originalCtx.getImageData(0, 0, width, height);
-          const filteredImage = filtered.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, width, height);
-          for (let i = 0; i < originalImage.data.length; i++) originalImage.data[i] = Math.round(originalImage.data[i] * (1 - layer.opacity) + filteredImage.data[i] * layer.opacity);
-          targetCtx.clearRect(0, 0, width, height); targetCtx.putImageData(originalImage, 0, 0);
-          continue;
-        }
-        if (layer.type === 'group') {
-          const group = document.createElement('canvas'); group.width = width; group.height = height; compose(layer.children, group);
-          targetCtx.save(); targetCtx.globalAlpha = layer.opacity; targetCtx.globalCompositeOperation = this.canvasBlend(layer.blendMode); targetCtx.drawImage(group, 0, 0); targetCtx.restore();
-          continue;
-        }
-        if (!isPixelLayerType(layer.type)) continue;
-        const pixels = this.ctl.readPixels(layer);
-        if (!pixels) continue;
-        const image = new ImageData(new Uint8ClampedArray(pixels), width, height);
-        scratchCtx.clearRect(0, 0, width, height); scratchCtx.putImageData(image, 0, 0);
-        targetCtx.save(); targetCtx.globalAlpha = layer.opacity; targetCtx.globalCompositeOperation = this.canvasBlend(layer.blendMode); targetCtx.drawImage(scratch, 0, 0); targetCtx.restore();
-      }
-    };
-    compose(this.ctl.doc.layers, canvas);
-    const image = ctx.getImageData(0, 0, width, height);
+    const canvas = this.createSamplingCanvas(width, height);
+    if (!canvas.getContext('2d', { willReadFrequently: true })) return null;
+    this.composeSamplingLayers(this.ctl.doc.layers, canvas, width, height, (layer) => this.ctl.readPixels(layer));
+    return this.readSamplingCanvas(canvas, width, height);
+  }
+
+  private createSamplingCanvas(width: number, height: number): HTMLCanvasElement {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    return canvas;
+  }
+
+  private readSamplingCanvas(canvas: HTMLCanvasElement, width: number, height: number): Uint8Array {
+    const image = canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, width, height);
     return new Uint8Array(image.data.buffer.slice(image.data.byteOffset, image.data.byteOffset + image.data.byteLength));
+  }
+
+  private composeSamplingLayers(
+    nodes: LayerNode[],
+    target: HTMLCanvasElement,
+    width: number,
+    height: number,
+    readLayerPixels: (layer: LayerNode) => Uint8Array | null,
+  ): void {
+    const targetCtx = target.getContext('2d', { willReadFrequently: true })!;
+    const scratch = this.createSamplingCanvas(width, height);
+    const scratchCtx = scratch.getContext('2d', { willReadFrequently: true })!;
+    targetCtx.clearRect(0, 0, width, height);
+    for (const layer of nodes) this.composeSamplingLayer(layer, target, targetCtx, scratch, scratchCtx, width, height, readLayerPixels);
+  }
+
+  private composeSamplingLayer(
+    layer: LayerNode,
+    target: HTMLCanvasElement,
+    targetCtx: CanvasRenderingContext2D,
+    scratch: HTMLCanvasElement,
+    scratchCtx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    readLayerPixels: (layer: LayerNode) => Uint8Array | null,
+  ): void {
+    if (!layer.visible || layer.opacity <= 0) return;
+    if (layer.type === 'filter') {
+      this.applySamplingFilter(layer, target, targetCtx, width, height);
+      return;
+    }
+    if (layer.type === 'group') {
+      this.compositeSamplingGroup(layer, targetCtx, width, height, readLayerPixels);
+      return;
+    }
+    if (!isPixelLayerType(layer.type)) return;
+    const pixels = readLayerPixels(layer);
+    if (pixels) this.compositeSamplingRaster(layer, pixels, targetCtx, scratch, scratchCtx, width, height);
+  }
+
+  private applySamplingFilter(
+    layer: LayerNode,
+    target: HTMLCanvasElement,
+    targetCtx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+  ): void {
+    const images = this.createSamplingFilterImages(layer, target, width, height);
+    this.blendSamplingFilterIntoTarget(targetCtx, images.original, images.filtered, layer.opacity, width, height);
+  }
+
+  private createSamplingFilterImages(
+    layer: LayerNode,
+    target: HTMLCanvasElement,
+    width: number,
+    height: number,
+  ): { original: ImageData; filtered: ImageData } {
+    const original = this.createSamplingCanvas(width, height);
+    original.getContext('2d')!.drawImage(target, 0, 0);
+    const filtered = this.createSamplingCanvas(width, height);
+    const filteredCtx = filtered.getContext('2d')!;
+    filteredCtx.filter = this.filterCss(layer.filterKind ?? 'grayscale', layer.filterStrength ?? 1);
+    filteredCtx.drawImage(original, 0, 0);
+    filteredCtx.filter = 'none';
+    return {
+      original: original.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, width, height),
+      filtered: filtered.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, width, height),
+    };
+  }
+
+  private blendSamplingFilterIntoTarget(
+    targetCtx: CanvasRenderingContext2D,
+    original: ImageData,
+    filtered: ImageData,
+    opacity: number,
+    width: number,
+    height: number,
+  ): void {
+    for (let index = 0; index < original.data.length; index++) {
+      original.data[index] = Math.round(original.data[index] * (1 - opacity) + filtered.data[index] * opacity);
+    }
+    targetCtx.clearRect(0, 0, width, height);
+    targetCtx.putImageData(original, 0, 0);
+  }
+
+  private compositeSamplingGroup(
+    layer: LayerNode,
+    targetCtx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    readLayerPixels: (layer: LayerNode) => Uint8Array | null,
+  ): void {
+    const group = this.createSamplingCanvas(width, height);
+    this.composeSamplingLayers(layer.children, group, width, height, readLayerPixels);
+    targetCtx.save();
+    targetCtx.globalAlpha = layer.opacity;
+    targetCtx.globalCompositeOperation = this.canvasBlend(layer.blendMode);
+    targetCtx.drawImage(group, 0, 0);
+    targetCtx.restore();
+  }
+
+  private compositeSamplingRaster(
+    layer: LayerNode,
+    pixels: Uint8Array,
+    targetCtx: CanvasRenderingContext2D,
+    scratch: HTMLCanvasElement,
+    scratchCtx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+  ): void {
+    const image = new ImageData(new Uint8ClampedArray(pixels), width, height);
+    scratchCtx.clearRect(0, 0, width, height);
+    scratchCtx.putImageData(image, 0, 0);
+    targetCtx.save();
+    targetCtx.globalAlpha = layer.opacity;
+    targetCtx.globalCompositeOperation = this.canvasBlend(layer.blendMode);
+    targetCtx.drawImage(scratch, 0, 0);
+    targetCtx.restore();
   }
 
   private pickColorAt(x: number, y: number): void {
@@ -2983,8 +4508,7 @@ export class App {
     if (this.brush.sampleMerged) {
       const one = this.compositeSamplePixel(x, y); rgba = one;
     } else {
-      const pixels = this.ctl.layerPixels(layer);
-      if (pixels) { const value = new Uint8Array(4); pixels.readRectToJS(x, y, 1, 1, value); rgba = value; }
+      rgba = this.readActiveLayerPixel(layer, x, y);
     }
     if (!rgba) { this.q<HTMLElement>('#status').textContent = 'No se pudo tomar el color de esta capa.'; return; }
     this.brush.rgb = [rgba[0], rgba[1], rgba[2]];
@@ -2992,92 +4516,106 @@ export class App {
     this.q<HTMLElement>('#status').textContent = `Color seleccionado ${this.foregroundHex()}`;
   }
 
+  private readActiveLayerPixel(layer: LayerNode, x: number, y: number): Uint8Array | null {
+    const pixels = this.ctl.layerPixels(layer);
+    if (!pixels) return null;
+    const value = new Uint8Array(4);
+    pixels.readRectToJS(x, y, 1, 1, value);
+    return value;
+  }
+
   private compositeSamplePixel(x: number, y: number): Uint8Array {
-    const target = document.createElement('canvas'); target.width = target.height = 1;
-    const compose = (nodes: LayerNode[], dest: HTMLCanvasElement): void => {
-      const ctx = dest.getContext('2d', { willReadFrequently: true })!; ctx.clearRect(0, 0, 1, 1);
-      for (const node of nodes) {
-        if (!node.visible || node.opacity <= 0) continue;
-        if (node.type === 'group') {
-          const group = document.createElement('canvas'); group.width = group.height = 1; compose(node.children, group);
-          ctx.save(); ctx.globalAlpha = node.opacity; ctx.globalCompositeOperation = this.canvasBlend(node.blendMode); ctx.drawImage(group, 0, 0); ctx.restore(); continue;
-        }
-        if (node.type === 'filter') {
-          const original = document.createElement('canvas'); original.width = original.height = 1; original.getContext('2d')!.drawImage(dest, 0, 0);
-          const filtered = document.createElement('canvas'); filtered.width = filtered.height = 1; const fc = filtered.getContext('2d')!; fc.filter = this.filterCss(node.filterKind ?? 'grayscale', node.filterStrength ?? 1); fc.drawImage(original, 0, 0); fc.filter = 'none';
-          const originalData = original.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, 1, 1);
-          const filteredData = filtered.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, 1, 1);
-          for (let i = 0; i < 4; i++) originalData.data[i] = Math.round(originalData.data[i] * (1 - node.opacity) + filteredData.data[i] * node.opacity);
-          ctx.clearRect(0, 0, 1, 1); ctx.putImageData(originalData, 0, 0); continue;
-        }
-        if (!isPixelLayerType(node.type)) continue;
-        const surface = this.ctl.layerPixels(node); if (!surface) continue;
-        const data = new Uint8Array(4); surface.readRectToJS(x, y, 1, 1, data);
-        const layerCanvas = document.createElement('canvas'); layerCanvas.width = layerCanvas.height = 1;
-        layerCanvas.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(data), 1, 1), 0, 0);
-        ctx.save(); ctx.globalAlpha = node.opacity; ctx.globalCompositeOperation = this.canvasBlend(node.blendMode); ctx.drawImage(layerCanvas, 0, 0); ctx.restore();
-      }
-    };
-    compose(this.ctl.doc.layers, target);
+    const target = this.createSamplingCanvas(1, 1);
+    this.composeSamplingLayers(this.ctl.doc.layers, target, 1, 1, (layer) => this.readSamplingLayerPixel(layer, x, y));
     return new Uint8Array(target.getContext('2d')!.getImageData(0, 0, 1, 1).data);
+  }
+
+  private readSamplingLayerPixel(layer: LayerNode, x: number, y: number): Uint8Array | null {
+    const surface = this.ctl.layerPixels(layer);
+    if (!surface) return null;
+    const data = new Uint8Array(4);
+    surface.readRectToJS(x, y, 1, 1, data);
+    return data;
   }
 
   // ───────────── Undo / archivos ─────────────
 
   private doUndo(): void {
     if (this.stroke) return;
-    const kind = this.ctl.undo();
-    if (kind === 'pixels') this.renderFrame();
-    else if (kind === 'structure') {
-      if (!this.ctl.find(this.activeId)) this.activeId = this.topRaster()?.id ?? '';
-      this.syncUI(); this.scheduleRefresh();
-    }
+    this.handleHistoryResult(this.ctl.undo());
     this.updateHistoryUI();
   }
+
   private doRedo(): void {
     if (this.stroke) return;
-    const kind = this.ctl.redo();
-    if (kind === 'pixels') this.renderFrame();
-    else if (kind === 'structure') {
-      if (!this.ctl.find(this.activeId)) this.activeId = this.topRaster()?.id ?? '';
-      this.syncUI(); this.scheduleRefresh();
-    }
+    this.handleHistoryResult(this.ctl.redo());
     this.updateHistoryUI();
+  }
+
+  private handleHistoryResult(kind: 'pixels' | 'structure' | null): void {
+    if (kind === 'pixels') this.renderFrame();
+    else if (kind === 'structure') this.refreshAfterStructuralHistory();
+  }
+
+  private refreshAfterStructuralHistory(): void {
+    if (!this.ctl.find(this.activeId)) this.activeId = this.topRaster()?.id ?? '';
+    this.syncUI(); this.scheduleRefresh();
   }
 
   private async save(asNew: boolean): Promise<void> {
     if (this.stroke) return;
-    try {
-      const doc = this.ctl.doc;
-      const read = (layer: LayerNode) => this.ctl.readPixels(layer);
-      const h = await saveToDisk(doc, read, asNew ? undefined : this.fileHandle ?? undefined);
-      if (supportsFileSystemAccess() && !h) return; // el usuario canceló el diálogo de Guardar
-      if (h) this.fileHandle = h;
-      // saveToDisk sincroniza el nombre con el archivo elegido antes de serializarlo.
-      this.syncDocumentHeader();
-      const bytes = packNvtsPhoto(doc, read);
-      if (readPreferences().rememberRecentProjects) {
-        await rememberRecentProject(doc, bytes).catch((error) => console.warn('El archivo se guardó, pero no se pudo actualizar Proyectos recientes:', error));
-      }
-      this.q<HTMLElement>('#status').textContent = `Guardado · ${doc.width}×${doc.height}`;
-    } catch (e) { this.fail(e); }
+    try { await this.saveDocument(asNew); }
+    catch (error) { this.fail(error); }
+  }
+
+  private async saveDocument(asNew: boolean): Promise<void> {
+    const doc = this.ctl.doc;
+    const read = (layer: LayerNode) => this.ctl.readPixels(layer);
+    const handle = await saveToDisk(doc, read, asNew ? undefined : this.fileHandle ?? undefined);
+    if (supportsFileSystemAccess() && !handle) return;
+    if (handle) this.fileHandle = handle;
+    this.syncDocumentHeader();
+    const bytes = packNvtsPhoto(doc, read);
+    if (readPreferences().rememberRecentProjects) await this.rememberSavedProject(doc, bytes);
+    this.q<HTMLElement>('#status').textContent = `Guardado · ${doc.width}×${doc.height}`;
+  }
+
+  private async rememberSavedProject(doc: DocumentController['doc'], bytes: Uint8Array): Promise<void> {
+    await rememberRecentProject(doc, bytes).catch((error) => console.warn('El archivo se guardó, pero no se pudo actualizar Proyectos recientes:', error));
   }
 
   private async open(): Promise<void> {
     if (this.stroke) return;
-    try {
-      const res = await openFromDisk();
-      if (!res) return;
-      this.fileHandle = res.handle;
-      if (res.fileName) res.doc.name = documentNameFromFile(res.fileName);
-      this.setDocument(DocumentController.fromUnpacked(this.engine.module, res));
-      await this.refreshLinkedFileLayers(false);
-      if (readPreferences().rememberRecentProjects) {
-        const doc = this.ctl.doc;
-        const bytes = packNvtsPhoto(doc, (layer) => this.ctl.readPixels(layer));
-        await rememberRecentProject(doc, bytes).catch((error) => console.warn('No se pudo actualizar Proyectos recientes:', error));
-      }
-    } catch (e) { this.fail(e); }
+    try { await this.openDocument(); }
+    catch (error) { this.fail(error); }
+  }
+
+  private async openDocument(): Promise<void> {
+    const result = await openFromDisk();
+    if (!result) return;
+    this.fileHandle = result.handle;
+    this.applyOpenedFileName(result);
+    this.setDocument(DocumentController.fromUnpacked(this.engine.module, result));
+    await this.refreshLinkedFileLayers(false);
+    if (readPreferences().rememberRecentProjects) {
+      const doc = this.ctl.doc;
+      const bytes = packNvtsPhoto(doc, (layer) => this.ctl.readPixels(layer));
+      await rememberRecentProject(doc, bytes).catch((error) => console.warn('No se pudo actualizar Proyectos recientes:', error));
+    }
+  }
+
+  private applyOpenedFileName(result: Awaited<ReturnType<typeof openFromDisk>> & {}): void {
+    if (result.fileName) result.doc.name = documentNameFromFile(result.fileName);
+  }
+
+  private commitPointerUpAction(e: PointerEvent | undefined, tool: Tool | null): void {
+    if (e && (tool === 'brush' || tool === 'eraser')) {
+      this.onPointerMove(e, true);
+      return;
+    }
+    if (e && this.shapeStart && (tool === 'line' || tool === 'rectangle' || tool === 'ellipse')) {
+      this.commitShape(this.shapeStart, this.toDoc(e), tool);
+    }
   }
 
   private fail(e: unknown): void {

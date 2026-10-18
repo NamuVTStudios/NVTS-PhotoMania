@@ -1,6 +1,6 @@
 import type { TemplateDef } from './types';
 
-/** Manhwa / Webtoon: 800 × 1280 px. */
+/* Manhwa / Webtoon: 800 × 1280 px. */
 export const manhwaTemplate: TemplateDef = {
   id: 'manhwa',
   title: 'Manhwa / Webtoon',

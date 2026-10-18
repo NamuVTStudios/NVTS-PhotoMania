@@ -1,6 +1,6 @@
 import type { TemplateDef } from './types';
 
-/** Manga: 1600 × 2400 px. */
+/* Manga: 1600 × 2400 px. */
 export const mangaTemplate: TemplateDef = {
   id: 'manga',
   title: 'Manga',

@@ -157,11 +157,14 @@ Each substantial panel has its own TypeScript file in `packages/ui/src/panels/`:
 - `VectorEditorPanel.ts`
 - `PluginsPanel.ts`
 - `PreferencesPanel.ts`
-- `DockLayoutManager.ts` — floating, docking, reordering and resize logic for workspace panels
+- `StoryboardPanel.ts` — shot list and JSON export
+- `AnimationTimelinePanel.ts` — tracks and keyframe cells
+- `DockLayoutManager.ts` — floating, docking, reordering and resize logic for all six dock panels
+- `workspaces/` — one `.ts` configuration module for each workspace, collected by `index.ts`
 
 `App.ts` owns document/motor instances, event wiring, canvas gestures, command callbacks, workspace layout, keyboard shortcuts and interactions with browser storage. Global styling and theme tokens remain in `apps/web/src/styles.css`.
 
-`DockLayoutManager.ts` turns each panel into a docking slot, supports header-drag reordering, a floating-window mode with move/resize controls, resizing between docked panels, and a draggable splitter for the overall side-dock width. It stores per-workspace layout state in local storage (panel visibility, order, float position/size, docked heights, dock width and global panel visibility). The panel DOM nodes are moved rather than recreated so their tool and document event handlers remain attached.
+`DockLayoutManager.ts` turns all six right-dock panels—including Storyboard and Animation Timeline—into docking slots. It supports header-drag reordering, floating windows with move/resize controls, resizing between docked panels, and a draggable splitter for the overall side-dock width. It stores per-workspace layout state in local storage, including panel visibility, order, floating position/size, docked heights, dock width, and global panel visibility. Panel DOM nodes are moved rather than recreated so their tool and document event handlers remain attached. Each workspace's default visibility and order is defined in its own file under `packages/ui/src/workspaces/`; Storyboarding and Animation keep the animation timeline at the bottom, and Storyboarding also displays the storyboard panel.
 
 ### Plugin loading
 
@@ -208,3 +211,32 @@ The web app uses Vite, monorepo aliases and COOP/COEP dev-server headers. The br
 5. Improve vector source/render separation and direct Bézier node/handle editing.
 6. Build reliable comic output pipelines (PDF/CBZ and image sequences) separately from the native per-page document format.
 7. Profile the renderer, texture memory, and history retention on large documents before adopting advanced atlases or compute-shader paths.
+
+
+## Storyboarding and animation panels
+
+`packages/ui/src/panels/StoryboardPanel.ts` implements an editable shot list, persists its data in `localStorage`, and exports it as `storyboard.json`. `packages/ui/src/panels/AnimationTimelinePanel.ts` implements tracks and keyframe cells with local persistence. Cells can be selected with a click, and keyframes can be toggled with a double-click. Shared templates live in `packages/templates/src/` as `.ts` modules; `package.json` and other configuration files keep the `.json` extension and valid JSON syntax. Playback is currently a UI preview, not an animation renderer.
+
+## Incremental refactoring conventions
+
+- **Aim for no more than three tasks or responsibilities per function or method whenever practical.** If a method validates data, builds objects, mutates state, wires events, and updates the UI, move those responsibilities into clearly named helpers. An orchestration method should primarily coordinate the steps.
+- **Do not nest control-flow structures.** Prefer guard clauses and early returns. When a loop needs conditional or additional iteration logic, delegate the body to a helper instead of placing another `if`, loop, or `switch` inside it. Keep each helper focused and avoid changing behavior just to satisfy a stylistic rule.
+- Work in bounded subtasks: identify a method, extract one responsibility, run TypeScript checks and available tests, review the diff, then continue.
+- Do not split code mechanically by line count. Prioritize cohesive responsibilities, clear names, real reuse, and preservation of observable behavior.
+- Do not claim the refactor is complete while large methods remain unreviewed or checks are pending. Record remaining candidates and verification limits.
+
+### Responsibility-refactoring status
+
+The incremental decomposition has extracted responsibilities into the following modules while retaining public APIs where applicable:
+
+- `packages/ui/src/App.ts`: project startup and initial loading, control synchronization, filter composition, text rasterization, SVG export, panel menu and zoom/tool controls, and local/disk persistence for `comicConfig.json`.
+- `packages/ui/src/Toolbar.ts` and `packages/ui/src/panels/`: toolbar creation; rendering and events for Layers, Preferences, Comic Manager, Storyboard, Animation Timeline, and Vector Editor; advanced controls split by tool type.
+- `packages/ui/src/HomeScreenController.ts` and `ShellTemplates.ts`: home screen and shell templates separated from the main application coordinator.
+- `packages/document-model/src/DocumentController.ts`: layer duplication, linked-layer replacement, and deletion validation.
+- `packages/storage/src/NvtsPhotoIO.ts` and `RecentProjects.ts`: manifest creation/restoration, file reads/writes, and recent-project tracking.
+- `packages/ui/src/panels/PluginsPanel.ts`: plugin lifecycle, loading, and UI rendering split into controller methods.
+- `packages/ui/src/panels/DockLayoutManager.ts`: the `createDockLayoutManager` factory creates a controller; panel slots, drag events, floating/docking, resizing, layout serialization, and restoration are distributed among focused methods.
+- `packages/renderer/webgpu/WebGPURenderer.ts` and `packages/renderer/webgl2/WebGL2Renderer.ts`: resource creation, canvas sizing, `contain`-scale calculation, and render command submission are separated into methods.
+- `packages/ui/src/App.ts`: full-document and single-pixel sampling share helpers for raster layers, groups, and filters; layer thumbnails and linked-file refresh are also separated.
+
+The control-flow audit currently reports zero nested control-flow structures across 77 TypeScript/JavaScript source files and 8 C++ source/header files. The audit excludes generated `dist/` and `build/` outputs, installed dependencies, and repository metadata. This does not mean every method already meets the responsibility limit: the refactor remains incremental, and some shape-drawing paths, event handlers, and renderer/document operations still need behavior-driven review. Before splitting methods that coordinate shared state, verify that extracted functions preserve event order, history, persistence, and rendering.

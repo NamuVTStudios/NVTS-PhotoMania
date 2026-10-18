@@ -36,7 +36,7 @@ pnpm build:wasm   # Rebuild the C++ engine and copy the Wasm assets
 
 ## Current capabilities
 
-- **Document templates:** the 20 document presets (social posts/stories, screen sizes, A4, US/European comics, manga/manhwa, animation, and UV/2D textures) are maintained as individual modules in the shared `@nvts/templates` workspace package so other NVTS apps can reuse them.
+- **Document templates:** the 23 document presets (social posts/stories, screen sizes, A4, US/European comics, manga/manhwa, animation, and UV/2D textures) are maintained as individual modules in the shared `@nvts/templates` workspace package so other NVTS apps can reuse them.
 - **Canvas and navigation:** fit-to-window view, zoom with controls or Ctrl/Meta + mouse wheel, panning with the Hand tool or Space + drag, and responsive canvas sizing.
 - **Drawing tools:** brush, eraser, eyedropper, line, rectangle, ellipse, bucket fill, text, and vector selection. The brush exposes size, opacity, hardness, spacing, and smoothing controls; the fill tool includes tolerance, contiguous fill, and merged-visible sampling options. Tool and vector-shape icons are individual SVG assets in `apps/web/src/icons/tools/`; CSS masks let them inherit the active foreground color and remain legible in both themes.
 - **Layer model:** paint, filter, fill, file/image, vector, text, and group layers. Layers support names, order, visibility, lock state, opacity, blend mode, duplication, deletion, nested groups, and thumbnails.
@@ -44,42 +44,222 @@ pnpm build:wasm   # Rebuild the C++ engine and copy the Wasm assets
 - **Text:** a text layer stores editable text and typography metadata along with a raster preview. The top tool bar contains font, style, size, and color; advanced options contain alignment, line height, letter spacing, stroke, and background controls.
 - **Vector layers:** editable shape metadata, object list, move/resize interactions, shape editing controls, and SVG export. The displayed compositor image is currently rasterized; this is not yet a feature-complete vector illustration package.
 - **Filters and layer effects:** grayscale, invert, sepia, blur, brightness, contrast, plus blend/opacity controls. Filter layers render non-destructively in the current UI renderer path.
-- **Workspaces:** General, Digital Illustration, Vector Illustration, Image Manipulation, and Comics, with a saved workspace choice.
+- **Workspaces:** General, Digital Illustration, Vector Illustration, Image Manipulation, Comics, Storyboarding, and Animation, with a saved workspace choice.
 - **Panels and appearance:** modular Layers, History, Advanced Tool Options, Comic Manager, and supporting filter/vector/effects/plugin/preferences panels; light and dark themes; per-panel visibility under **View → Panels**; `Tab` toggles the panel zone. Dock panels can be reordered by dragging their headers, detached into floating windows, re-docked, resized individually, and the width of the whole panel zone can be dragged. Layouts are saved separately for each workspace.
 - **Projects:** create, open, Save, Save As, `.nvtsphoto` serialization, and optional recent-project snapshots persisted in IndexedDB according to Preferences.
 - **Linked image layers:** the image data is embedded in the project. Where the browser supports file handles, a local link ID and source metadata can also be retained so the application can offer a manual refresh/relink flow. The external file is not continuously watched.
 
-## Repository structure
+## Repository structure (alphabetical)
+
+The tree below lists every file and directory included in this archive. Entries are sorted alphabetically at each directory level, using natural 0–Z ordering. `.git/` and every `node_modules/` directory are excluded because they are repository metadata and installed dependencies; run `pnpm install` to restore dependencies.
 
 ```text
 NVTS-PhotoMania/
+├─ .gitattributes
+├─ .github/
+│  └─ workflows/
+│     └─ deploy.yml
+├─ .gitignore
 ├─ apps/
 │  └─ web/
+│     ├─ dist/
+│     │  ├─ assets/
+│     │  │  ├─ engine-Di9mvPWK.wasm
+│     │  │  ├─ index-BbHZ9ZxE.js
+│     │  │  └─ index-BL2jTJ7z.css
+│     │  ├─ branding/
+│     │  │  ├─ photomania-icon.png
+│     │  │  ├─ photomania-icon.svg
+│     │  │  ├─ photomania-logo.png
+│     │  │  └─ photomania-logo.svg
+│     │  ├─ index.html
+│     │  └─ wasm/
+│     │     ├─ coi-serviceworker.js
+│     │     └─ engine.wasm
+│     ├─ index.html
+│     ├─ package.json
+│     ├─ public/
+│     │  ├─ branding/
+│     │  │  ├─ photomania-icon.png
+│     │  │  └─ photomania-icon.svg
+│     │  └─ wasm/
+│     │     ├─ coi-serviceworker.js
+│     │     └─ engine.wasm
 │     ├─ src/
-│     │  ├─ main.ts              # Web entry point
-│     │  ├─ styles.css           # Global styles and themes
-│     │  └─ icons/tools/         # Individual SVG tool, shape, and layer-action icons
-│     └─ public/                 # Branding and Wasm runtime assets
-├─ packages/
-│  ├─ engine/                    # C++/Wasm: tiled layers, compositor, tile history
-│  ├─ wasm-bindings/             # Embind module and typed TypeScript wrappers
-│  ├─ renderer/                  # WebGPU renderer + WebGL2 fallback
-│  ├─ shared/                    # Native document manifest and shared layer/vector types
-│  ├─ document-model/            # DocumentController, LayerNode tree, edit and undo/redo
-│  ├─ storage/                   # .nvtsphoto serialization, open/save, recent projects, linked handles
-│  ├─ templates/                 # Shared document-template catalog for NVTS applications
-│  │  └─ src/                    # One preset per file, types.ts, and public index.ts
-│  └─ ui/
-│     └─ src/
-│        ├─ App.ts               # Application coordinator and event wiring
-│        ├─ Toolbar.ts           # Tool bar helpers
-│        └─ panels/              # One module per panel plus DockLayoutManager.ts
-├─ tools/copy-wasm.mjs
+│     │  ├─ icons/
+│     │  │  └─ tools/
+│     │  │     ├─ brush.svg
+│     │  │     ├─ delete.svg
+│     │  │     ├─ duplicate.svg
+│     │  │     ├─ ellipse.svg
+│     │  │     ├─ eraser.svg
+│     │  │     ├─ eyedropper.svg
+│     │  │     ├─ file-layer.svg
+│     │  │     ├─ fill-layer.svg
+│     │  │     ├─ fill.svg
+│     │  │     ├─ filter-layer.svg
+│     │  │     ├─ group-layer-open.svg
+│     │  │     ├─ group-layer.svg
+│     │  │     ├─ hand.svg
+│     │  │     ├─ layers.svg
+│     │  │     ├─ line.svg
+│     │  │     ├─ lock.svg
+│     │  │     ├─ move-down.svg
+│     │  │     ├─ move-up.svg
+│     │  │     ├─ paint-layer.svg
+│     │  │     ├─ plus.svg
+│     │  │     ├─ rectangle.svg
+│     │  │     ├─ shape-bezier.svg
+│     │  │     ├─ shape-ellipse.svg
+│     │  │     ├─ shape-freehand.svg
+│     │  │     ├─ shape-line.svg
+│     │  │     ├─ shape-polygon.svg
+│     │  │     ├─ shape-polyline.svg
+│     │  │     ├─ shape-rectangle.svg
+│     │  │     ├─ shape-rounded-rectangle.svg
+│     │  │     ├─ shape-spiral.svg
+│     │  │     ├─ shape-star.svg
+│     │  │     ├─ shape-text.svg
+│     │  │     ├─ text-layer.svg
+│     │  │     ├─ text.svg
+│     │  │     ├─ unlock.svg
+│     │  │     ├─ vector-layer.svg
+│     │  │     ├─ vector-select.svg
+│     │  │     ├─ zoom-fit.svg
+│     │  │     ├─ zoom-in.svg
+│     │  │     └─ zoom-out.svg
+│     │  ├─ main.ts
+│     │  └─ styles.css
+│     └─ vite.config.ts
 ├─ docs/
-│  ├─ GDD.md                # Product/design scope
-│  └─ TDD.md                # Architecture and technical design
+│  ├─ GDD.md
+│  └─ TDD.md
+├─ LICENSE
+├─ package.json
+├─ packages/
+│  ├─ document-model/
+│  │  ├─ package.json
+│  │  └─ src/
+│  │     ├─ DocumentController.ts
+│  │     ├─ EditSession.ts
+│  │     ├─ index.ts
+│  │     └─ types.ts
+│  ├─ engine/
+│  │  ├─ build.sh
+│  │  └─ src/
+│  │     ├─ blend.h
+│  │     ├─ compositor.cpp
+│  │     ├─ compositor.h
+│  │     ├─ engine.cpp
+│  │     ├─ history.cpp
+│  │     ├─ history.h
+│  │     ├─ tiled_layer.cpp
+│  │     └─ tiled_layer.h
+│  ├─ renderer/
+│  │  ├─ createRenderer.ts
+│  │  ├─ index.ts
+│  │  ├─ package.json
+│  │  ├─ RendererBackend.ts
+│  │  ├─ shaders/
+│  │  │  └─ layer.wgsl
+│  │  ├─ webgl2/
+│  │  │  └─ WebGL2Renderer.ts
+│  │  ├─ webgpu/
+│  │  │  └─ WebGPURenderer.ts
+│  │  └─ wgsl.d.ts
+│  ├─ shared/
+│  │  ├─ package.json
+│  │  └─ src/
+│  │     ├─ index.ts
+│  │     └─ nvtsphoto.ts
+│  ├─ storage/
+│  │  ├─ package.json
+│  │  └─ src/
+│  │     ├─ index.ts
+│  │     ├─ NvtsPhotoIO.ts
+│  │     └─ RecentProjects.ts
+│  ├─ templates/
+│  │  ├─ package.json
+│  │  └─ src/
+│  │     ├─ 4k-uhd.ts
+│  │     ├─ a4.ts
+│  │     ├─ animation-2d.ts
+│  │     ├─ animation-vertical.ts
+│  │     ├─ animation-web.ts
+│  │     ├─ comic-eu.ts
+│  │     ├─ comic-us.ts
+│  │     ├─ facebook-post.ts
+│  │     ├─ facebook-story.ts
+│  │     ├─ full-hd.ts
+│  │     ├─ index.ts
+│  │     ├─ instagram-post.ts
+│  │     ├─ instagram-story.ts
+│  │     ├─ manga.ts
+│  │     ├─ manhwa.ts
+│  │     ├─ storyboard-horizontal.ts
+│  │     ├─ storyboard-vertical.ts
+│  │     ├─ texture-2d-wide.ts
+│  │     ├─ texture-2d.ts
+│  │     ├─ texture-uv-4k.ts
+│  │     ├─ texture-uv.ts
+│  │     ├─ tiktok-post.ts
+│  │     ├─ tiktok-story.ts
+│  │     ├─ types.ts
+│  │     └─ youtube-thumb.ts
+│  ├─ ui/
+│  │  ├─ package.json
+│  │  └─ src/
+│  │     ├─ App.ts
+│  │     ├─ HomeScreenController.ts
+│  │     ├─ index.ts
+│  │     ├─ panels/
+│  │     │  ├─ AdvancedToolOptionsPanel.ts
+│  │     │  ├─ AnimationTimelinePanel.ts
+│  │     │  ├─ ComicManagerPanel.ts
+│  │     │  ├─ DockLayoutManager.ts
+│  │     │  ├─ FilterPanel.ts
+│  │     │  ├─ HistoryPanel.ts
+│  │     │  ├─ LayerEffectsPanel.ts
+│  │     │  ├─ LayersPanel.ts
+│  │     │  ├─ PluginsPanel.ts
+│  │     │  ├─ PreferencesPanel.ts
+│  │     │  ├─ StoryboardPanel.ts
+│  │     │  └─ VectorEditorPanel.ts
+│  │     ├─ ShellTemplates.ts
+│  │     ├─ Toolbar.ts
+│  │     └─ workspaces/
+│  │        ├─ AnimationWorkspace.ts
+│  │        ├─ ComicsWorkspace.ts
+│  │        ├─ DigitalIllustrationWorkspace.ts
+│  │        ├─ GeneralWorkspace.ts
+│  │        ├─ ImageManipulationWorkspace.ts
+│  │        ├─ index.ts
+│  │        ├─ persistence.ts
+│  │        ├─ StoryboardingWorkspace.ts
+│  │        ├─ types.ts
+│  │        └─ VectorIllustrationWorkspace.ts
+│  └─ wasm-bindings/
+│     ├─ build/
+│     │  ├─ engine.js
+│     │  └─ engine.wasm
+│     ├─ index.ts
+│     ├─ package.json
+│     ├─ src/
+│     └─ ts-wrapper/
+│        ├─ BlendMode.ts
+│        ├─ DirtyTiles.ts
+│        ├─ engine.d.ts
+│        ├─ EngineClient.ts
+│        ├─ EngineSession.ts
+│        ├─ index.ts
+│        └─ SafeMemory.ts
+├─ pnpm-lock.yaml
+├─ pnpm-workspace.yaml
 ├─ README.md
-└─ pnpm-workspace.yaml
+├─ tools/
+│  └─ copy-wasm.mjs
+├─ tsconfig.base.json
+└─ tsconfig.json
 ```
 
 ## Shared template catalog
@@ -164,3 +344,12 @@ The plugin API is an **initial, version-0.1 interface**, not a stable compatibil
 - Comic Manager stores per-page `.nvtsphoto` documents and a JSON project configuration. PDF/CBZ output and a single native multi-page document are not implemented.
 - The plugin API is preliminary and plugins are not sandboxed.
 - The WebGPU/WebGL2 backend is selected at runtime, but full build/runtime behavior should be verified on the target browser and GPU.
+
+
+## Storyboarding and animation workspaces
+
+The shared `@nvts/templates` package includes `storyboard-horizontal.ts` (1920×1080), `storyboard-vertical.ts` (1080×1920), and `animation-vertical.ts` (1080×1920). These are TypeScript modules, not text files; package manifests and configuration remain real `.json` files.
+
+Each workspace is configured in its own TypeScript file under `packages/ui/src/workspaces/` (`GeneralWorkspace.ts`, `DigitalIllustrationWorkspace.ts`, `VectorIllustrationWorkspace.ts`, `ImageManipulationWorkspace.ts`, `ComicsWorkspace.ts`, `StoryboardingWorkspace.ts`, and `AnimationWorkspace.ts`). `index.ts` is only the shared registry.
+
+The **Storyboarding** workspace exposes the storyboard and animation-timeline panels, with the timeline at the bottom of the right dock. The **Animation** workspace also keeps the animation timeline at the bottom. The storyboard panel supports adding/removing shots, editing shot titles, descriptions and duration, local persistence in the browser, and exporting the shot list as `storyboard.json`. The timeline supports tracks, selectable frames and keyframe cells (double-click a cell to toggle a keyframe), plus FPS and current-frame controls. These are initial organizational tools, not yet a full Krita-equivalent animation renderer: playback is a UI preview only and does not render the canvas as a sequence.
