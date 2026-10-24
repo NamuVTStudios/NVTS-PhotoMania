@@ -10,3 +10,5 @@ export type { BlendModeValue } from './BlendMode';
 export type {
   NvtsEngineModule, ImageProcessor, TiledLayer, Compositor, HistoryManager,
 } from '../build/engine.js';
+
+export { WasmRuntimeManager } from './WasmRuntimeManager';

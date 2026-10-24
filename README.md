@@ -49,35 +49,17 @@ pnpm build:wasm   # Rebuild the C++ engine and copy the Wasm assets
 - **Projects:** create, open, Save, Save As, `.nvtsphoto` serialization, and optional recent-project snapshots persisted in IndexedDB according to Preferences.
 - **Linked image layers:** the image data is embedded in the project. Where the browser supports file handles, a local link ID and source metadata can also be retained so the application can offer a manual refresh/relink flow. The external file is not continuously watched.
 
-## Repository structure (alphabetical)
+## Repository structure (folders first, alphabetical)
 
-The tree below lists every file and directory included in this archive. Entries are sorted alphabetically at each directory level, using natural 0–Z ordering. `.git/` and every `node_modules/` directory are excluded because they are repository metadata and installed dependencies; run `pnpm install` to restore dependencies.
+The tree below reflects the contents of this archive. At each level, directories and their subdirectories are listed first in alphabetical order, followed by files in alphabetical order. `.git/` and any `node_modules/` directories are excluded because they are repository metadata and installed dependencies; run `pnpm install` to restore dependencies. Build output such as `dist/` is shown only when it is included in the archive.
 
 ```text
 NVTS-PhotoMania/
-├─ .gitattributes
 ├─ .github/
 │  └─ workflows/
 │     └─ deploy.yml
-├─ .gitignore
 ├─ apps/
 │  └─ web/
-│     ├─ dist/
-│     │  ├─ assets/
-│     │  │  ├─ engine-Di9mvPWK.wasm
-│     │  │  ├─ index-BbHZ9ZxE.js
-│     │  │  └─ index-BL2jTJ7z.css
-│     │  ├─ branding/
-│     │  │  ├─ photomania-icon.png
-│     │  │  ├─ photomania-icon.svg
-│     │  │  ├─ photomania-logo.png
-│     │  │  └─ photomania-logo.svg
-│     │  ├─ index.html
-│     │  └─ wasm/
-│     │     ├─ coi-serviceworker.js
-│     │     └─ engine.wasm
-│     ├─ index.html
-│     ├─ package.json
 │     ├─ public/
 │     │  ├─ branding/
 │     │  │  ├─ photomania-icon.png
@@ -130,137 +112,161 @@ NVTS-PhotoMania/
 │     │  │     └─ zoom-out.svg
 │     │  ├─ main.ts
 │     │  └─ styles.css
+│     ├─ index.html
+│     ├─ package.json
 │     └─ vite.config.ts
 ├─ docs/
 │  ├─ GDD.md
 │  └─ TDD.md
-├─ LICENSE
-├─ package.json
 ├─ packages/
 │  ├─ document-model/
-│  │  ├─ package.json
-│  │  └─ src/
-│  │     ├─ DocumentController.ts
-│  │     ├─ EditSession.ts
-│  │     ├─ index.ts
-│  │     └─ types.ts
+│  │  ├─ src/
+│  │  │  ├─ DocumentController.ts
+│  │  │  ├─ EditSession.ts
+│  │  │  ├─ index.ts
+│  │  │  └─ types.ts
+│  │  └─ package.json
 │  ├─ engine/
-│  │  ├─ build.sh
-│  │  └─ src/
-│  │     ├─ blend.h
-│  │     ├─ compositor.cpp
-│  │     ├─ compositor.h
-│  │     ├─ engine.cpp
-│  │     ├─ history.cpp
-│  │     ├─ history.h
-│  │     ├─ tiled_layer.cpp
-│  │     └─ tiled_layer.h
+│  │  ├─ src/
+│  │  │  ├─ blend.h
+│  │  │  ├─ compositor.cpp
+│  │  │  ├─ compositor.h
+│  │  │  ├─ engine.cpp
+│  │  │  ├─ history.cpp
+│  │  │  ├─ history.h
+│  │  │  ├─ tiled_layer.cpp
+│  │  │  └─ tiled_layer.h
+│  │  └─ build.sh
 │  ├─ renderer/
-│  │  ├─ createRenderer.ts
-│  │  ├─ index.ts
-│  │  ├─ package.json
-│  │  ├─ RendererBackend.ts
 │  │  ├─ shaders/
 │  │  │  └─ layer.wgsl
 │  │  ├─ webgl2/
 │  │  │  └─ WebGL2Renderer.ts
 │  │  ├─ webgpu/
 │  │  │  └─ WebGPURenderer.ts
+│  │  ├─ createRenderer.ts
+│  │  ├─ index.ts
+│  │  ├─ package.json
+│  │  ├─ RendererBackend.ts
 │  │  └─ wgsl.d.ts
 │  ├─ shared/
-│  │  ├─ package.json
-│  │  └─ src/
-│  │     ├─ index.ts
-│  │     └─ nvtsphoto.ts
+│  │  ├─ src/
+│  │  │  ├─ index.ts
+│  │  │  └─ nvtsphoto.ts
+│  │  └─ package.json
 │  ├─ storage/
-│  │  ├─ package.json
-│  │  └─ src/
-│  │     ├─ index.ts
-│  │     ├─ NvtsPhotoIO.ts
-│  │     └─ RecentProjects.ts
+│  │  ├─ src/
+│  │  │  ├─ index.ts
+│  │  │  ├─ NvtsPhotoIO.ts
+│  │  │  └─ RecentProjects.ts
+│  │  └─ package.json
 │  ├─ templates/
-│  │  ├─ package.json
-│  │  └─ src/
-│  │     ├─ 4k-uhd.ts
-│  │     ├─ a4.ts
-│  │     ├─ animation-2d.ts
-│  │     ├─ animation-vertical.ts
-│  │     ├─ animation-web.ts
-│  │     ├─ comic-eu.ts
-│  │     ├─ comic-us.ts
-│  │     ├─ facebook-post.ts
-│  │     ├─ facebook-story.ts
-│  │     ├─ full-hd.ts
-│  │     ├─ index.ts
-│  │     ├─ instagram-post.ts
-│  │     ├─ instagram-story.ts
-│  │     ├─ manga.ts
-│  │     ├─ manhwa.ts
-│  │     ├─ storyboard-horizontal.ts
-│  │     ├─ storyboard-vertical.ts
-│  │     ├─ texture-2d-wide.ts
-│  │     ├─ texture-2d.ts
-│  │     ├─ texture-uv-4k.ts
-│  │     ├─ texture-uv.ts
-│  │     ├─ tiktok-post.ts
-│  │     ├─ tiktok-story.ts
-│  │     ├─ types.ts
-│  │     └─ youtube-thumb.ts
+│  │  ├─ src/
+│  │  │  ├─ 4k-uhd.ts
+│  │  │  ├─ a4.ts
+│  │  │  ├─ animation-2d.ts
+│  │  │  ├─ animation-vertical.ts
+│  │  │  ├─ animation-web.ts
+│  │  │  ├─ comic-eu.ts
+│  │  │  ├─ comic-us.ts
+│  │  │  ├─ facebook-post.ts
+│  │  │  ├─ facebook-story.ts
+│  │  │  ├─ full-hd.ts
+│  │  │  ├─ index.ts
+│  │  │  ├─ instagram-post.ts
+│  │  │  ├─ instagram-story.ts
+│  │  │  ├─ manga.ts
+│  │  │  ├─ manhwa.ts
+│  │  │  ├─ storyboard-horizontal.ts
+│  │  │  ├─ storyboard-vertical.ts
+│  │  │  ├─ texture-2d-wide.ts
+│  │  │  ├─ texture-2d.ts
+│  │  │  ├─ texture-uv-4k.ts
+│  │  │  ├─ texture-uv.ts
+│  │  │  ├─ tiktok-post.ts
+│  │  │  ├─ tiktok-story.ts
+│  │  │  ├─ types.ts
+│  │  │  └─ youtube-thumb.ts
+│  │  └─ package.json
 │  ├─ ui/
-│  │  ├─ package.json
-│  │  └─ src/
-│  │     ├─ App.ts
-│  │     ├─ HomeScreenController.ts
-│  │     ├─ index.ts
-│  │     ├─ panels/
-│  │     │  ├─ AdvancedToolOptionsPanel.ts
-│  │     │  ├─ AnimationTimelinePanel.ts
-│  │     │  ├─ ComicManagerPanel.ts
-│  │     │  ├─ DockLayoutManager.ts
-│  │     │  ├─ FilterPanel.ts
-│  │     │  ├─ HistoryPanel.ts
-│  │     │  ├─ LayerEffectsPanel.ts
-│  │     │  ├─ LayersPanel.ts
-│  │     │  ├─ PluginsPanel.ts
-│  │     │  ├─ PreferencesPanel.ts
-│  │     │  ├─ StoryboardPanel.ts
-│  │     │  └─ VectorEditorPanel.ts
-│  │     ├─ ShellTemplates.ts
-│  │     ├─ Toolbar.ts
-│  │     └─ workspaces/
-│  │        ├─ AnimationWorkspace.ts
-│  │        ├─ ComicsWorkspace.ts
-│  │        ├─ DigitalIllustrationWorkspace.ts
-│  │        ├─ GeneralWorkspace.ts
-│  │        ├─ ImageManipulationWorkspace.ts
-│  │        ├─ index.ts
-│  │        ├─ persistence.ts
-│  │        ├─ StoryboardingWorkspace.ts
-│  │        ├─ types.ts
-│  │        └─ VectorIllustrationWorkspace.ts
+│  │  ├─ src/
+│  │  │  ├─ managers/
+│  │  │  │  ├─ AppManager.ts
+│  │  │  │  ├─ ComicProjectManager.ts
+│  │  │  │  ├─ DocumentLifecycleManager.ts
+│  │  │  │  ├─ ToolManager.ts
+│  │  │  │  ├─ UIManager.ts
+│  │  │  │  └─ WorkspaceManager.ts
+│  │  │  ├─ panels/
+│  │  │  │  ├─ AdvancedToolOptionsPanel.ts
+│  │  │  │  ├─ AnimationTimelinePanel.ts
+│  │  │  │  ├─ ComicManagerPanel.ts
+│  │  │  │  ├─ DockLayoutManager.ts
+│  │  │  │  ├─ FilterPanel.ts
+│  │  │  │  ├─ HistoryPanel.ts
+│  │  │  │  ├─ LayerEffectsPanel.ts
+│  │  │  │  ├─ LayersPanel.ts
+│  │  │  │  ├─ PluginsPanel.ts
+│  │  │  │  ├─ PreferencesPanel.ts
+│  │  │  │  ├─ StoryboardPanel.ts
+│  │  │  │  └─ VectorEditorPanel.ts
+│  │  │  ├─ workspaces/
+│  │  │  │  ├─ AnimationWorkspace.ts
+│  │  │  │  ├─ ComicsWorkspace.ts
+│  │  │  │  ├─ DigitalIllustrationWorkspace.ts
+│  │  │  │  ├─ GeneralWorkspace.ts
+│  │  │  │  ├─ ImageManipulationWorkspace.ts
+│  │  │  │  ├─ index.ts
+│  │  │  │  ├─ persistence.ts
+│  │  │  │  ├─ StoryboardingWorkspace.ts
+│  │  │  │  ├─ types.ts
+│  │  │  │  └─ VectorIllustrationWorkspace.ts
+│  │  │  ├─ App.ts
+│  │  │  ├─ HomeScreenController.ts
+│  │  │  ├─ index.ts
+│  │  │  ├─ ShellTemplates.ts
+│  │  │  └─ Toolbar.ts
+│  │  └─ package.json
 │  └─ wasm-bindings/
 │     ├─ build/
 │     │  ├─ engine.js
 │     │  └─ engine.wasm
+│     ├─ ts-wrapper/
+│     │  ├─ BlendMode.ts
+│     │  ├─ DirtyTiles.ts
+│     │  ├─ engine.d.ts
+│     │  ├─ EngineClient.ts
+│     │  ├─ EngineSession.ts
+│     │  ├─ index.ts
+│     │  ├─ SafeMemory.ts
+│     │  └─ WasmRuntimeManager.ts
 │     ├─ index.ts
-│     ├─ package.json
-│     ├─ src/
-│     └─ ts-wrapper/
-│        ├─ BlendMode.ts
-│        ├─ DirtyTiles.ts
-│        ├─ engine.d.ts
-│        ├─ EngineClient.ts
-│        ├─ EngineSession.ts
-│        ├─ index.ts
-│        └─ SafeMemory.ts
+│     └─ package.json
+├─ tools/
+│  └─ copy-wasm.mjs
+├─ .gitattributes
+├─ .gitignore
+├─ LICENSE
+├─ package.json
 ├─ pnpm-lock.yaml
 ├─ pnpm-workspace.yaml
 ├─ README.md
-├─ tools/
-│  └─ copy-wasm.mjs
 ├─ tsconfig.base.json
 └─ tsconfig.json
 ```
+## Architecture managers
+
+The UI package now separates several existing responsibilities into focused managers:
+
+- `AppManager` initializes preferences and coordinates the welcome screen with the project-launch callback.
+- `UIManager` mounts the editor shell, connects the shared storyboard/timeline panels, and renders launch errors.
+- `DocumentLifecycleManager` creates new documents, restores unpacked `.nvtsphoto` data, and disposes the previous document when replacing it. The renderer and editor-specific refresh remain in `App`.
+- `ToolManager` tracks the active drawing/navigation tool. Tool availability checks and UI updates remain in `App`.
+- `WorkspaceManager` validates workspace IDs and centralizes workspace persistence and definition lookup.
+- `ComicProjectManager` manages the selected comic page and page-list operations; filesystem access, configuration persistence, and rendering remain in `App`.
+- `WasmRuntimeManager` is a Singleton per JavaScript context. It memoizes the `EngineClient` initialization so repeated launches reuse the same Wasm runtime. A failed initialization clears its cached promise so the app can retry. It deliberately does not make individual documents, sessions, or panels global singletons. If the engine is moved to a Worker later, each Worker will have its own JavaScript context and runtime manager.
+
+These managers are intentionally not all Singletons. Their instances are lightweight and can be created as needed; the Wasm runtime is the special case because repeated initialization of the same runtime within one context should be avoided.
 
 ## Shared template catalog
 

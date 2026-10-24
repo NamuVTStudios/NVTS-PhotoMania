@@ -3,8 +3,7 @@ import { TEMPLATES } from '@nvts/templates';
 import { PREFERENCES_PANEL_TEMPLATE, readPreferences, wirePreferences } from './panels/PreferencesPanel';
 import { PLUGINS_PANEL_TEMPLATE, wirePlugins } from './panels/PluginsPanel';
 import { HOME_TEMPLATE } from './ShellTemplates';
-import { WORKSPACES, type WorkspaceId } from './workspaces';
-import { readWorkspace, writeWorkspace } from './workspaces/persistence';
+import { WorkspaceManager } from './managers/WorkspaceManager';
 
 type HomeSection = 'new' | 'open' | 'recent';
 type LaunchProject = (name: string, width: number, height: number, file?: File) => Promise<void>;
@@ -13,6 +12,7 @@ type RecentContextMenuState = { container: HTMLDivElement; removeButton: HTMLBut
 
 /** Owns the welcome screen, template picker, recent projects and file selection. */
 export class HomeScreenController {
+  private readonly workspaceManager = new WorkspaceManager();
   private selectedTemplate = TEMPLATES.find((template) => template.id === 'full-hd')!;
   private width = this.selectedTemplate.width;
   private height = this.selectedTemplate.height;
@@ -294,17 +294,17 @@ export class HomeScreenController {
   }
 
   private selectWorkspace(value: string | undefined): void {
-    const candidate = value as WorkspaceId;
-    if (!WORKSPACES.some((workspace) => workspace.id === candidate)) return;
-    writeWorkspace(candidate);
+    if (!value) return;
+    const selected = this.workspaceManager.setCurrent(value);
+    if (!selected) return;
     this.refreshHomeWorkspaceMenu();
-    const label = WORKSPACES.find((workspace) => workspace.id === candidate)?.label ?? candidate;
+    const label = this.workspaceManager.getLabel(selected);
     this.homeStatus.textContent = `Espacio de trabajo «${label}» seleccionado. Se aplicará al abrir un documento.`;
   }
 
   private refreshHomeWorkspaceMenu(): void {
     this.root.querySelectorAll<HTMLButtonElement>('[data-workspace]').forEach((button) => {
-      const active = button.dataset.workspace === readWorkspace();
+      const active = button.dataset.workspace === this.workspaceManager.getCurrent();
       button.setAttribute('aria-checked', String(active));
       const check = button.querySelector<HTMLElement>('.menu-check');
       if (check) check.textContent = active ? '✓' : '';

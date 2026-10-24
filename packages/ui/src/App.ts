@@ -2,27 +2,31 @@
 // Todo corre en el hilo principal por ahora (mover el motor a un Worker es un paso posterior).
 // Opciones de herramienta por contexto; el panel avanzado cambia según la herramienta activa.
 
-import { EngineClient } from '@nvts/wasm-bindings';
+import { WasmRuntimeManager, type EngineClient } from '@nvts/wasm-bindings';
 import { createRenderer, type RendererBackend } from '@nvts/renderer';
 import { DocumentController, blendModeToManifest, StrokeSession, refresh, runEdit, type EngineCtx, type LayerNode, } from '@nvts/document-model';
 import { isPixelLayerType, type BlendMode, type FilterKind, type LayerType, type VectorShape, type TextLayerStyle, type TextLayerAlign } from '@nvts/shared';
 import { ADVANCED_TOOL_OPTIONS_PANEL_TEMPLATE, renderAdvancedToolOptionsPanel } from './panels/AdvancedToolOptionsPanel';
+import { AppManager } from './managers/AppManager';
+import { ComicProjectManager } from './managers/ComicProjectManager';
+import { DocumentLifecycleManager } from './managers/DocumentLifecycleManager';
+import { ToolManager, type ToolId } from './managers/ToolManager';
+import { UIManager } from './managers/UIManager';
+import { WorkspaceManager } from './managers/WorkspaceManager';
 import { HISTORY_PANEL_TEMPLATE, renderHistoryPanel } from './panels/HistoryPanel';
 import { LAYERS_PANEL_TEMPLATE, renderLayersPanel, wireLayersPanel } from './panels/LayersPanel';
 import { COMIC_MANAGER_PANEL_TEMPLATE, renderComicManagerPanel, type ComicConfig, type ComicPageEntry } from './panels/ComicManagerPanel';
-import { STORYBOARD_PANEL_TEMPLATE, wireStoryboardPanel } from './panels/StoryboardPanel';
-import { ANIMATION_TIMELINE_PANEL_TEMPLATE, wireAnimationTimelinePanel } from './panels/AnimationTimelinePanel';
+import { STORYBOARD_PANEL_TEMPLATE } from './panels/StoryboardPanel';
+import { ANIMATION_TIMELINE_PANEL_TEMPLATE } from './panels/AnimationTimelinePanel';
 import { LAYER_EFFECTS_PANEL_TEMPLATE, wireLayerEffectsPanel } from './panels/LayerEffectsPanel';
 import { FILTER_PANEL_TEMPLATE, wireFilterPanel } from './panels/FilterPanel';
 import { VECTOR_EDITOR_PANEL_TEMPLATE, wireVectorEditorPanel, renderVectorEditorPanel } from './panels/VectorEditorPanel';
 import { PLUGINS_PANEL_TEMPLATE, wirePlugins, type PluginApi } from './panels/PluginsPanel';
-import { PREFERENCES_PANEL_TEMPLATE, initializePreferences, readPreferences, wirePreferences, type AppPreferences } from './panels/PreferencesPanel';
-import { HomeScreenController } from './HomeScreenController';
+import { PREFERENCES_PANEL_TEMPLATE, readPreferences, wirePreferences, type AppPreferences } from './panels/PreferencesPanel';
 import { LOGO_URL, MAIN_MENU } from './ShellTemplates';
-import { readWorkspace, writeWorkspace } from './workspaces/persistence';
 import { createDockLayoutManager, type DockLayoutController } from './panels/DockLayoutManager';
 import { openFromDisk, packNvtsPhoto, saveToDisk, unpackNvtsPhoto, rememberRecentProject, supportsFileSystemAccess, rememberLinkedFile, getLinkedFile } from '@nvts/storage';
-import { WORKSPACES, getWorkspaceDefinition, type WorkspaceId } from './workspaces';
+import type { WorkspaceDefinition, WorkspaceId } from './workspaces';
 
 function escapeSvgText(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -111,7 +115,7 @@ function vectorTextToSvg(shape: VectorShape, style: string, transform: string): 
   return `<text x="${shape.x}" y="${shape.y + Math.max(1, fontSize)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${shape.fontWeight ?? 'normal'}" font-style="${shape.fontStyle ?? 'normal'}" text-anchor="${anchor}" ${style}${transform}>${text}</text>`;
 }
 
-type Tool = 'brush' | 'eraser' | 'eyedropper' | 'line' | 'rectangle' | 'ellipse' | 'fill' | 'hand' | 'text' | 'vector-select';
+type Tool = ToolId;
 type ToolSettings = { size: number; opacity: number; hardness: number; spacing: number; smoothing: number; tolerance: number; contiguous: boolean; sampleMerged: boolean; shapeFill: boolean; lineCap: CanvasLineCap; lineJoin: CanvasLineJoin };
 type FillOperation = {
   width: number;
@@ -336,17 +340,23 @@ export class App {
   private ctl!: DocumentController;
   private ctx!: EngineCtx;
   private fileHandle: FileSystemFileHandle | null = null;
-  private workspace: WorkspaceId = readWorkspace();
+  private readonly workspaceManager = new WorkspaceManager();
+  private workspace: WorkspaceId = this.workspaceManager.getCurrent();
+  private readonly documentLifecycle = new DocumentLifecycleManager();
   private dockLayout: DockLayoutController | null = null;
   private comicConfig: ComicConfig = readComicConfig();
-  private comicActivePageId: string | null = this.comicConfig.pages[0]?.id ?? null;
+  private readonly comicProjectManager = new ComicProjectManager(() => this.comicConfig, this.comicConfig.pages[0]?.id ?? null);
+  private get comicActivePageId(): string | null { return this.comicProjectManager.activePageId; }
+  private set comicActivePageId(pageId: string | null) { this.comicProjectManager.setActivePage(pageId); }
   private comicParentDirectoryHandle: FileSystemDirectoryHandle | null = null;
   private comicProjectDirectoryHandle: FileSystemDirectoryHandle | null = null;
   private comicPagesDirectoryHandle: FileSystemDirectoryHandle | null = null;
   private comicExportDirectoryHandle: FileSystemDirectoryHandle | null = null;
   private comicConfigWriteChain: Promise<void> = Promise.resolve();
   private activeId = '';
-  private tool: Tool = 'brush';
+  private readonly toolManager = new ToolManager('brush');
+  private get tool(): Tool { return this.toolManager.activeTool; }
+  private set tool(tool: Tool) { this.toolManager.setActiveTool(tool); }
   private textSettings: TextToolSettings = { fontFamily: 'Arial', fontSize: 64, style: 'normal', color: '#e03030', align: 'left', lineHeight: 1.2, letterSpacing: 0, strokeColor: '#000000', strokeWidth: 0, backgroundColor: 'transparent' };
   private vectorDirectSelectedId: string | null = null;
   private vectorGesture: { layerId: string; shapeId: string; mode: 'move' | 'resize'; startPoint: { x: number; y: number }; original: VectorShape; latest: VectorShape; moved: boolean } | null = null;
@@ -379,11 +389,10 @@ export class App {
   ) { }
 
   static async start(root: HTMLElement, wasmBase = '/wasm/'): Promise<void> {
-    await initializePreferences();
-    const home = new HomeScreenController(root, (name, width, height, file) =>
-      this.launchProject(root, wasmBase, name, width, height, file),
+    const appManager = new AppManager();
+    await appManager.start(root, wasmBase, (projectRoot, baseUrl, name, width, height, file) =>
+      App.launchProject(projectRoot, baseUrl, name, width, height, file),
     );
-    home.mount();
   }
 
   private static async launchProject(
@@ -395,17 +404,14 @@ export class App {
     file?: File,
   ): Promise<void> {
     try {
-      root.innerHTML = TEMPLATE;
-      root.insertAdjacentHTML('beforeend', PREFERENCES_PANEL_TEMPLATE);
-      root.insertAdjacentHTML('beforeend', PLUGINS_PANEL_TEMPLATE);
-      const canvas = root.querySelector<HTMLCanvasElement>('#canvas')!;
+      const uiManager = new UIManager();
+      const canvas = uiManager.mountEditorShell(root, TEMPLATE, PREFERENCES_PANEL_TEMPLATE, PLUGINS_PANEL_TEMPLATE);
       const [engine, renderer] = await Promise.all([
-        EngineClient.create(wasmBase),
+        WasmRuntimeManager.getInstance().getEngine(wasmBase),
         createRenderer(canvas),
       ]);
       const app = new App(root, canvas, engine, renderer);
-      wireStoryboardPanel(root);
-      wireAnimationTimelinePanel(root);
+      uiManager.bindSharedPanels(root);
       App.bindEditorPreferences(root, app);
       app.bind();
       app.newDocument(width, height, file ? documentNameFromFile(file.name) : name);
@@ -424,13 +430,7 @@ export class App {
   }
 
   private static showLaunchError(root: HTMLElement, error: unknown, wasmBase: string): void {
-    root.innerHTML = '<main class="home-fatal"><h1>No se pudo iniciar PhotoMania</h1><p id="home-error"></p><button id="home-back">Volver al inicio</button></main>';
-    const message = root.querySelector<HTMLElement>('#home-error');
-    if (message) message.textContent = error instanceof Error ? error.message : String(error);
-    root.querySelector<HTMLButtonElement>('#home-back')?.addEventListener('click', () => {
-      void App.start(root, wasmBase);
-    });
-    console.error(error);
+    new UIManager().renderLaunchError(root, error, () => { void App.start(root, wasmBase); });
   }
 
   private async openInitialFile(file: File | undefined, fallbackName: string): Promise<void> {
@@ -447,7 +447,7 @@ export class App {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const unpacked = unpackNvtsPhoto(bytes);
     unpacked.doc.name = documentNameFromFile(file.name) || fallbackName;
-    this.setDocument(DocumentController.fromUnpacked(this.engine.module, unpacked));
+    this.setDocument(this.documentLifecycle.fromUnpacked(this.engine.module, unpacked));
     await this.refreshLinkedFileLayers(false);
     await this.rememberOpenedProject();
   }
@@ -475,18 +475,13 @@ export class App {
   // ───────────── Documento ─────────────
 
   private newDocument(w: number, h: number, name = 'Sin título'): void {
-    const ctl = DocumentController.create(this.engine.module, w, h, name);
-    const bg = ctl.addRaster('Fondo');
-    ctl.layerPixels(bg)!.loadFromRGBA(new Uint8Array(w * h * 4).fill(255)); // fondo blanco
-    ctl.addRaster('Capa 1');
-    ctl.clearHistory(); // las capas iniciales forman parte del documento, no son acciones del usuario
+    const ctl = this.documentLifecycle.createBlank(this.engine.module, w, h, name);
     this.fileHandle = null;
     this.setDocument(ctl);
   }
 
   private setDocument(ctl: DocumentController): void {
-    this.ctl?.dispose();
-    this.ctl = ctl;
+    this.ctl = this.documentLifecycle.replace(this.ctl, ctl);
     this.activeId = this.topRaster()?.id ?? '';
     this.prepareRendererForDocument(ctl.doc.width, ctl.doc.height);
     this.clearRendererForDocument(ctl.doc.width, ctl.doc.height);
@@ -778,10 +773,10 @@ export class App {
     const selectedWorkspace = this.resolveWorkspace(workspace);
     this.dockLayout?.saveCurrentWorkspace();
     this.workspace = selectedWorkspace;
-    writeWorkspace(selectedWorkspace);
+    this.workspaceManager.setCurrent(selectedWorkspace);
     const panels = this.getWorkspacePanelElements();
     if (!panels) return;
-    const preset = getWorkspaceDefinition(selectedWorkspace);
+    const preset = this.workspaceManager.getDefinition(selectedWorkspace);
     this.applyWorkspacePanelPreset(selectedWorkspace, preset, panels);
     this.dockLayout?.applyWorkspace(selectedWorkspace);
     this.refreshWorkspaceMenuChecks(selectedWorkspace);
@@ -791,7 +786,7 @@ export class App {
   }
 
   private resolveWorkspace(workspace: WorkspaceId): WorkspaceId {
-    return WORKSPACES.some((entry) => entry.id === workspace) ? workspace : 'general';
+    return this.workspaceManager.isWorkspaceId(workspace) ? workspace : 'general';
   }
 
   private getWorkspacePanelElements(): WorkspacePanelElements | null {
@@ -809,7 +804,7 @@ export class App {
 
   private applyWorkspacePanelPreset(
     workspace: WorkspaceId,
-    preset: ReturnType<typeof getWorkspaceDefinition>,
+    preset: WorkspaceDefinition,
     panels: WorkspacePanelElements,
   ): void {
     panels.advanced.hidden = !preset.visible.advanced;
@@ -882,7 +877,7 @@ export class App {
   }
 
   private announceWorkspace(workspace: WorkspaceId): void {
-    const label = WORKSPACES.find((entry) => entry.id === workspace)?.label ?? 'General';
+    const label = this.workspaceManager.getLabel(workspace) || 'General';
     const status = this.root.querySelector<HTMLElement>('#status');
     if (status) status.textContent = `Espacio de trabajo: ${label}`;
   }
@@ -1306,7 +1301,7 @@ export class App {
         : (config.projectLocation || 'Elegí una carpeta base para crear el proyecto');
     renderComicManagerPanel(this.root, config, this.comicActivePageId, projectLocationDisplay, {
       onSelectPage: (pageId) => { this.comicActivePageId = pageId; this.renderComicManager(); },
-      onRenamePage: (page, nextName) => { page.name = nextName; this.persistComicConfig(); this.renderComicManager(); },
+      onRenamePage: (page, nextName) => { if (!this.comicProjectManager.renamePage(page.id, nextName)) return; this.persistComicConfig(); this.renderComicManager(); },
     });
   }
 
@@ -1401,14 +1396,7 @@ export class App {
 
   private addComicPage(): void {
     this.readComicFields();
-    const number = this.comicConfig.pages.length + 1;
-    const page: ComicPageEntry = {
-      id: crypto.randomUUID(), number, name: `Página ${number}`,
-      fileName: `comic-page-${String(number).padStart(3, '0')}.nvtsphoto`,
-      width: this.comicConfig.pageWidth, height: this.comicConfig.pageHeight, notes: '',
-    };
-    this.comicConfig.pages.push(page);
-    this.comicActivePageId = page.id;
+    this.comicProjectManager.addPage();
     this.persistComicConfig('Página añadida. Configuración guardada localmente.');
     this.renderComicManager();
   }
@@ -1418,19 +1406,7 @@ export class App {
   }
 
   private duplicateActiveComicPage(): void {
-    const selected = this.comicConfig.pages.find((page) => page.id === this.comicActivePageId);
-    if (!selected) return;
-    const number = this.comicConfig.pages.length + 1;
-    const copy: ComicPageEntry = {
-      ...selected,
-      id: crypto.randomUUID(),
-      number,
-      name: `${selected.name} (copia)`,
-      fileName: `comic-page-${String(number).padStart(3, '0')}.nvtsphoto`,
-    };
-    this.comicConfig.pages.splice(this.comicConfig.pages.indexOf(selected) + 1, 0, copy);
-    this.comicActivePageId = copy.id;
-    this.renumberComicPages();
+    if (!this.comicProjectManager.duplicateActivePage()) return;
     this.persistComicConfig('Página duplicada.');
     this.renderComicManager();
   }
@@ -1440,21 +1416,15 @@ export class App {
   }
 
   private deleteActiveComicPage(): void {
-    const index = this.comicConfig.pages.findIndex((page) => page.id === this.comicActivePageId);
-    if (index < 0) return;
-    const page = this.comicConfig.pages[index];
+    const page = this.comicProjectManager.getActivePage();
+    if (!page) return;
     const message = `¿Eliminar «${page.name}» de la configuración? No se borrará ningún archivo del disco.`;
     if (!confirm(message)) return;
-    this.comicConfig.pages.splice(index, 1);
-    this.renumberComicPages();
-    this.comicActivePageId = this.comicConfig.pages[Math.min(index, this.comicConfig.pages.length - 1)]?.id ?? null;
+    if (!this.comicProjectManager.deleteActivePage()) return;
     this.persistComicConfig('Página eliminada de la configuración.');
     this.renderComicManager();
   }
 
-  private renumberComicPages(): void {
-    this.comicConfig.pages.forEach((page, index) => { page.number = index + 1; });
-  }
 
   private bindComicPageOrderActions(): void {
     this.q<HTMLButtonElement>('#comic-page-up').addEventListener('click', () => this.moveActiveComicPage(-1));
@@ -1462,11 +1432,7 @@ export class App {
   }
 
   private moveActiveComicPage(delta: number): void {
-    const index = this.comicConfig.pages.findIndex((page) => page.id === this.comicActivePageId);
-    const next = index + delta;
-    if (index < 0 || next < 0 || next >= this.comicConfig.pages.length) return;
-    [this.comicConfig.pages[index], this.comicConfig.pages[next]] = [this.comicConfig.pages[next], this.comicConfig.pages[index]];
-    this.renumberComicPages();
+    if (!this.comicProjectManager.moveActivePage(delta)) return;
     this.persistComicConfig('Orden de páginas actualizado.');
     this.renderComicManager();
   }
@@ -1490,7 +1456,7 @@ export class App {
   }
 
   private getActiveComicPage(): ComicPageEntry | undefined {
-    return this.comicConfig.pages.find((page) => page.id === this.comicActivePageId);
+    return this.comicProjectManager.getActivePage();
   }
 
   private installComicPageCanvas(page: ComicPageEntry, fileName: string, pageHandle: FileSystemFileHandle | null): void {
@@ -1537,7 +1503,7 @@ export class App {
     const unpacked = unpackNvtsPhoto(bytes);
     unpacked.doc.name = documentNameFromFile(file.name);
     this.fileHandle = null;
-    this.setDocument(DocumentController.fromUnpacked(this.engine.module, unpacked));
+    this.setDocument(this.documentLifecycle.fromUnpacked(this.engine.module, unpacked));
     await this.refreshLinkedFileLayers(false);
     await this.saveComicPageCopyIfLinked(page, file, bytes);
     page.width = this.ctl.doc.width;
@@ -3293,7 +3259,7 @@ export class App {
         event.preventDefault();
         event.stopPropagation();
         const candidate = button.dataset.workspace as WorkspaceId;
-        if (!WORKSPACES.some((entry) => entry.id === candidate)) return;
+        if (!this.workspaceManager.isWorkspaceId(candidate)) return;
         this.applyWorkspace(candidate);
         this.closeMenu(workspaceMenu);
         refresh();
@@ -4595,7 +4561,7 @@ export class App {
     if (!result) return;
     this.fileHandle = result.handle;
     this.applyOpenedFileName(result);
-    this.setDocument(DocumentController.fromUnpacked(this.engine.module, result));
+    this.setDocument(this.documentLifecycle.fromUnpacked(this.engine.module, result));
     await this.refreshLinkedFileLayers(false);
     if (readPreferences().rememberRecentProjects) {
       const doc = this.ctl.doc;

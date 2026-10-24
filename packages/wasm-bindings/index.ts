@@ -6,3 +6,5 @@ export * from './ts-wrapper/BlendMode';
 export type {
   NvtsEngineModule, ImageProcessor, TiledLayer, Compositor, HistoryManager,
 } from './build/engine.js';
+
+export { WasmRuntimeManager } from './ts-wrapper/WasmRuntimeManager';
