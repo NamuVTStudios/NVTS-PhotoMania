@@ -4210,3 +4210,222 @@ button.primary {
     min-height: 0;
     max-height: none;
 }
+/* ───────── Paneles: asas individuales y línea de tiempo inferior ───────── */
+.workspace {
+    --right-dock-width: 280px;
+    --timeline-dock-height: 260px;
+    display: grid;
+    grid-template-columns: 54px minmax(0, 1fr) 6px var(--right-dock-width);
+    grid-template-rows: minmax(0, 1fr) 0px;
+    overflow: hidden;
+    min-width: 0;
+}
+
+.workspace.has-bottom-timeline {
+    grid-template-rows: minmax(0, 1fr) var(--timeline-dock-height, 260px);
+}
+
+.workspace:not(.has-side-panels) {
+    grid-template-columns: 54px minmax(0, 1fr) 0px 0px;
+}
+
+.workspace.panels-hidden {
+    grid-template-columns: 54px minmax(0, 1fr) 0px 0px;
+    grid-template-rows: minmax(0, 1fr) 0px;
+}
+
+.workspace>.tools-rail {
+    grid-column: 1;
+    grid-row: 1 / 3;
+    width: 100%;
+    min-width: 0;
+}
+
+.workspace>.canvas-area {
+    grid-column: 2;
+    grid-row: 1;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+}
+
+.workspace>.dock-width-resizer {
+    grid-column: 3;
+    grid-row: 1;
+    align-self: stretch;
+}
+
+.workspace>.right-dock {
+    grid-column: 4;
+    grid-row: 1;
+    width: 100%;
+    max-width: none;
+    min-height: 0;
+    min-width: 0;
+    align-self: stretch;
+}
+
+.animation-timeline-dock {
+    grid-column: 2 / 5;
+    grid-row: 2;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--panel, #211b1b);
+    border-top: 1px solid var(--line, #3c2d2d);
+}
+
+.animation-timeline-dock[hidden] {
+    display: none !important;
+}
+
+.animation-timeline-dock>.dock-panel-slot {
+    flex: 1 1 auto;
+    width: 100%;
+    height: auto !important;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.animation-timeline-dock>.dock-panel-slot>.animation-timeline-panel {
+    height: 100% !important;
+    min-height: 0;
+}
+
+.dock-panel-slot {
+    position: relative;
+    overflow: visible;
+}
+
+.dock-panel-slot>.dock-panel {
+    height: calc(100% - 10px);
+}
+
+.dock-panel-resizer {
+    position: absolute;
+    z-index: 8;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: block;
+    width: 100%;
+    height: 10px;
+    min-height: 10px;
+    margin: 0;
+    border-radius: 3px;
+    cursor: ns-resize;
+    touch-action: none;
+    user-select: none;
+    background: transparent;
+}
+
+.dock-panel-resizer::after {
+    content: "";
+    position: absolute;
+    top: 4px;
+    left: calc(50% - 22px);
+    width: 44px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--muted, #a99090);
+    opacity: .6;
+}
+
+.dock-panel-resizer:hover,
+.dock-panel-resizer:focus-visible {
+    outline: none;
+    background: color-mix(in srgb, var(--accent, #f44545) 15%, transparent);
+}
+
+.dock-panel-resizer:hover::after,
+.dock-panel-resizer:focus-visible::after {
+    background: var(--accent, #f44545);
+    opacity: 1;
+}
+
+.timeline-dock-resizer {
+    position: relative;
+    z-index: 10;
+    flex: 0 0 10px;
+    min-height: 10px;
+    width: 100%;
+    cursor: ns-resize;
+    touch-action: none;
+    user-select: none;
+    background: transparent;
+}
+
+.timeline-dock-resizer::after {
+    content: "";
+    position: absolute;
+    top: 4px;
+    left: calc(50% - 28px);
+    width: 56px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--muted, #a99090);
+    opacity: .7;
+}
+
+.timeline-dock-resizer:hover,
+.timeline-dock-resizer:focus-visible {
+    outline: none;
+    background: color-mix(in srgb, var(--accent, #f44545) 15%, transparent);
+}
+
+.timeline-dock-resizer:hover::after,
+.timeline-dock-resizer:focus-visible::after {
+    background: var(--accent, #f44545);
+    opacity: 1;
+}
+
+/* La lista de filtros es desplazable y agrupa los efectos por tarea creativa. */
+#filters-panel .editor-list {
+    overflow-y: auto;
+    min-height: 0;
+    gap: 12px;
+}
+
+#filters-panel .filter-group {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+}
+
+#filters-panel .filter-group>strong {
+    padding: 4px 7px 2px;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .045em;
+    text-transform: uppercase;
+}
+
+#filters-panel .filter-group button {
+    width: 100%;
+    padding: 7px 8px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    text-align: left;
+    white-space: normal;
+}
+
+#filters-panel .filter-group button.active {
+    background: color-mix(in srgb, var(--accent) 20%, var(--panel2));
+    border-color: var(--accent);
+}
+
+:root[data-theme="light"] .animation-timeline-dock {
+    background: var(--panel, #fff);
+    border-color: var(--line, #d2d5df);
+}
+
+@media (max-width: 900px) {
+    .workspace {
+        --right-dock-width: 220px;
+    }
+}

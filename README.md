@@ -43,7 +43,7 @@ pnpm build:wasm   # Rebuild the C++ engine and copy the Wasm assets
 - **History:** pixel edits use the Wasm tile history; document structure and property changes are recorded by the TypeScript `DocumentController`. Undo/redo shortcuts are `Ctrl/Meta+Z`, `Ctrl/Meta+Shift+Z`, and `Ctrl/Meta+Y`.
 - **Text:** a text layer stores editable text and typography metadata along with a raster preview. The top tool bar contains font, style, size, and color; advanced options contain alignment, line height, letter spacing, stroke, and background controls.
 - **Vector layers:** editable shape metadata, object list, move/resize interactions, shape editing controls, and SVG export. The displayed compositor image is currently rasterized; this is not yet a feature-complete vector illustration package.
-- **Filters and layer effects:** grayscale, invert, sepia, blur, brightness, contrast, plus blend/opacity controls. Filter layers render non-destructively in the current UI renderer path.
+- **Filters and layer effects:** 17 effects covering grayscale, invert, sepia, blur, brightness, contrast, saturation, hue rotation, sharpen, posterize, threshold, duotone, solarize, pixelation, edge detection, grain and vignette, plus blend/opacity controls. Filter layers render non-destructively in the current UI renderer path.
 - **Workspaces:** General, Digital Illustration, Vector Illustration, Image Manipulation, Comics, Storyboarding, and Animation, with a saved workspace choice.
 - **Panels and appearance:** modular Layers, History, Advanced Tool Options, Comic Manager, and supporting filter/vector/effects/plugin/preferences panels; light and dark themes; per-panel visibility under **View → Panels**; `Tab` toggles the panel zone. Dock panels can be reordered by dragging their headers, detached into floating windows, re-docked, resized individually, and the width of the whole panel zone can be dragged. Layouts are saved separately for each workspace.
 - **Projects:** create, open, Save, Save As, `.nvtsphoto` serialization, and optional recent-project snapshots persisted in IndexedDB according to Preferences.
@@ -203,6 +203,7 @@ NVTS-PhotoMania/
 │  │  │  │  ├─ ComicManagerPanel.ts
 │  │  │  │  ├─ DockLayoutManager.ts
 │  │  │  │  ├─ FilterPanel.ts
+│  │  │  │  ├─ FilterProcessor.ts
 │  │  │  │  ├─ HistoryPanel.ts
 │  │  │  │  ├─ LayerEffectsPanel.ts
 │  │  │  │  ├─ LayersPanel.ts
@@ -276,7 +277,7 @@ PhotoMania consumes the catalog via `import { TEMPLATES } from '@nvts/templates'
 
 ## Data flow and document format
 
-The TypeScript document model owns the layer tree and document metadata. Pixel surfaces are stored in the C++ engine as sparse 256×256 RGBA8 tiles. Edits mark tiles dirty; the compositor recomposes affected tiles and the selected renderer uploads image regions. Filter layers currently use an alternate tile composition path in the UI so that filters can affect the content below them non-destructively.
+The TypeScript document model owns the layer tree and document metadata. Pixel surfaces are stored in the C++ engine as sparse 256×256 RGBA8 tiles. Edits mark tiles dirty; the compositor recomposes affected tiles and the selected renderer uploads image regions. Filter layers use an alternate tile composition path in the UI so they can affect the content below them non-destructively. The filter set includes photographic adjustments (grayscale, brightness, contrast, saturation, hue, sepia, invert and blur), illustration effects (posterize, threshold, duotone, solarize, pixelation and edge detection), and finishing effects (grain, vignette and sharpening). CSS and pixel-based filters share a processor so destructive application, editable filter layers and sampling use the same effect definitions.
 
 A `.nvtsphoto` file is a ZIP containing `manifest.json` plus RGBA pixel blobs for pixel-backed layers (for example `layers/<layer-id>/pixels.rgba`). The manifest stores document dimensions, layer properties, group nesting, filter metadata, vector object data, text data, and source-link metadata where applicable. The currently declared native format version is `0.1.0`.
 
@@ -358,4 +359,4 @@ The shared `@nvts/templates` package includes `storyboard-horizontal.ts` (1920×
 
 Each workspace is configured in its own TypeScript file under `packages/ui/src/workspaces/` (`GeneralWorkspace.ts`, `DigitalIllustrationWorkspace.ts`, `VectorIllustrationWorkspace.ts`, `ImageManipulationWorkspace.ts`, `ComicsWorkspace.ts`, `StoryboardingWorkspace.ts`, and `AnimationWorkspace.ts`). `index.ts` is only the shared registry.
 
-The **Storyboarding** workspace exposes the storyboard and animation-timeline panels, with the timeline at the bottom of the right dock. The **Animation** workspace also keeps the animation timeline at the bottom. The storyboard panel supports adding/removing shots, editing shot titles, descriptions and duration, local persistence in the browser, and exporting the shot list as `storyboard.json`. The timeline supports tracks, selectable frames and keyframe cells (double-click a cell to toggle a keyframe), plus FPS and current-frame controls. These are initial organizational tools, not yet a full Krita-equivalent animation renderer: playback is a UI preview only and does not render the canvas as a sequence.
+The **Storyboarding** workspace exposes the storyboard panel and the **Animation** workspace places its animation timeline in a dedicated bottom dock, separate from the right-side tool, history and layer panels. The bottom timeline height is adjustable and persisted per workspace. Each right-side panel also has its own lower resize handle, so resizing History no longer depends on the Layers panel being visible. The storyboard panel supports adding/removing shots, editing shot titles, descriptions and duration, local persistence in the browser, and exporting the shot list as `storyboard.json`. The timeline supports tracks, selectable frames and keyframe cells (double-click a cell to toggle a keyframe), plus FPS and current-frame controls. These are initial organizational tools, not yet a full Krita-equivalent animation renderer: playback is a UI preview only and does not render the canvas as a sequence.

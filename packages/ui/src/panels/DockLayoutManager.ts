@@ -9,7 +9,7 @@ const PANEL_DEFINITIONS: Array<{ id: DockablePanelId; selector: string; title: s
   { id: 'layers', selector: '.layers-panel', title: 'Capas', defaultHeight: 310 },
   { id: 'comic', selector: '.comic-manager-panel', title: 'Gestor de cómics', defaultHeight: 340 },
   { id: 'storyboard', selector: '.storyboard-panel', title: 'Guion gráfico', defaultHeight: 340 },
-  { id: 'timeline', selector: '.animation-timeline-panel', title: 'Línea de tiempo de animación', defaultHeight: 300 },
+  { id: 'timeline', selector: '.animation-timeline-panel', title: 'Línea de tiempo de animación', defaultHeight: 260 },
 ];
 const VALID_IDS = PANEL_DEFINITIONS.map((panel) => panel.id);
 
@@ -24,6 +24,7 @@ type PanelSavedState = {
 };
 type WorkspaceSavedState = {
   dockWidth: number;
+  timelineDockHeight?: number;
   panelsHidden: boolean;
   order: DockablePanelId[];
   panels: Partial<Record<DockablePanelId, PanelSavedState>>;
@@ -43,6 +44,7 @@ type PanelItem = {
   floating: boolean;
   floatingWindow: HTMLElement | null;
   dockToggle: HTMLButtonElement;
+  resizeHandle: HTMLElement | null;
 };
 
 export interface DockLayoutController {
@@ -89,8 +91,9 @@ function parsePersistedState(raw: string | null): PersistedState {
 export function createDockLayoutManager(root: HTMLElement, initialWorkspace: string): DockLayoutController {
   const workspaceElement = root.querySelector<HTMLElement>('.workspace');
   const dock = root.querySelector<HTMLElement>('.right-dock');
-  if (!workspaceElement || !dock) return createEmptyDockController();
-  return new DockLayoutManagerImpl(root, workspaceElement, dock, initialWorkspace);
+  const bottomDock = root.querySelector<HTMLElement>('.animation-timeline-dock');
+  if (!workspaceElement || !dock || !bottomDock) return createEmptyDockController();
+  return new DockLayoutManagerImpl(root, workspaceElement, dock, bottomDock, initialWorkspace);
 }
 
 function createEmptyDockController(): DockLayoutController {
@@ -104,19 +107,21 @@ class DockLayoutManagerImpl implements DockLayoutController {
   private order: DockablePanelId[] = [];
   private restoring = false;
   private readonly items = new Map<DockablePanelId, PanelItem>();
-  private readonly resizeHandles = new Map<string, HTMLElement>();
   private readonly floatingLayer = document.createElement('div');
   private readonly widthResizer = document.createElement('div');
+  private readonly bottomResizer = document.createElement('div');
 
   constructor(
     private readonly root: HTMLElement,
     private readonly workspaceElement: HTMLElement,
     private readonly dock: HTMLElement,
+    private readonly bottomDock: HTMLElement,
     initialWorkspace: string,
   ) {
     this.activeWorkspace = initialWorkspace;
     this.configureFloatingLayer();
     this.configureWidthResizer();
+    this.configureBottomDock();
     this.initializePanelSlots();
     this.initializePanelHeights();
     this.bindWidthResizer();
@@ -143,6 +148,18 @@ class DockLayoutManagerImpl implements DockLayoutController {
     this.workspaceElement.insertBefore(this.widthResizer, this.dock);
   }
 
+  private configureBottomDock(): void {
+    this.bottomResizer.className = 'timeline-dock-resizer';
+    this.bottomResizer.setAttribute('role', 'separator');
+    this.bottomResizer.setAttribute('aria-orientation', 'horizontal');
+    this.bottomResizer.setAttribute('aria-label', 'Cambiar la altura de la línea de tiempo de animación');
+    this.bottomResizer.tabIndex = 0;
+    this.bottomResizer.addEventListener('pointerdown', (event) => this.startTimelineResize(event));
+    this.bottomResizer.addEventListener('keydown', (event) => this.resizeTimelineFromKeyboard(event));
+    this.bottomDock.append(this.bottomResizer);
+    this.workspaceElement.style.setProperty('--timeline-dock-height', '260px');
+  }
+
   private initializePanelSlots(): void {
     const initialItems: Array<{ item: PanelItem; initialOrder: number }> = [];
     for (const definition of PANEL_DEFINITIONS) this.initializePanelSlot(definition, initialItems);
@@ -160,6 +177,10 @@ class DockLayoutManagerImpl implements DockLayoutController {
     const header = panel.querySelector<HTMLElement>(':scope > header');
     const dockToggle = this.createDockToggle(definition, header);
     const item = this.createPanelItem(definition, panel, slot, dockToggle);
+    if (item.id !== 'timeline') {
+      item.resizeHandle = this.createDockResizeHandle(item);
+      slot.append(item.resizeHandle);
+    }
     this.items.set(item.id, item);
     initialItems.push({ item, initialOrder: Number.isFinite(initialOrder) ? initialOrder : initialItems.length });
     this.bindDockToggle(item);
@@ -175,12 +196,13 @@ class DockLayoutManagerImpl implements DockLayoutController {
     const slot = document.createElement('div');
     slot.className = 'dock-panel-slot';
     slot.dataset.panelSlot = definition.id;
-    slot.style.height = `${definition.defaultHeight}px`;
+    slot.style.height = definition.id === 'timeline' ? '100%' : `${definition.defaultHeight}px`;
     slot.style.order = Number.isFinite(initialOrder) ? String(initialOrder) : '0';
-    this.dock.insertBefore(slot, panel);
+    const host = definition.id === 'timeline' ? this.bottomDock : this.dock;
+    host.append(slot);
     slot.append(panel);
     panel.style.order = '';
-    panel.style.height = '100%';
+    panel.style.height = definition.id === 'timeline' ? '100%' : 'calc(100% - 10px)';
     return slot;
   }
 
@@ -217,6 +239,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
       floating: false,
       floatingWindow: null,
       dockToggle,
+      resizeHandle: null,
     };
   }
 
@@ -231,7 +254,10 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private initializePanelHeights(): void {
-    for (const item of this.items.values()) item.slot.style.height = `${item.defaultHeight}px`;
+    for (const item of this.items.values()) {
+      if (item.id === 'timeline') continue;
+      item.slot.style.height = `${item.defaultHeight}px`;
+    }
   }
 
   private getItem(id: string | undefined): PanelItem | undefined {
@@ -317,6 +343,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
     item.floating = true;
     item.floatingWindow = floatingWindow;
     item.slot.hidden = true;
+    item.panel.style.height = '100%';
     this.floatingLayer.append(floatingWindow);
     floatingWindow.append(item.panel, this.makeResizeHandle(item));
     this.updateDockToggle(item, true);
@@ -339,7 +366,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
     item.floating = false;
     item.slot.hidden = item.panel.hidden;
     item.slot.append(item.panel);
-    item.panel.style.height = '100%';
+    item.panel.style.height = item.id === 'timeline' ? '100%' : 'calc(100% - 10px)';
     this.updateDockToggle(item, false);
     if (Number.isFinite(targetY)) this.reorderAt(id, targetY!);
     this.rebuildDockChildren();
@@ -352,9 +379,10 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private reorderAt(id: DockablePanelId, clientY: number): void {
+    if (id === 'timeline') return;
     const candidates = this.order.filter((candidate) => {
       const item = this.items.get(candidate);
-      return !!item && !item.floating && candidate !== id && !item.panel.hidden;
+      return !!item && item.id !== 'timeline' && !item.floating && candidate !== id && !item.panel.hidden;
     });
     const targetIndex = this.findReorderTargetIndex(candidates, clientY);
     const next = this.order.filter((candidate) => candidate !== id);
@@ -379,7 +407,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
     // Retain hidden/floating panels near their current relative positions.
     const visibleDocked = next.filter((candidate) => {
       const item = this.items.get(candidate);
-      return !!item && !item.floating && !item.panel.hidden;
+      return !!item && item.id !== 'timeline' && !item.floating && !item.panel.hidden;
     });
     const insertBefore = visibleDocked[targetIndex];
     if (insertBefore) {
@@ -471,102 +499,125 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private getDockedVisibleItems(): PanelItem[] {
-    return this.order.map((id) => this.items.get(id)).filter((item): item is PanelItem => !!item && !item.floating && !item.panel.hidden);
+    return this.order.map((id) => this.items.get(id)).filter((item): item is PanelItem => !!item && item.id !== 'timeline' && !item.floating && !item.panel.hidden);
   }
 
-  private getResizeHandle(beforeId: DockablePanelId, afterId: DockablePanelId): HTMLElement {
-    const key = `${beforeId}:${afterId}`;
-    let handle = this.resizeHandles.get(key);
-    if (handle) {
-      handle.dataset.beforePanel = beforeId;
-      handle.dataset.afterPanel = afterId;
-      return handle;
-    }
-    handle = this.createDockResizeHandle(beforeId, afterId);
-    this.resizeHandles.set(key, handle);
-    return handle;
-  }
-
-  private createDockResizeHandle(beforeId: DockablePanelId, afterId: DockablePanelId): HTMLElement {
+  private createDockResizeHandle(item: PanelItem): HTMLElement {
     const handle = document.createElement('div');
     handle.className = 'dock-panel-resizer';
-    handle.dataset.beforePanel = beforeId;
-    handle.dataset.afterPanel = afterId;
+    handle.dataset.panelId = item.id;
     handle.setAttribute('role', 'separator');
     handle.setAttribute('aria-orientation', 'horizontal');
-    handle.setAttribute('aria-label', `Cambiar el tamaño de ${this.items.get(beforeId)?.title ?? beforeId} y ${this.items.get(afterId)?.title ?? afterId}`);
+    handle.setAttribute('aria-label', `Cambiar el tamaño de ${item.title}`);
+    handle.title = `Arrastrá para cambiar la altura de ${item.title}`;
     handle.tabIndex = 0;
-    handle.addEventListener('pointerdown', (event) => this.startDockResize(handle, event));
-    handle.addEventListener('keydown', (event) => this.resizeDockFromKeyboard(handle, event));
+    handle.addEventListener('pointerdown', (event) => this.startDockResize(item, event));
+    handle.addEventListener('keydown', (event) => this.resizeDockFromKeyboard(item, event));
     return handle;
   }
 
-  private startDockResize(handle: HTMLElement, event: PointerEvent): void {
-    if (event.button !== 0) return;
+  private startDockResize(item: PanelItem, event: PointerEvent): void {
+    if (event.button !== 0 || item.floating || item.id === 'timeline') return;
     event.preventDefault();
-    const before = this.getItem(handle.dataset.beforePanel);
-    const after = this.getItem(handle.dataset.afterPanel);
-    if (!before || !after) return;
+    event.stopPropagation();
     const startY = event.clientY;
-    const startBefore = before.slot.getBoundingClientRect().height;
-    const startAfter = after.slot.getBoundingClientRect().height;
-    const move = (moveEvent: PointerEvent) => this.resizeDockPair(before, after, startY, startBefore, startAfter, moveEvent.clientY);
+    const startHeight = item.slot.getBoundingClientRect().height;
+    const move = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== event.pointerId) return;
+      this.resizeDockPanel(item, startHeight + moveEvent.clientY - startY);
+    };
     const up = () => this.finishDockResize(move, up);
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up, { once: true });
+    document.addEventListener('pointercancel', up, { once: true });
   }
 
-  private resizeDockPair(before: PanelItem, after: PanelItem, startY: number, startBefore: number, startAfter: number, currentY: number): void {
-    const delta = currentY - startY;
-    const adjusted = clamp(delta, minDockHeight(before) - startBefore, startAfter - minDockHeight(after));
-    before.slot.style.height = `${startBefore + adjusted}px`;
-    after.slot.style.height = `${startAfter - adjusted}px`;
+  private resizeDockPanel(item: PanelItem, requestedHeight: number): void {
+    const maxHeight = Math.max(minDockHeight(item), Math.min(900, this.workspaceElement.clientHeight * 0.85));
+    item.slot.style.height = `${clamp(requestedHeight, minDockHeight(item), maxHeight)}px`;
   }
 
   private finishDockResize(move: (event: PointerEvent) => void, up: () => void): void {
     document.removeEventListener('pointermove', move);
     document.removeEventListener('pointerup', up);
+    document.removeEventListener('pointercancel', up);
     this.saveCurrentWorkspace();
   }
 
-  private resizeDockFromKeyboard(handle: HTMLElement, event: KeyboardEvent): void {
-    const before = this.getItem(handle.dataset.beforePanel);
-    const after = this.getItem(handle.dataset.afterPanel);
-    if (!before || !after || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+  private resizeDockFromKeyboard(item: PanelItem, event: KeyboardEvent): void {
+    if (item.id === 'timeline' || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
     event.preventDefault();
-    const delta = event.key === 'ArrowDown' ? 12 : -12;
-    const beforeHeight = before.slot.getBoundingClientRect().height;
-    const afterHeight = after.slot.getBoundingClientRect().height;
-    this.resizeDockPair(before, after, 0, beforeHeight, afterHeight, delta);
+    const height = item.slot.getBoundingClientRect().height;
+    this.resizeDockPanel(item, height + (event.key === 'ArrowDown' ? 12 : -12));
+    this.saveCurrentWorkspace();
+  }
+
+  private startTimelineResize(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startY = event.clientY;
+    const startHeight = this.bottomDock.getBoundingClientRect().height;
+    const move = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== event.pointerId) return;
+      this.setTimelineDockHeight(startHeight + startY - moveEvent.clientY);
+    };
+    const up = () => this.finishTimelineResize(move, up);
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up, { once: true });
+    document.addEventListener('pointercancel', up, { once: true });
+  }
+
+  private setTimelineDockHeight(requestedHeight: number): void {
+    const maxHeight = Math.max(180, Math.min(620, this.workspaceElement.clientHeight - 120));
+    const height = clamp(requestedHeight, 180, maxHeight);
+    this.workspaceElement.style.setProperty('--timeline-dock-height', `${height}px`);
+  }
+
+  private finishTimelineResize(move: (event: PointerEvent) => void, up: () => void): void {
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+    document.removeEventListener('pointercancel', up);
+    this.saveCurrentWorkspace();
+  }
+
+  private resizeTimelineFromKeyboard(event: KeyboardEvent): void {
+    if (!['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    event.preventDefault();
+    const current = this.bottomDock.getBoundingClientRect().height;
+    this.setTimelineDockHeight(current + (event.key === 'ArrowUp' ? 12 : -12));
     this.saveCurrentWorkspace();
   }
 
   private rebuildDockChildren(): void {
-    const sorted = this.order.map((id) => this.items.get(id)).filter((item): item is PanelItem => !!item && !item.floating);
+    const sorted = this.order
+      .map((id) => this.items.get(id))
+      .filter((item): item is PanelItem => !!item && !item.floating && item.id !== 'timeline');
     this.order.forEach((id, index) => {
       const item = this.items.get(id);
-      if (item) item.slot.style.order = String(index);
+      if (item && item.id !== 'timeline') item.slot.style.order = String(index);
     });
     this.dock.replaceChildren(...this.createDockChildren(sorted));
+    this.rebuildBottomDock();
     this.syncFloatingPanelVisibility();
     this.syncDockChrome();
   }
 
   private createDockChildren(sorted: PanelItem[]): HTMLElement[] {
-    const children: HTMLElement[] = [];
-    let previousVisible: PanelItem | null = null;
-    for (const item of sorted) {
-      item.slot.hidden = item.panel.hidden;
-      previousVisible = this.appendResizeHandleBefore(item, previousVisible, children);
-      children.push(item.slot);
-    }
-    return children;
+    return sorted.map((item) => {
+      item.slot.hidden = item.panel.hidden || item.floating;
+      return item.slot;
+    });
   }
 
-  private appendResizeHandleBefore(item: PanelItem, previousVisible: PanelItem | null, children: HTMLElement[]): PanelItem | null {
-    if (item.panel.hidden) return previousVisible;
-    if (previousVisible) children.push(this.getResizeHandle(previousVisible.id, item.id));
-    return item;
+  private rebuildBottomDock(): void {
+    const item = this.items.get('timeline');
+    if (!item) {
+      this.bottomDock.replaceChildren(this.bottomResizer);
+      return;
+    }
+    item.slot.hidden = item.floating || item.panel.hidden;
+    this.bottomDock.replaceChildren(this.bottomResizer, item.slot);
   }
 
   private syncFloatingPanelVisibility(): void {
@@ -579,14 +630,21 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private syncDockChrome(): void {
-    const hasDockedVisible = this.getDockedVisibleItems().length > 0;
+    const panelsHidden = this.workspaceElement.classList.contains('panels-hidden') || this.dock.classList.contains('panels-hidden');
+    const hasDockedVisible = !panelsHidden && this.getDockedVisibleItems().length > 0;
+    const timeline = this.items.get('timeline');
+    const hasBottomTimeline = !panelsHidden && !!timeline && !timeline.floating && !timeline.panel.hidden;
     this.dock.classList.toggle('panels-empty', !hasDockedVisible);
-    this.widthResizer.hidden = !hasDockedVisible || this.workspaceElement.classList.contains('panels-hidden');
+    this.workspaceElement.classList.toggle('has-side-panels', hasDockedVisible);
+    this.workspaceElement.classList.toggle('has-bottom-timeline', hasBottomTimeline);
+    this.bottomDock.hidden = !hasBottomTimeline;
+    this.widthResizer.hidden = !hasDockedVisible;
   }
 
   private captureWorkspaceState(): WorkspaceSavedState {
     return {
       dockWidth: this.captureDockWidth(),
+      timelineDockHeight: Math.round(this.bottomDock.getBoundingClientRect().height || Number.parseFloat(getComputedStyle(this.workspaceElement).getPropertyValue('--timeline-dock-height')) || 260),
       panelsHidden: this.arePanelsHidden(),
       order: [...this.order],
       panels: this.capturePanelStates(),
@@ -653,7 +711,8 @@ class DockLayoutManagerImpl implements DockLayoutController {
   private restoreSavedWorkspace(saved: WorkspaceSavedState): void {
     this.order = this.sanitizeOrder(saved.order);
     const width = clamp(Number(saved.dockWidth) || 280, 220, Math.max(220, Math.min(600, window.innerWidth * 0.6)));
-    this.dock.style.setProperty('--right-dock-width', `${width}px`);
+    this.workspaceElement.style.setProperty('--right-dock-width', `${width}px`);
+    this.setTimelineDockHeight(Number(saved.timelineDockHeight) || 260);
     this.dock.classList.toggle('panels-hidden', !!saved.panelsHidden);
     this.workspaceElement.classList.toggle('panels-hidden', !!saved.panelsHidden);
     for (const item of this.items.values()) this.restorePanelState(item, saved.panels[item.id]);
@@ -700,7 +759,8 @@ class DockLayoutManagerImpl implements DockLayoutController {
       .sort((a, b) => (presetOrder.get(a.id) ?? VALID_IDS.indexOf(a.id)) - (presetOrder.get(b.id) ?? VALID_IDS.indexOf(b.id)))
       .map((item) => item.id);
     this.applyDefaultDockOrder();
-    this.dock.style.setProperty('--right-dock-width', '280px');
+    this.workspaceElement.style.setProperty('--right-dock-width', '280px');
+    this.setTimelineDockHeight(260);
     this.dock.classList.remove('panels-hidden');
     this.workspaceElement.classList.remove('panels-hidden');
   }
@@ -758,7 +818,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
   private applyDockWidthDelta(startX: number, startWidth: number, currentX: number): void {
     const maxWidth = Math.min(600, window.innerWidth * 0.6, this.workspaceElement.getBoundingClientRect().width * 0.6);
     const width = clamp(startWidth + startX - currentX, 220, Math.max(220, maxWidth));
-    this.dock.style.setProperty('--right-dock-width', `${width}px`);
+    this.workspaceElement.style.setProperty('--right-dock-width', `${width}px`);
   }
 
   private resizeDockWidthFromKeyboard(event: KeyboardEvent): void {
@@ -766,7 +826,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
     event.preventDefault();
     const direction = event.key === 'ArrowLeft' ? 12 : -12;
     const width = this.dock.getBoundingClientRect().width + direction;
-    this.dock.style.setProperty('--right-dock-width', `${clamp(width, 220, Math.min(600, window.innerWidth * 0.6))}px`);
+    this.workspaceElement.style.setProperty('--right-dock-width', `${clamp(width, 220, Math.min(600, window.innerWidth * 0.6))}px`);
     this.saveCurrentWorkspace();
   }
 

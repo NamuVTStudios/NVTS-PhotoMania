@@ -14,6 +14,6 @@ export interface WorkspaceDefinition {
   id: WorkspaceId;
   label: string;
   visible: Record<WorkspacePanelId, boolean>;
-  /** Orden de arriba hacia abajo en el dock derecho. */
+  /** Orden de los paneles laterales; la línea de tiempo se acopla abajo. */
   order: WorkspacePanelId[];
 }

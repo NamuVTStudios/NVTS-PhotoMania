@@ -20,6 +20,7 @@ import { STORYBOARD_PANEL_TEMPLATE } from './panels/StoryboardPanel';
 import { ANIMATION_TIMELINE_PANEL_TEMPLATE } from './panels/AnimationTimelinePanel';
 import { LAYER_EFFECTS_PANEL_TEMPLATE, wireLayerEffectsPanel } from './panels/LayerEffectsPanel';
 import { FILTER_PANEL_TEMPLATE, wireFilterPanel } from './panels/FilterPanel';
+import { applyCustomFilter, getCssFilter } from './panels/FilterProcessor';
 import { VECTOR_EDITOR_PANEL_TEMPLATE, wireVectorEditorPanel, renderVectorEditorPanel } from './panels/VectorEditorPanel';
 import { PLUGINS_PANEL_TEMPLATE, wirePlugins, type PluginApi } from './panels/PluginsPanel';
 import { PREFERENCES_PANEL_TEMPLATE, readPreferences, wirePreferences, type AppPreferences } from './panels/PreferencesPanel';
@@ -298,6 +299,16 @@ function isNotFoundError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'NotFoundError';
 }
 
+function getFilterKindTilePadding(kind: FilterKind): number {
+  switch (kind) {
+    case 'blur': return 36;
+    case 'pixelate': return 32;
+    case 'sharpen':
+    case 'edge-detect': return 1;
+    default: return 0;
+  }
+}
+
 function documentNameFromFile(fileName: string): string {
   const leaf = fileName.split(/[\\/]/).pop() ?? fileName;
   return leaf.replace(/\.(nvtsphoto|png|jpe?g|webp|gif|bmp|tiff?)$/i, '').trim() || 'Sin título';
@@ -333,6 +344,7 @@ ${COMIC_MANAGER_PANEL_TEMPLATE}
 ${STORYBOARD_PANEL_TEMPLATE}
 ${ANIMATION_TIMELINE_PANEL_TEMPLATE}
   </aside>
+  <aside class="animation-timeline-dock" aria-label="Panel inferior de animación"></aside>
 </main>
 ${LAYER_EFFECTS_PANEL_TEMPLATE}${FILTER_PANEL_TEMPLATE}${VECTOR_EDITOR_PANEL_TEMPLATE}`;
 
@@ -584,6 +596,15 @@ export class App {
     return nodes.some((node) => node.type === 'filter' || (node.children.length > 0 && this.hasFilterLayer(node.children)));
   }
 
+  private getFilterTilePadding(nodes: LayerNode[] = this.ctl.doc.layers): number {
+    let padding = 0;
+    for (const node of nodes) {
+      if (node.type === 'filter') padding = Math.max(padding, getFilterKindTilePadding(node.filterKind ?? 'grayscale'));
+      if (node.children.length > 0) padding = Math.max(padding, this.getFilterTilePadding(node.children));
+    }
+    return padding;
+  }
+
   /** Renderizador alternativo por tiles para que las capas de filtro afecten, de forma no destructiva,
    * solo al contenido que está debajo de ellas. Sin capas de filtro seguimos usando el compositor Wasm. */
   private renderFrame(): void {
@@ -592,15 +613,7 @@ export class App {
   }
 
   private filterCss(kind: FilterKind, strength: number): string {
-    const amount = Math.max(0, Math.min(1, strength));
-    switch (kind) {
-      case 'grayscale': return `grayscale(${amount * 100}%)`;
-      case 'invert': return `invert(${amount * 100}%)`;
-      case 'sepia': return `sepia(${amount * 100}%)`;
-      case 'blur': return `blur(${amount * 12}px)`;
-      case 'brightness': return `brightness(${100 + amount * 100}%)`;
-      case 'contrast': return `contrast(${100 + amount * 150}%)`;
-    }
+    return getCssFilter(kind, strength);
   }
 
   private canvasBlend(mode: LayerNode['blendMode']): GlobalCompositeOperation {
@@ -615,27 +628,39 @@ export class App {
   private renderWithFilterLayers(): void {
     const { width, height } = this.ctl.doc;
     const tileSize = this.engine.module.TILE_SIZE || 256;
+    const padding = this.getFilterTilePadding();
     const pools: FilterCanvasPools = { target: [], layer: [], filterSource: [], filterResult: [] };
-    for (let y = 0; y < height; y += tileSize) this.renderFilterTileRow(width, height, tileSize, y, pools);
+    for (let y = 0; y < height; y += tileSize) this.renderFilterTileRow(width, height, tileSize, y, pools, padding);
     this.renderer.render();
   }
 
-  private renderFilterTileRow(width: number, height: number, tileSize: number, y: number, pools: FilterCanvasPools): void {
+  private renderFilterTileRow(width: number, height: number, tileSize: number, y: number, pools: FilterCanvasPools, padding: number): void {
     for (let x = 0; x < width; x += tileSize) {
       const tile = { x, y, width: Math.min(tileSize, width - x), height: Math.min(tileSize, height - y) };
-      this.renderFilterTile(tile, pools);
+      this.renderFilterTile(tile, pools, padding);
     }
   }
 
-  private renderFilterTile(tile: FilterTile, pools: FilterCanvasPools): void {
-    const output = this.composeFilterLayers(this.ctl.doc.layers, 0, tile, pools);
+  private renderFilterTile(tile: FilterTile, pools: FilterCanvasPools, padding: number): void {
+    const expanded = this.expandFilterTile(tile, padding);
+    const output = this.composeFilterLayers(this.ctl.doc.layers, 0, expanded, pools);
     const ctx = output.getContext('2d', { willReadFrequently: true })!;
-    const image = ctx.getImageData(0, 0, tile.width, tile.height);
+    const image = ctx.getImageData(tile.x - expanded.x, tile.y - expanded.y, tile.width, tile.height);
     this.renderer.writeRegion(
       tile.x, tile.y, tile.width, tile.height,
       new Uint8Array(image.data.buffer, image.data.byteOffset, image.data.byteLength),
       tile.width * 4,
     );
+  }
+
+  private expandFilterTile(tile: FilterTile, padding: number): FilterTile {
+    const documentWidth = this.ctl.doc.width;
+    const documentHeight = this.ctl.doc.height;
+    const x = Math.max(0, tile.x - padding);
+    const y = Math.max(0, tile.y - padding);
+    const right = Math.min(documentWidth, tile.x + tile.width + padding);
+    const bottom = Math.min(documentHeight, tile.y + tile.height + padding);
+    return { x, y, width: right - x, height: bottom - y };
   }
 
   private getFilterCanvas(pool: HTMLCanvasElement[], depth: number, width: number, height: number): HTMLCanvasElement {
@@ -710,12 +735,16 @@ export class App {
     const sourceCtx = source.getContext('2d', { willReadFrequently: true })!;
     const filteredCtx = filtered.getContext('2d', { willReadFrequently: true })!;
     sourceCtx.drawImage(target, 0, 0);
-    filteredCtx.filter = this.filterCss(node.filterKind ?? 'grayscale', node.filterStrength ?? 1);
+    const kind = node.filterKind ?? 'grayscale';
+    const strength = node.filterStrength ?? 1;
+    filteredCtx.filter = this.filterCss(kind, strength);
     filteredCtx.drawImage(source, 0, 0);
     filteredCtx.filter = 'none';
+    const filteredImage = filteredCtx.getImageData(0, 0, tile.width, tile.height);
+    applyCustomFilter(filteredImage, kind, strength, tile.x, tile.y, this.ctl.doc.width, this.ctl.doc.height);
     return {
       original: sourceCtx.getImageData(0, 0, tile.width, tile.height),
-      filtered: filteredCtx.getImageData(0, 0, tile.width, tile.height),
+      filtered: filteredImage,
     };
   }
 
@@ -2354,7 +2383,26 @@ export class App {
   }
 
   private filterLabel(kind: FilterKind): string {
-    return ({ grayscale: 'Escala de grises', invert: 'Invertir colores', sepia: 'Sepia', blur: 'Desenfoque gaussiano', brightness: 'Brillo', contrast: 'Contraste' })[kind];
+    const labels: Record<FilterKind, string> = {
+      grayscale: 'Escala de grises',
+      invert: 'Invertir colores',
+      sepia: 'Sepia',
+      blur: 'Desenfoque gaussiano',
+      brightness: 'Brillo',
+      contrast: 'Contraste',
+      saturation: 'Saturación',
+      'hue-rotate': 'Rotación de tono',
+      posterize: 'Posterizar',
+      threshold: 'Umbral blanco y negro',
+      pixelate: 'Pixelar / mosaico',
+      solarize: 'Solarizar',
+      noise: 'Grano / ruido',
+      vignette: 'Viñeta',
+      duotone: 'Duotono',
+      sharpen: 'Enfocar',
+      'edge-detect': 'Bordes / contorno',
+    };
+    return labels[kind];
   }
 
   private openDestructiveFilterPanel(): void {
@@ -2439,7 +2487,9 @@ export class App {
     outputContext.filter = this.filterCss(kind, strength);
     outputContext.drawImage(source, 0, 0);
     outputContext.filter = 'none';
-    return new Uint8Array(outputContext.getImageData(0, 0, width, height).data);
+    const filtered = outputContext.getImageData(0, 0, width, height);
+    applyCustomFilter(filtered, kind, strength, 0, 0, width, height);
+    return new Uint8Array(filtered.data);
   }
 
   private createPixelCanvas(width: number, height: number, pixels: Uint8Array): HTMLCanvasElement {
@@ -4408,12 +4458,16 @@ export class App {
     original.getContext('2d')!.drawImage(target, 0, 0);
     const filtered = this.createSamplingCanvas(width, height);
     const filteredCtx = filtered.getContext('2d')!;
-    filteredCtx.filter = this.filterCss(layer.filterKind ?? 'grayscale', layer.filterStrength ?? 1);
+    const kind = layer.filterKind ?? 'grayscale';
+    const strength = layer.filterStrength ?? 1;
+    filteredCtx.filter = this.filterCss(kind, strength);
     filteredCtx.drawImage(original, 0, 0);
     filteredCtx.filter = 'none';
+    const filteredImage = filtered.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, width, height);
+    applyCustomFilter(filteredImage, kind, strength, 0, 0, width, height);
     return {
       original: original.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, width, height),
-      filtered: filtered.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, width, height),
+      filtered: filteredImage,
     };
   }
 

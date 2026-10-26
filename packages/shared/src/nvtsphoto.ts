@@ -7,7 +7,10 @@ export type LayerType = 'paint' | 'filter' | 'fill' | 'file' | 'vector' | 'text'
 export type TextLayerStyle = 'normal' | 'bold' | 'italic' | 'bold-italic';
 export type TextLayerAlign = 'left' | 'center' | 'right';
 export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay';
-export type FilterKind = 'grayscale' | 'invert' | 'sepia' | 'blur' | 'brightness' | 'contrast';
+export type FilterKind =
+  | 'grayscale' | 'invert' | 'sepia' | 'blur' | 'brightness' | 'contrast'
+  | 'saturation' | 'hue-rotate' | 'posterize' | 'threshold' | 'pixelate'
+  | 'solarize' | 'noise' | 'vignette' | 'duotone' | 'sharpen' | 'edge-detect';
 export type VectorKind =
   | 'rectangle' | 'rounded-rectangle' | 'ellipse' | 'line'
   | 'polygon' | 'polyline' | 'bezier' | 'freehand'
