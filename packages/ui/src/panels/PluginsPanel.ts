@@ -1,4 +1,5 @@
 import type { BlendMode, LayerType } from '@nvts/shared';
+import { readStoredPlugins, writeStoredPlugins, type StoredPlugin } from './PluginStorage';
 
 // Panel template and markup. Behavior is wired by the application controller.
 
@@ -19,27 +20,6 @@ export interface PluginApi {
   renameLayer: (id: string, name: string) => boolean;
   setLayerProperties: (id: string, properties: { visible?: boolean; locked?: boolean; opacity?: number; blendMode?: BlendMode }) => boolean;
 }
-interface StoredPlugin { id: string; name: string; fileName: string; source: string; installedAt: number }
-const PLUGINS_STORAGE_KEY = 'nvts-photomania-plugins-v1';
-
-function readStoredPlugins(): StoredPlugin[] {
-  let value: unknown;
-  try { value = JSON.parse(localStorage.getItem(PLUGINS_STORAGE_KEY) ?? '[]') as unknown; }
-  catch { return []; }
-  return normalizeStoredPlugins(value);
-}
-
-function normalizeStoredPlugins(value: unknown): StoredPlugin[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is StoredPlugin => !!item && typeof item === 'object'
-    && typeof (item as StoredPlugin).id === 'string' && typeof (item as StoredPlugin).name === 'string'
-    && typeof (item as StoredPlugin).fileName === 'string' && typeof (item as StoredPlugin).source === 'string');
-}
-
-function writeStoredPlugins(plugins: StoredPlugin[]): void {
-  localStorage.setItem(PLUGINS_STORAGE_KEY, JSON.stringify(plugins));
-}
-
 type PluginActivate = (api: PluginApi) => void | (() => void);
 type PluginDefaultExport = PluginActivate | { activate?: PluginActivate; name?: string; version?: string };
 type PluginModule = { name?: string; version?: string; activate?: unknown; default?: unknown };

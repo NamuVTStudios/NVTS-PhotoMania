@@ -595,6 +595,104 @@ button.primary {
     padding: 4px
 }
 
+.layer-mask-manager {
+    max-height: 36%;
+    overflow: auto;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px
+}
+
+.layer-mask-manager summary {
+    padding: 7px 9px;
+    cursor: pointer;
+    color: var(--text)
+}
+
+.layer-mask-children {
+    margin: 1px 0 4px;
+    border-left: 1px solid var(--border);
+}
+
+.layer-mask-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 28px;
+    padding-top: 3px;
+    padding-bottom: 3px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    color: var(--muted);
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.layer-mask-row:hover {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.layer-mask-row.active {
+    color: var(--text);
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.layer-mask-row input[type="checkbox"] {
+    flex: 0 0 auto;
+    margin: 0;
+}
+
+.layer-mask-row span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.layer-mask-create,
+.layer-mask-entry header {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px
+}
+
+.layer-mask-create button,
+.layer-mask-entry button {
+    font-size: 10px;
+    padding: 4px 6px
+}
+
+.layer-mask-entry {
+    margin: 5px 7px;
+    padding: 4px;
+    border: 1px solid var(--border);
+    border-radius: 6px
+}
+
+.layer-mask-entry header strong {
+    flex: 1
+}
+
+.layer-mask-entry label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 3px 8px
+}
+
+.layer-mask-entry input,
+.layer-mask-entry select {
+    width: 90px;
+    min-width: 0
+}
+
+.layer-mask-entry .hint {
+    margin: 4px 8px;
+    font-size: 10px
+}
+
 #layers {
     flex: 1;
     min-height: 80px;
@@ -669,6 +767,16 @@ button.primary {
     display: none
 }
 
+.right-dock > .editor-panel {
+    position: absolute;
+    inset: 7px;
+    z-index: 30;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    box-sizing: border-box;
+}
+
 .editor-panel>header {
     height: 58px;
     display: flex;
@@ -684,6 +792,16 @@ button.primary {
 
 .editor-panel>header span {
     color: var(--muted)
+}
+
+.editor-panel>header select {
+    min-width: 120px;
+    max-width: 190px;
+    padding: 6px 8px;
+    color: var(--text);
+    background: var(--panel2);
+    border: 1px solid var(--border);
+    border-radius: 7px;
 }
 
 .panel-close {
@@ -3745,6 +3863,7 @@ button.primary {
 }
 
 .right-dock {
+    position: relative;
     width: var(--right-dock-width, 280px);
     flex: 0 0 var(--right-dock-width, 280px);
     min-width: 0;

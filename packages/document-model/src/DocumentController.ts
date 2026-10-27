@@ -2,23 +2,45 @@
 // Las capas filter se representan como nodos transparentes en Wasm y se componen de forma no destructiva en UI.
 import type { NvtsEngineModule, Compositor, HistoryManager, TiledLayer } from '@nvts/wasm-bindings';
 import { blendModeFromManifest } from '@nvts/wasm-bindings';
-import type { BlendMode as BlendName, FilterKind, LayerType, VectorShape } from '@nvts/shared';
-import { isPixelLayerType } from '@nvts/shared';
+import { cloneLayerMasks, cloneVectorShapes, createLayerMask, getLayerMaskLabel, isPixelLayerType, type FilterKind, type LayerMask, type LayerType, type VectorShape } from '@nvts/shared';
 import type { DocumentState, LayerNode, UnpackedDocument } from './types';
 
-const BLEND_NAMES: readonly BlendName[] = ['normal', 'multiply', 'screen', 'overlay'];
-export const blendModeToManifest = (v: number): BlendName => BLEND_NAMES[v] ?? 'normal';
+export { blendModeToManifest } from '@nvts/wasm-bindings';
 export type LayerPatch = Partial<Pick<LayerNode,
   'name' | 'visible' | 'locked' | 'opacity' | 'blendMode' | 'fillColor' | 'filterKind' | 'filterStrength' | 'vectorShapes' | 'sourceName' | 'sourceLinkId' | 'sourceLastModified' | 'sourceFileSize' | 'textContent' | 'textX' | 'textY' | 'textFontFamily' | 'textFontSize' | 'textColor' | 'textStyle' | 'textAlign' | 'textLineHeight' | 'textLetterSpacing' | 'textStrokeColor' | 'textStrokeWidth' | 'textBackgroundColor'>>;
-type HistoryAction = { kind: 'pixels'; label: string } | { kind: 'structure'; label: string; undo: () => void; redo: () => void };
-type LayerSnapshot = { node: LayerNode; parentId: string | null; index: number; pixels: Map<string, Uint8Array> };
+type HistoryAction = { kind: 'pixels'; label: string } | { kind: 'structure'; label: string; undo: () => void; redo: () => void; memoryBytes: number };
+type LayerSnapshot = { node: LayerNode; parentId: string | null; index: number; pixels: Map<string, Uint8Array>; memoryBytes: number };
 type FileLayerSource = { name: string; linkId?: string; lastModified?: number; fileSize?: number };
+type LayerTypeDefinition = {
+  defaultName: string;
+  historyLabel: string;
+  createDefaults: () => Partial<LayerNode>;
+};
 
-const cloneShapes = (shapes: VectorShape[] | undefined): VectorShape[] => (shapes ?? []).map((s) => ({ ...s, points: s.points?.map((point) => ({ ...point })) }));
+const LAYER_TYPE_DEFINITIONS: Record<LayerType, LayerTypeDefinition> = {
+  paint: { defaultName: 'Capa de pintura', historyLabel: 'capa de pintura', createDefaults: () => ({}) },
+  filter: { defaultName: 'Capa de filtro', historyLabel: 'capa de filtro', createDefaults: () => ({ filterKind: 'grayscale', filterStrength: 1 }) },
+  fill: { defaultName: 'Capa de relleno', historyLabel: 'capa de relleno', createDefaults: () => ({ fillColor: '#ffffff' }) },
+  file: { defaultName: 'Capa de archivo', historyLabel: 'capa de archivo', createDefaults: () => ({}) },
+  vector: { defaultName: 'Capa vectorial', historyLabel: 'capa vectorial', createDefaults: () => ({ vectorShapes: [] }) },
+  text: {
+    defaultName: 'Capa de texto',
+    historyLabel: 'capa de texto',
+    createDefaults: () => ({
+      textContent: '', textX: 0, textY: 0, textFontFamily: 'Arial', textFontSize: 64,
+      textColor: '#e03030', textStyle: 'normal', textAlign: 'left', textLineHeight: 1.2,
+      textLetterSpacing: 0, textStrokeColor: '#000000', textStrokeWidth: 0,
+      textBackgroundColor: 'transparent',
+    }),
+  },
+  group: { defaultName: 'Grupo', historyLabel: 'grupo', createDefaults: () => ({}) },
+  raster: { defaultName: 'Capa', historyLabel: 'capa de pintura', createDefaults: () => ({}) },
+};
+
 const clonePatch = (n: LayerNode): LayerPatch => ({
   name: n.name, visible: n.visible, locked: n.locked, opacity: n.opacity, blendMode: n.blendMode,
   fillColor: n.fillColor, filterKind: n.filterKind, filterStrength: n.filterStrength,
-  vectorShapes: cloneShapes(n.vectorShapes), sourceName: n.sourceName, sourceLinkId: n.sourceLinkId, sourceLastModified: n.sourceLastModified, sourceFileSize: n.sourceFileSize,
+  vectorShapes: cloneVectorShapes(n.vectorShapes), sourceName: n.sourceName, sourceLinkId: n.sourceLinkId, sourceLastModified: n.sourceLastModified, sourceFileSize: n.sourceFileSize,
   textContent: n.textContent, textX: n.textX, textY: n.textY, textFontFamily: n.textFontFamily, textFontSize: n.textFontSize, textColor: n.textColor,
   textStyle: n.textStyle, textAlign: n.textAlign, textLineHeight: n.textLineHeight, textLetterSpacing: n.textLetterSpacing, textStrokeColor: n.textStrokeColor, textStrokeWidth: n.textStrokeWidth, textBackgroundColor: n.textBackgroundColor,
 });
@@ -31,10 +53,12 @@ export class DocumentController {
   private undoStack: HistoryAction[] = [];
   private redoStack: HistoryAction[] = [];
   private replaying = false;
+  private readonly maxStructureHistoryBytes: number;
 
   private constructor(readonly mod: NvtsEngineModule, readonly doc: DocumentState, historyMB: number) {
     this.comp = new mod.Compositor(doc.width, doc.height);
     this.history = new mod.HistoryManager(this.comp, historyMB);
+    this.maxStructureHistoryBytes = Math.max(0, historyMB) * 1024 * 1024;
   }
 
   static create(mod: NvtsEngineModule, width: number, height: number, name = 'Sin título', historyMB = 512) {
@@ -92,19 +116,15 @@ export class DocumentController {
   addRaster(name = 'Capa', parentId?: string, index = -1): LayerNode { return this.addLayer('paint', name, parentId, index); }
 
   addLayer(type: LayerType, name?: string, parentId?: string, index = -1, extras: Partial<LayerNode> = {}): LayerNode {
-    if (type === 'group') return this.addGroup(name ?? 'Grupo', parentId, index);
-    const defaults: Partial<LayerNode> = {};
-    if (type === 'filter') { defaults.filterKind = 'grayscale'; defaults.filterStrength = 1; }
-    if (type === 'fill') defaults.fillColor = '#ffffff';
-    if (type === 'vector') defaults.vectorShapes = [];
-    if (type === 'text') Object.assign(defaults, { textContent: '', textX: 0, textY: 0, textFontFamily: 'Arial', textFontSize: 64, textColor: '#e03030', textStyle: 'normal', textAlign: 'left', textLineHeight: 1.2, textLetterSpacing: 0, textStrokeColor: '#000000', textStrokeWidth: 0, textBackgroundColor: 'transparent' });
+    if (type === 'group') return this.addGroup(name ?? LAYER_TYPE_DEFINITIONS.group.defaultName, parentId, index);
+    const defaults = LAYER_TYPE_DEFINITIONS[type].createDefaults();
     Object.assign(defaults, extras);
-    const label = name ?? ({ paint: 'Capa de pintura', filter: 'Capa de filtro', fill: 'Capa de relleno', file: 'Capa de archivo', vector: 'Capa vectorial', text: 'Capa de texto', raster: 'Capa' }[type]);
+    const label = name ?? LAYER_TYPE_DEFINITIONS[type].defaultName;
     const node = this.add(type, label, parentId, index, defaults);
     if (type === 'fill') this.fillLayerPixelsRaw(node, node.fillColor ?? '#ffffff');
     if (!this.replaying) {
       const snapshot = this.snapshot(node);
-      this.recordStructure(`Crear ${this.typeLabel(type)} «${label}»`, () => this.removeRaw(node.id), () => this.restoreRaw(snapshot));
+      this.recordStructure(`Crear ${this.typeLabel(type)} «${label}»`, () => this.removeRaw(node.id), () => this.restoreRaw(snapshot), snapshot.memoryBytes);
     }
     return node;
   }
@@ -117,7 +137,7 @@ export class DocumentController {
       throw new Error('No se pudo cargar la imagen en la capa de archivo.');
     }
     const snapshot = this.snapshot(node);
-    if (!this.replaying) this.recordStructure(`Crear capa de archivo «${name}»`, () => this.removeRaw(node.id), () => this.restoreRaw(snapshot));
+    if (!this.replaying) this.recordStructure(`Crear capa de archivo «${name}»`, () => this.removeRaw(node.id), () => this.restoreRaw(snapshot), snapshot.memoryBytes);
     return node;
   }
 
@@ -125,7 +145,7 @@ export class DocumentController {
     const node = this.add('group', name, parentId, index);
     if (!this.replaying) {
       const snapshot = this.snapshot(node);
-      this.recordStructure(`Crear grupo «${name}»`, () => this.removeRaw(node.id), () => this.restoreRaw(snapshot));
+      this.recordStructure(`Crear grupo «${name}»`, () => this.removeRaw(node.id), () => this.restoreRaw(snapshot), snapshot.memoryBytes);
     }
     return node;
   }
@@ -216,6 +236,7 @@ export class DocumentController {
       `Actualizar imagen vinculada de «${layerName}»`,
       () => this.applyFileLayerState(id, before),
       () => this.applyFileLayerState(id, after),
+      before.pixels.byteLength + after.pixels.byteLength,
     );
   }
 
@@ -249,6 +270,7 @@ export class DocumentController {
       parentId: parent?.id ?? null,
       index: siblings.indexOf(original) + 1,
       pixels,
+      memoryBytes: this.snapshotMemoryBytes(clone, pixels),
     };
   }
 
@@ -260,6 +282,7 @@ export class DocumentController {
       `Duplicar «${original.name}»`,
       () => this.removeRaw(duplicated.id),
       () => this.restoreRaw(stableSnapshot),
+      stableSnapshot.memoryBytes,
     );
   }
 
@@ -297,7 +320,7 @@ export class DocumentController {
     if (!node) return false;
     const snapshot = this.snapshot(node);
     if (!this.removeRaw(id)) return false;
-    if (!this.replaying) this.recordStructure(`Eliminar «${node.name}»`, () => this.restoreRaw(snapshot), () => this.removeRaw(id));
+    if (!this.replaying) this.recordStructure(`Eliminar «${node.name}»`, () => this.restoreRaw(snapshot), () => this.removeRaw(id), snapshot.memoryBytes);
     return true;
   }
 
@@ -368,22 +391,70 @@ export class DocumentController {
     return true;
   }
 
+  addMask(id: string, type: LayerMask['type']): LayerMask | null {
+    const node = this.nodes.get(id);
+    if (!node || !isPixelLayerType(node.type)) return null;
+    const mask = createLayerMask(type, crypto.randomUUID());
+    const before = cloneLayerMasks(node.masks);
+    const after = [...before, mask];
+    this.applyMasksRaw(id, after);
+    this.recordMaskChange(id, `Añadir máscara de ${getLayerMaskLabel(type)}`, before, after);
+    return cloneLayerMasks([mask])[0];
+  }
+
+  updateMask(id: string, maskId: string, update: (mask: LayerMask) => LayerMask): boolean {
+    const node = this.nodes.get(id);
+    const current = node?.masks?.find((mask) => mask.id === maskId);
+    if (!node || !current) return false;
+    const before = cloneLayerMasks(node.masks);
+    const after = before.map((mask) => mask.id === maskId ? update(cloneLayerMasks([mask])[0]) : mask);
+    const updated = after.find((mask) => mask.id === maskId);
+    if (!updated || updated.id !== current.id || updated.type !== current.type) return false;
+    if (JSON.stringify(before) === JSON.stringify(after)) return true;
+    this.applyMasksRaw(id, after);
+    this.recordMaskChange(id, `Editar máscara de ${getLayerMaskLabel(current.type)}`, before, after);
+    return true;
+  }
+
+  removeMask(id: string, maskId: string): boolean {
+    const node = this.nodes.get(id);
+    if (!node?.masks?.some((mask) => mask.id === maskId)) return false;
+    const before = cloneLayerMasks(node.masks);
+    const after = before.filter((mask) => mask.id !== maskId);
+    this.applyMasksRaw(id, after);
+    this.recordMaskChange(id, 'Eliminar máscara', before, after);
+    return true;
+  }
+
+  private applyMasksRaw(id: string, masks: LayerMask[]): void {
+    const node = this.nodes.get(id);
+    if (!node) return;
+    node.masks = cloneLayerMasks(masks);
+    this.comp.invalidateAll();
+  }
+
+  private recordMaskChange(id: string, label: string, before: LayerMask[], after: LayerMask[]): void {
+    if (this.replaying) return;
+    const bytes = this.metadataBytes([before, after]);
+    this.recordStructure(label, () => this.applyMasksRaw(id, before), () => this.applyMasksRaw(id, after), bytes);
+  }
+
   /** Actualiza objetos vectoriales y su rasterización como UNA acción de historial. */
   replaceVectorContent(id: string, shapes: VectorShape[], rasterPixels: Uint8Array): boolean {
     const node = this.nodes.get(id);
     if (!node || node.type !== 'vector') return false;
-    const oldShapes = cloneShapes(node.vectorShapes);
+    const oldShapes = cloneVectorShapes(node.vectorShapes);
     const oldPixels = this.readPixels(node) ?? new Uint8Array(this.doc.width * this.doc.height * 4);
-    const nextShapes = cloneShapes(shapes);
+    const nextShapes = cloneVectorShapes(shapes);
     const nextPixels = new Uint8Array(rasterPixels);
     const apply = (whichShapes: VectorShape[], whichPixels: Uint8Array) => {
-      node.vectorShapes = cloneShapes(whichShapes);
+      node.vectorShapes = cloneVectorShapes(whichShapes);
       const layer = this.layerPixels(node);
       if (layer) layer.loadFromRGBA(whichPixels);
       this.comp.invalidateAll();
     };
     apply(nextShapes, nextPixels);
-    if (!this.replaying) this.recordStructure(`Editar vectores de «${node.name}»`, () => apply(oldShapes, oldPixels), () => apply(nextShapes, nextPixels));
+    if (!this.replaying) this.recordStructure(`Editar vectores de «${node.name}»`, () => apply(oldShapes, oldPixels), () => apply(nextShapes, nextPixels), oldPixels.byteLength + nextPixels.byteLength + this.metadataBytes([oldShapes, nextShapes]));
     return true;
   }
 
@@ -402,28 +473,38 @@ export class DocumentController {
     };
     if (JSON.stringify(oldProps) === JSON.stringify({ ...oldProps, ...newProps }) && oldPixels.every((value, index) => value === nextPixels[index])) return true;
     apply(newProps, nextPixels);
-    if (!this.replaying) this.recordStructure(`Editar texto de «${node.name}»`, () => apply(oldProps, oldPixels), () => apply(newProps, nextPixels));
+    if (!this.replaying) this.recordStructure(`Editar texto de «${node.name}»`, () => apply(oldProps, oldPixels), () => apply(newProps, nextPixels), oldPixels.byteLength + nextPixels.byteLength + this.metadataBytes([oldProps, newProps]));
     return true;
   }
 
-  get canUndo(): boolean { return this.undoStack.length > 0; }
-  get canRedo(): boolean { return this.redoStack.length > 0; }
-  get undoLabel(): string { return this.undoStack.at(-1)?.label ?? ''; }
-  get redoLabel(): string { return this.redoStack.at(-1)?.label ?? ''; }
-  get historyEntries(): Array<{ label: string; current: boolean }> { return [...this.undoStack].reverse().map((a, i) => ({ label: a.label, current: i === 0 })); }
-  recordPixelAction(label: string): void { if (!this.replaying) { this.redoStack = []; this.undoStack.push({ kind: 'pixels', label }); } }
+  get canUndo(): boolean { this.syncPixelHistory(); return this.undoStack.length > 0; }
+  get canRedo(): boolean { this.syncPixelHistory(); return this.redoStack.length > 0; }
+  get undoLabel(): string { this.syncPixelHistory(); return this.undoStack.at(-1)?.label ?? ''; }
+  get redoLabel(): string { this.syncPixelHistory(); return this.redoStack.at(-1)?.label ?? ''; }
+  get historyEntries(): Array<{ label: string; current: boolean }> {
+    this.syncPixelHistory();
+    return [...this.undoStack].reverse().map((a, i) => ({ label: a.label, current: i === 0 }));
+  }
+  recordPixelAction(label: string): void {
+    if (this.replaying) return;
+    this.redoStack = [];
+    this.undoStack.push({ kind: 'pixels', label });
+    this.syncPixelHistory();
+  }
 
   undo(): 'pixels' | 'structure' | null {
     return this.undoNextAction();
   }
 
   private undoNextAction(): 'pixels' | 'structure' | null {
+    this.syncPixelHistory();
     const action = this.undoStack.pop();
     if (!action) return null;
     const outcome = this.applyUndoAction(action);
     if (outcome === 'skip') return this.undoNextAction();
     if (outcome === null) return null;
     this.redoStack.push(action);
+    this.syncPixelHistory();
     return action.kind;
   }
 
@@ -449,12 +530,14 @@ export class DocumentController {
   }
 
   private redoNextAction(): 'pixels' | 'structure' | null {
+    this.syncPixelHistory();
     const action = this.redoStack.pop();
     if (!action) return null;
     const outcome = this.applyRedoAction(action);
     if (outcome === 'skip') return this.redoNextAction();
     if (outcome === null) return null;
     this.undoStack.push(action);
+    this.syncPixelHistory();
     return action.kind;
   }
 
@@ -479,25 +562,113 @@ export class DocumentController {
 
   // ── Internos ──
   private typeLabel(type: LayerType): string {
-    return ({ paint: 'capa de pintura', raster: 'capa de pintura', filter: 'capa de filtro', fill: 'capa de relleno', file: 'capa de archivo', vector: 'capa vectorial', text: 'capa de texto', group: 'grupo' } as const)[type];
+    return LAYER_TYPE_DEFINITIONS[type].historyLabel;
   }
-  private recordStructure(label: string, undo: () => void, redo: () => void): void { this.redoStack = []; this.undoStack.push({ kind: 'structure', label, undo, redo }); }
-  private cloneNode(n: LayerNode): LayerNode { return { ...n, vectorShapes: cloneShapes(n.vectorShapes), children: n.children.map((c) => this.cloneNode(c)) }; }
+  private recordStructure(label: string, undo: () => void, redo: () => void, memoryBytes = this.metadataBytes(label) + 128): void {
+    if (this.replaying) return;
+    this.discardPixelRedo();
+    this.redoStack = [];
+    this.undoStack.push({ kind: 'structure', label, undo, redo, memoryBytes: Math.max(0, memoryBytes) });
+    this.trimStructureHistory();
+    this.syncPixelHistory();
+  }
+
+  private metadataBytes(value: unknown): number {
+    return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  }
+
+  private snapshotMemoryBytes(node: LayerNode, pixels: Map<string, Uint8Array>): number {
+    let bytes = this.metadataBytes(node) + 128;
+    for (const data of pixels.values()) bytes += data.byteLength;
+    return bytes;
+  }
+
+  private countPixelActions(stack: HistoryAction[]): number {
+    return stack.reduce((count, action) => count + Number(action.kind === 'pixels'), 0);
+  }
+
+  private removeOldestPixelAction(stack: HistoryAction[], fromEnd: boolean): void {
+    let index = fromEnd ? stack.length - 1 : 0;
+    const step = fromEnd ? -1 : 1;
+    while (index >= 0 && index < stack.length && stack[index].kind !== 'pixels') index += step;
+    if (index >= 0 && index < stack.length) stack.splice(index, 1);
+  }
+
+  private removePixelActions(stack: HistoryAction[]): void {
+    for (let index = stack.length - 1; index >= 0; index--) {
+      if (stack[index].kind === 'pixels') stack.splice(index, 1);
+    }
+  }
+
+  private clearPixelHistory(): void {
+    this.history.clear();
+    this.removePixelActions(this.undoStack);
+    this.removePixelActions(this.redoStack);
+  }
+
+  private discardPixelRedo(): void {
+    const history = this.history as HistoryManager & { discardRedo?: () => void };
+    if (typeof history.discardRedo === 'function') {
+      history.discardRedo();
+      return;
+    }
+    this.clearPixelHistory();
+  }
+
+  private discardOldestPixelHistory(undo: boolean): boolean {
+    const history = this.history as HistoryManager & {
+      discardOldestUndo?: () => boolean;
+      discardOldestRedo?: () => boolean;
+    };
+    const discard = undo ? history.discardOldestUndo : history.discardOldestRedo;
+    if (typeof discard === 'function' && discard.call(history)) return true;
+    this.clearPixelHistory();
+    return false;
+  }
+
+  private syncPixelHistory(): void {
+    while (this.countPixelActions(this.undoStack) > this.history.undoCount()) {
+      this.removeOldestPixelAction(this.undoStack, false);
+    }
+    while (this.countPixelActions(this.redoStack) > this.history.redoCount()) {
+      this.removeOldestPixelAction(this.redoStack, true);
+    }
+  }
+
+  private trimStructureHistory(): void {
+    const structureBytes = () => [...this.undoStack, ...this.redoStack]
+      .reduce((total, action) => total + (action.kind === 'structure' ? action.memoryBytes : 0), 0);
+    this.syncPixelHistory();
+    while (structureBytes() > this.maxStructureHistoryBytes) {
+      const trimUndo = this.undoStack.length > 0;
+      const stack = trimUndo ? this.undoStack : this.redoStack;
+      if (!stack.length) return;
+      const action = trimUndo ? stack[0] : stack[stack.length - 1];
+      if (action.kind === 'pixels') {
+        if (!this.discardOldestPixelHistory(trimUndo)) continue;
+      }
+      if (trimUndo) stack.shift();
+      else stack.pop();
+    }
+  }
+
+  private cloneNode(n: LayerNode): LayerNode { return { ...n, vectorShapes: cloneVectorShapes(n.vectorShapes), masks: cloneLayerMasks(n.masks), children: n.children.map((c) => this.cloneNode(c)) }; }
   private cloneNodeWithNewIds(n: LayerNode): LayerNode {
-    return { ...n, id: crypto.randomUUID(), engineId: 0, vectorShapes: cloneShapes(n.vectorShapes), children: n.children.map((c) => this.cloneNodeWithNewIds(c)) };
+    return { ...n, id: crypto.randomUUID(), engineId: 0, vectorShapes: cloneVectorShapes(n.vectorShapes), masks: cloneLayerMasks(n.masks), children: n.children.map((c) => this.cloneNodeWithNewIds(c)) };
   }
   private snapshot(node: LayerNode): LayerSnapshot {
     const parent = this.parentOf(node);
     const pixels = new Map<string, Uint8Array>();
     const capture = (n: LayerNode) => { const px = this.readPixels(n); if (px) pixels.set(n.id, px); n.children.forEach(capture); };
     capture(node);
-    return { node: this.cloneNode(node), parentId: parent?.id ?? null, index: this.siblingsOf(node).indexOf(node), pixels };
+    const clone = this.cloneNode(node);
+    return { node: clone, parentId: parent?.id ?? null, index: this.siblingsOf(node).indexOf(node), pixels, memoryBytes: this.snapshotMemoryBytes(clone, pixels) };
   }
   private applyPatchRaw(id: string, patch: LayerPatch): void {
     const n = this.nodes.get(id); if (!n) return;
     const fillChanged = n.type === 'fill' && patch.fillColor !== undefined && patch.fillColor !== n.fillColor;
     Object.assign(n, patch);
-    if (patch.vectorShapes) n.vectorShapes = cloneShapes(patch.vectorShapes);
+    if (patch.vectorShapes) n.vectorShapes = cloneVectorShapes(patch.vectorShapes);
     this.pushProps(n);
     if (fillChanged) this.fillLayerPixelsRaw(n, n.fillColor ?? '#ffffff');
   }
@@ -535,26 +706,34 @@ export class DocumentController {
   }
   private restoreRaw(snapshot: LayerSnapshot): void {
     const parent = snapshot.parentId ? this.nodes.get(snapshot.parentId) ?? null : null;
-    const insert = (src: LayerNode, parentNode: LayerNode | null, index: number): LayerNode => {
-      // Si se restaura una capa eliminada, se reutiliza su engineId original cuando está libre.
-      // HistoryManager guarda ese ID en sus snapshots de tiles, por lo que esto conserva la
-      // continuidad de Deshacer/Rehacer para trazos que existían antes de eliminar la capa.
-      const engineIdInUse = (id: number) => [...this.nodes.values()].some((node) => node.engineId === id);
-      const engineId = src.engineId > 0 && !engineIdInUse(src.engineId) ? src.engineId : this.nextEngineId++;
-      this.nextEngineId = Math.max(this.nextEngineId, engineId + 1);
-      const n: LayerNode = { ...src, engineId, vectorShapes: cloneShapes(src.vectorShapes), children: [] };
-      const siblings = parentNode ? parentNode.children : this.doc.layers;
-      const at = Math.max(0, Math.min(index, siblings.length));
-      const ok = n.type === 'group' ? this.comp.addGroup(n.engineId, parentNode?.engineId ?? 0, at) : this.comp.addRaster(n.engineId, parentNode?.engineId ?? 0, at);
-      if (!ok) throw new Error(`No se pudo restaurar la capa ${n.name}`);
-      siblings.splice(at, 0, n); this.nodes.set(n.id, n); this.pushProps(n);
-      const px = snapshot.pixels.get(n.id);
-      if (px && isPixelLayerType(n.type)) this.layerPixels(n)?.loadFromRGBA(px);
-      else if (n.type === 'fill' && n.fillColor) this.fillLayerPixelsRaw(n, n.fillColor);
-      src.children.forEach((c, i) => insert(c, n, i));
-      return n;
-    };
-    insert(snapshot.node, parent, snapshot.index);
+    this.insertRestoredNode(snapshot.node, parent, snapshot.index, snapshot.pixels);
+  }
+  private insertRestoredNode(src: LayerNode, parent: LayerNode | null, index: number, pixels: Map<string, Uint8Array>): LayerNode {
+    // HistoryManager references deleted engineIds, so reuse them when they are available.
+    const engineId = this.resolveRestoredEngineId(src.engineId);
+    const node: LayerNode = { ...src, engineId, vectorShapes: cloneVectorShapes(src.vectorShapes), masks: cloneLayerMasks(src.masks), children: [] };
+    const siblings = parent ? parent.children : this.doc.layers;
+    const at = Math.max(0, Math.min(index, siblings.length));
+    this.addEngineLayer(node, parent, at, `No se pudo restaurar la capa ${node.name}`);
+    siblings.splice(at, 0, node);
+    this.nodes.set(node.id, node);
+    this.pushProps(node);
+    this.restoreLayerPixelData(node, pixels.get(node.id));
+    src.children.forEach((child, childIndex) => this.insertRestoredNode(child, node, childIndex, pixels));
+    return node;
+  }
+  private resolveRestoredEngineId(preferredId: number): number {
+    const isInUse = [...this.nodes.values()].some((node) => node.engineId === preferredId);
+    const engineId = preferredId > 0 && !isInUse ? preferredId : this.nextEngineId++;
+    this.nextEngineId = Math.max(this.nextEngineId, engineId + 1);
+    return engineId;
+  }
+  private addEngineLayer(node: LayerNode, parent: LayerNode | null, index: number, errorMessage: string): void {
+    const parentEngineId = parent?.engineId ?? 0;
+    const added = node.type === 'group'
+      ? this.comp.addGroup(node.engineId, parentEngineId, index)
+      : this.comp.addRaster(node.engineId, parentEngineId, index);
+    if (!added) throw new Error(errorMessage);
   }
   private add(type: LayerType, name: string, parentId: string | undefined, index: number, extras: Partial<LayerNode> = {}): LayerNode {
     const parent = parentId ? this.nodes.get(parentId) ?? null : null;
@@ -565,8 +744,7 @@ export class DocumentController {
     };
     const siblings = parent ? parent.children : this.doc.layers;
     const at = index < 0 || index > siblings.length ? siblings.length : index;
-    const ok = type === 'group' ? this.comp.addGroup(node.engineId, parent?.engineId ?? 0, at) : this.comp.addRaster(node.engineId, parent?.engineId ?? 0, at);
-    if (!ok) throw new Error(`El motor rechazó crear la capa «${name}».`);
+    this.addEngineLayer(node, parent, at, `El motor rechazó crear la capa «${name}».`);
     siblings.splice(at, 0, node); this.nodes.set(node.id, node); this.pushProps(node); return node;
   }
   private fillLayerPixelsRaw(node: LayerNode, color: string): void {
@@ -585,14 +763,20 @@ export class DocumentController {
     const node = this.add(normalizedType, src.name, parent?.id, -1, {
       visible: src.visible, locked: src.locked, opacity: src.opacity, blendMode: src.blendMode,
       fillColor: src.fillColor, filterKind: src.filterKind, filterStrength: src.filterStrength,
-      vectorShapes: cloneShapes(src.vectorShapes), sourceName: src.sourceName, sourceLinkId: src.sourceLinkId, sourceLastModified: src.sourceLastModified, sourceFileSize: src.sourceFileSize,
+      vectorShapes: cloneVectorShapes(src.vectorShapes), masks: cloneLayerMasks(src.masks), sourceName: src.sourceName, sourceLinkId: src.sourceLinkId, sourceLastModified: src.sourceLastModified, sourceFileSize: src.sourceFileSize,
       textContent: src.textContent, textX: src.textX, textY: src.textY, textFontFamily: src.textFontFamily, textFontSize: src.textFontSize, textColor: src.textColor, textStyle: src.textStyle, textAlign: src.textAlign, textLineHeight: src.textLineHeight, textLetterSpacing: src.textLetterSpacing, textStrokeColor: src.textStrokeColor, textStrokeWidth: src.textStrokeWidth, textBackgroundColor: src.textBackgroundColor,
     });
     this.nodes.delete(node.id); node.id = src.id; this.nodes.set(node.id, node);
     const px = pixels.get(src.id);
-    if (px && isPixelLayerType(node.type)) this.layerPixels(node)?.loadFromRGBA(px);
-    else if (node.type === 'fill' && node.fillColor) this.fillLayerPixelsRaw(node, node.fillColor);
+    this.restoreLayerPixelData(node, px);
     src.children.forEach((c) => this.adopt(c, node, pixels));
+  }
+  private restoreLayerPixelData(node: LayerNode, pixels?: Uint8Array): void {
+    if (pixels && isPixelLayerType(node.type)) {
+      this.layerPixels(node)?.loadFromRGBA(pixels);
+      return;
+    }
+    if (node.type === 'fill' && node.fillColor) this.fillLayerPixelsRaw(node, node.fillColor);
   }
   private pushProps(n: LayerNode): void { this.comp.setProps(n.engineId, n.visible, n.opacity, blendModeFromManifest(n.blendMode)); }
   private parentOf(n: LayerNode): LayerNode | null {

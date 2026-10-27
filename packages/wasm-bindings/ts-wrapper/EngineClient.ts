@@ -17,12 +17,9 @@ export interface EngineCapabilities {
 }
 
 function rethrowEngineInitializationError(error: unknown): never {
-  if (globalThis.crossOriginIsolated === true) throw error;
   const detail = error instanceof Error ? error.message : String(error);
   throw new Error(
-    'No se pudo iniciar el motor Wasm. Si lo compilaste con -pthread necesita aislamiento de origen ' +
-    'cruzado (COOP/COEP) y esta página no lo tiene (GitHub Pages no permite esos headers). ' +
-    `Detalle: ${detail}`,
+    `No se pudo iniciar el motor Wasm. Detalle: ${detail}`,
     { cause: error },
   );
 }

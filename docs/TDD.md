@@ -86,9 +86,9 @@ The UI handles pointer gestures, zoom/pan coordinate conversion, tool configurat
 
 ## Undo/redo design
 
-The Wasm `HistoryManager` observes pixel writes and captures the old contents of touched tiles once per action. Undo/redo swaps tile buffers rather than copying entire layers. Its retained tile memory is limited by a configurable cap, currently initialized by the document controller to 512 MiB unless another value is provided; older entries may be trimmed to respect that limit.
+The Wasm `HistoryManager` observes pixel writes and captures the old contents of touched tiles once per action. Undo/redo swaps tile buffers rather than copying entire layers. Its retained tile memory is limited by a configurable cap, currently initialized by the document controller to 512 MiB unless another value is provided. The cap applies across undo and redo; oldest entries are discarded as needed, including a single entry that exceeds the cap. The TypeScript controller separately accounts for structural snapshots and pixel-backed structural edits against the same configured MiB limit. Metadata estimates use UTF-8 JSON size and do not include JavaScript object/runtime overhead, so this is a practical history bound rather than a total process-memory guarantee.
 
-The TypeScript `DocumentController` maintains structure/property actions (create, duplicate, delete/restore, reparent/reorder, rename, layer properties, and supported text/vector content updates) alongside pixel-history actions. The controller coordinates the undo and redo stacks so the user navigates document mutations in sequence. A newly recorded action invalidates the redo branch. Opening another document initializes a fresh history.
+The TypeScript `DocumentController` maintains structure/property actions (create, duplicate, delete/restore, reparent/reorder, rename, layer properties, and supported text/vector content updates) alongside pixel-history actions. The controller coordinates the undo and redo stacks so the user navigates document mutations in sequence. A newly recorded action invalidates the redo branch in both layers of history. Opening another document initializes a fresh history. UI history entries are synchronized to the Wasm engine's retained undo/redo counts, so discarded pixel actions are not presented as available.
 
 History is not persisted inside `.nvtsphoto`; it represents the current editing session.
 
@@ -115,6 +115,10 @@ project.nvtsphoto
 The current serializer stores each pixel-backed layer as a full uncompressed RGBA byte array inside a deflated ZIP entry (`layers/<id>/pixels.rgba`). Despite the sparse tile representation in memory, this is not a sparse/per-tile on-disk format. A loader validates format identity, major version, dimensions, required manifest/pixel entries, and expected RGBA byte length. Older `raster` layer names are normalized to `paint` on load.
 
 External source-file handles cannot be embedded as live operating-system handles in the project file. The manifest stores source metadata/link ID; the corresponding browser `FileSystemFileHandle` is held separately in IndexedDB, subject to browser permissions.
+
+### Compatibility policy (proposed; current format unchanged)
+
+The current loader accepts the `nvtsphoto` format identifier, validates the major version, rejects invalid dimensions or missing/incorrect pixel payloads, and normalizes the legacy `raster` layer type to `paint`. It does not currently implement a general migration chain. Preserve this behavior while the format remains at `0.1.0`; add compatibility only with fixtures for each documented legacy case. Before a future format-version change, record the schema delta, identify whether conversion is lossless, add a version-specific migration function and fixtures, and retain the original file unless conversion succeeds. Unknown major versions should continue to fail clearly; additive fields can remain forward-compatible only when their owning reader safely ignores them. This policy documents future compatibility expectations and does not add migration code or change serialized data today.
 
 ## Persistence and browser APIs
 
@@ -178,6 +182,7 @@ Available API operations: identity (`appName`, `version`), `registerMenuAction`,
 pnpm install
 pnpm dev
 pnpm typecheck
+pnpm test
 pnpm build
 ```
 
@@ -186,6 +191,8 @@ Rebuilding the C++/Wasm engine requires an activated Emscripten toolchain:
 ```bash
 pnpm build:wasm
 ```
+
+`pnpm test` runs focused regression checks for pixel undo/redo memory bounds, structural redo invalidation, and `.nvtsphoto` round-trips and rejection paths. It requires the generated `packages/wasm-bindings/build/engine.js` and `.wasm` artifacts.
 
 The web app uses Vite, monorepo aliases and COOP/COEP dev-server headers. The browser must load the appropriate generated Wasm JavaScript/binary assets for the engine to initialize.
 

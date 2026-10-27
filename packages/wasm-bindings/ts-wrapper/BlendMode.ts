@@ -2,15 +2,31 @@
 
 export const BlendMode = { Normal: 0, Multiply: 1, Screen: 2, Overlay: 3 } as const;
 export type BlendModeValue = (typeof BlendMode)[keyof typeof BlendMode];
+export type BlendModeManifestName = 'normal' | 'multiply' | 'screen' | 'overlay';
+
+const BLEND_MODE_VALUE_BY_NAME: Record<BlendModeManifestName, BlendModeValue> = {
+  normal: BlendMode.Normal,
+  multiply: BlendMode.Multiply,
+  screen: BlendMode.Screen,
+  overlay: BlendMode.Overlay,
+};
+
+const BLEND_MODE_NAME_BY_VALUE: Record<BlendModeValue, BlendModeManifestName> = {
+  [BlendMode.Normal]: 'normal',
+  [BlendMode.Multiply]: 'multiply',
+  [BlendMode.Screen]: 'screen',
+  [BlendMode.Overlay]: 'overlay',
+};
 
 /** Convierte el string del manifest .nvtsphoto al valor numérico del motor. */
 export function blendModeFromManifest(name: string): BlendModeValue {
-  switch (name) {
-    case 'multiply': return BlendMode.Multiply;
-    case 'screen':   return BlendMode.Screen;
-    case 'overlay':  return BlendMode.Overlay;
-    default:         return BlendMode.Normal; // 'normal' o desconocido
-  }
+  if (!Object.prototype.hasOwnProperty.call(BLEND_MODE_VALUE_BY_NAME, name)) return BlendMode.Normal;
+  return BLEND_MODE_VALUE_BY_NAME[name as BlendModeManifestName];
+}
+
+/** Convierte el valor numérico del motor a la etiqueta estable del manifest. */
+export function blendModeToManifest(value: number): BlendModeManifestName {
+  return BLEND_MODE_NAME_BY_VALUE[value as BlendModeValue] ?? 'normal';
 }
 
 /* Flujo completo (compositor -> GPU):

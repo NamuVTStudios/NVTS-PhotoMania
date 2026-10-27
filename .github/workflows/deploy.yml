@@ -40,6 +40,12 @@ jobs:
       - name: Compilar motor C++ a WebAssembly y copiar assets
         run: pnpm build:wasm
 
+      - name: Verificar tipos TypeScript
+        run: pnpm typecheck
+
+      - name: Ejecutar pruebas de historial y formato
+        run: pnpm test
+
       - name: Compilar aplicación frontend (Vite)
         run: pnpm --filter @nvts/web build
 

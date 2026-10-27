@@ -1,8 +1,14 @@
 /** Docking, floating and resizing behavior for PhotoMania's side panels. */
-import type { WorkspacePanelId } from '../workspaces/types';
-export type DockablePanelId = WorkspacePanelId;
+import {
+  readDockLayout,
+  writeDockLayout,
+  type DockablePanelId,
+  type PanelSavedState,
+  type PersistedDockLayout,
+  type WorkspaceSavedState,
+} from './DockLayoutStorage';
+export type { DockablePanelId } from './DockLayoutStorage';
 
-const STORAGE_KEY = 'nvts-photomania-dock-layout-v1';
 const PANEL_DEFINITIONS: Array<{ id: DockablePanelId; selector: string; title: string; defaultHeight: number }> = [
   { id: 'advanced', selector: '.advanced-tool-panel', title: 'Opciones avanzadas de herramienta', defaultHeight: 210 },
   { id: 'history', selector: '.history-panel', title: 'Historial', defaultHeight: 175 },
@@ -13,23 +19,6 @@ const PANEL_DEFINITIONS: Array<{ id: DockablePanelId; selector: string; title: s
 ];
 const VALID_IDS = PANEL_DEFINITIONS.map((panel) => panel.id);
 
-type PanelSavedState = {
-  visible: boolean;
-  floating: boolean;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  dockHeight: number;
-};
-type WorkspaceSavedState = {
-  dockWidth: number;
-  timelineDockHeight?: number;
-  panelsHidden: boolean;
-  order: DockablePanelId[];
-  panels: Partial<Record<DockablePanelId, PanelSavedState>>;
-};
-type PersistedState = { version: 1; workspaces: Record<string, WorkspaceSavedState> };
 type FloatingGeometry = { x: number; y: number; width: number; height: number };
 type HeaderDragState = {
   startX: number; startY: number; offsetX: number; offsetY: number; moved: boolean;
@@ -54,9 +43,6 @@ export interface DockLayoutController {
   save(): void;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === 'object' && !Array.isArray(value);
-}
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -67,26 +53,6 @@ function minDockHeight(item: PanelItem): number {
   if (item.id === 'storyboard' || item.id === 'timeline') return 180;
   return 120;
 }
-function emptyPersistedState(): PersistedState {
-  return { version: 1, workspaces: {} };
-}
-
-function readPersistedState(): PersistedState {
-  let raw: string | null;
-  try { raw = localStorage.getItem(STORAGE_KEY); }
-  catch { return emptyPersistedState(); }
-  return parsePersistedState(raw);
-}
-
-function parsePersistedState(raw: string | null): PersistedState {
-  if (!raw) return emptyPersistedState();
-  let parsed: unknown;
-  try { parsed = JSON.parse(raw); }
-  catch { return emptyPersistedState(); }
-  if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.workspaces)) return emptyPersistedState();
-  return parsed as unknown as PersistedState;
-}
-
 /** Creates a dock controller only when the application shell has the required layout elements. */
 export function createDockLayoutManager(root: HTMLElement, initialWorkspace: string): DockLayoutController {
   const workspaceElement = root.querySelector<HTMLElement>('.workspace');
@@ -102,7 +68,7 @@ function createEmptyDockController(): DockLayoutController {
 
 /** Owns dock state; individual interactions are separated into small methods. */
 class DockLayoutManagerImpl implements DockLayoutController {
-  private persisted = readPersistedState();
+  private persisted: PersistedDockLayout = readDockLayout();
   private activeWorkspace: string;
   private order: DockablePanelId[] = [];
   private restoring = false;
@@ -688,8 +654,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private persistToStorage(): void {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(this.persisted)); }
-    catch (error) { console.warn('No se pudo guardar la disposición de paneles:', error); }
+    writeDockLayout(this.persisted);
   }
 
   applyWorkspace(workspace: string): void {

@@ -1,31 +1,60 @@
 import type { FilterKind } from '@nvts/shared';
 
-const CUSTOM_FILTERS = new Set<FilterKind>([
-  'posterize', 'threshold', 'pixelate', 'solarize', 'noise', 'vignette', 'duotone', 'sharpen', 'edge-detect',
-]);
-
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+const CSS_FILTER_RENDERERS = {
+  grayscale: (amount) => `grayscale(${amount * 100}%)`,
+  invert: (amount) => `invert(${amount * 100}%)`,
+  sepia: (amount) => `sepia(${amount * 100}%)`,
+  blur: (amount) => `blur(${amount * 12}px)`,
+  brightness: (amount) => `brightness(${100 + amount * 100}%)`,
+  contrast: (amount) => `contrast(${100 + amount * 150}%)`,
+  saturation: (amount) => `saturate(${100 + amount * 200}%)`,
+  'hue-rotate': (amount: number) => `hue-rotate(${amount * 180}deg)`,
+} satisfies Partial<Record<FilterKind, (amount: number) => string>>;
+type CustomFilterKind = Exclude<FilterKind, keyof typeof CSS_FILTER_RENDERERS>;
+
 /** CSS-only effects are rendered by Canvas2D; custom effects use pixel processing below. */
 export function getCssFilter(kind: FilterKind, strength: number): string {
   const amount = clamp(strength, 0, 1);
-  switch (kind) {
-    case 'grayscale': return `grayscale(${amount * 100}%)`;
-    case 'invert': return `invert(${amount * 100}%)`;
-    case 'sepia': return `sepia(${amount * 100}%)`;
-    case 'blur': return `blur(${amount * 12}px)`;
-    case 'brightness': return `brightness(${100 + amount * 100}%)`;
-    case 'contrast': return `contrast(${100 + amount * 150}%)`;
-    case 'saturation': return `saturate(${100 + amount * 200}%)`;
-    case 'hue-rotate': return `hue-rotate(${amount * 180}deg)`;
-    default: return 'none';
-  }
+  const renderer = CSS_FILTER_RENDERERS[kind as keyof typeof CSS_FILTER_RENDERERS];
+  return renderer?.(amount) ?? 'none';
 }
 
-export function isCustomFilter(kind: FilterKind): boolean {
-  return CUSTOM_FILTERS.has(kind);
+export function isCustomFilter(kind: FilterKind): kind is CustomFilterKind {
+  return kind in CUSTOM_FILTER_PROCESSORS;
+}
+
+export function blendImageData(original: ImageData, filtered: ImageData, opacity: number): ImageData {
+  for (let index = 0; index < original.data.length; index++) {
+    original.data[index] = Math.round(original.data[index] * (1 - opacity) + filtered.data[index] * opacity);
+  }
+  return original;
+}
+
+export type FilterRenderRegion = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fullWidth: number;
+  fullHeight: number;
+};
+
+export function renderFilteredImage(
+  source: CanvasImageSource,
+  outputContext: CanvasRenderingContext2D,
+  kind: FilterKind,
+  strength: number,
+  region: FilterRenderRegion,
+): ImageData {
+  outputContext.filter = getCssFilter(kind, strength);
+  outputContext.drawImage(source, 0, 0);
+  outputContext.filter = 'none';
+  const image = outputContext.getImageData(0, 0, region.width, region.height);
+  return applyCustomFilter(image, kind, strength, region.x, region.y, region.fullWidth, region.fullHeight);
 }
 
 /**
@@ -43,19 +72,12 @@ export function applyCustomFilter(
 ): ImageData {
   if (!isCustomFilter(kind)) return image;
   const amount = clamp(strength, 0, 1);
-  switch (kind) {
-    case 'posterize': applyPosterize(image, amount); break;
-    case 'threshold': applyThreshold(image, amount); break;
-    case 'pixelate': applyPixelate(image, amount, originX, originY, fullWidth, fullHeight); break;
-    case 'solarize': applySolarize(image, amount); break;
-    case 'noise': applyNoise(image, amount, originX, originY); break;
-    case 'vignette': applyVignette(image, amount, originX, originY, fullWidth, fullHeight); break;
-    case 'duotone': applyDuotone(image, amount); break;
-    case 'sharpen': applySharpen(image, amount); break;
-    case 'edge-detect': applyEdgeDetect(image, amount); break;
-  }
+  CUSTOM_FILTER_PROCESSORS[kind](image, amount, { originX, originY, fullWidth, fullHeight });
   return image;
 }
+
+type FilterRegion = { originX: number; originY: number; fullWidth: number; fullHeight: number };
+type CustomFilterProcessor = (image: ImageData, amount: number, region: FilterRegion) => void;
 
 function applyPosterize(image: ImageData, amount: number): void {
   const levels = Math.max(2, Math.round(32 - amount * 30));
@@ -235,3 +257,19 @@ function applyEdgeDetect(image: ImageData, amount: number): void {
 function getLuminance(red: number, green: number, blue: number): number {
   return red * 0.2126 + green * 0.7152 + blue * 0.0722;
 }
+
+const CUSTOM_FILTER_PROCESSORS: Record<CustomFilterKind, CustomFilterProcessor> = {
+  posterize: applyPosterize,
+  threshold: applyThreshold,
+  pixelate: (image, amount, region) => applyPixelate(
+    image, amount, region.originX, region.originY, region.fullWidth, region.fullHeight,
+  ),
+  solarize: applySolarize,
+  noise: (image, amount, region) => applyNoise(image, amount, region.originX, region.originY),
+  vignette: (image, amount, region) => applyVignette(
+    image, amount, region.originX, region.originY, region.fullWidth, region.fullHeight,
+  ),
+  duotone: applyDuotone,
+  sharpen: applySharpen,
+  'edge-detect': applyEdgeDetect,
+};

@@ -1,5 +1,5 @@
 // Estado del documento: la estructura y los metadatos viven en TypeScript; los píxeles, en C++.
-import type { FilterKind, LayerManifest, VectorShape } from '@nvts/shared';
+import type { FilterKind, LayerManifest, LayerMask, VectorShape } from '@nvts/shared';
 
 export interface LayerNode extends Omit<LayerManifest, 'pixelData' | 'children'> {
   /** ID numérico de la capa de respaldo en el compositor Wasm. 0 está reservado. */
@@ -11,6 +11,7 @@ export interface LayerNode extends Omit<LayerManifest, 'pixelData' | 'children'>
   fillColor?: string;
   vectorShapes?: VectorShape[];
   sourceName?: string;
+  masks?: LayerMask[];
 }
 
 export interface DocumentState {

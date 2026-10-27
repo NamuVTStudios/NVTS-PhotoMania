@@ -28,17 +28,21 @@ Useful commands:
 
 ```bash
 pnpm typecheck    # TypeScript check
+pnpm test         # History and native-format regression tests
 pnpm build        # Production web build
 pnpm build:wasm   # Rebuild the C++ engine and copy the Wasm assets
 ```
 
 `pnpm build:wasm` requires Emscripten. The generated artifacts are copied to the web app's public Wasm directory by `tools/copy-wasm.mjs`.
 
+The history and `.nvtsphoto` tests use Node's built-in test runner and the generated Wasm module. Rebuild the engine with `pnpm build:wasm` before running them after C++ changes.
+
 ## Current capabilities
 
 - **Document templates:** the 23 document presets (social posts/stories, screen sizes, A4, US/European comics, manga/manhwa, animation, and UV/2D textures) are maintained as individual modules in the shared `@nvts/templates` workspace package so other NVTS apps can reuse them.
 - **Canvas and navigation:** fit-to-window view, zoom with controls or Ctrl/Meta + mouse wheel, panning with the Hand tool or Space + drag, and responsive canvas sizing.
 - **Drawing tools:** brush, eraser, eyedropper, line, rectangle, ellipse, bucket fill, text, and vector selection. The brush exposes size, opacity, hardness, spacing, and smoothing controls; the fill tool includes tolerance, contiguous fill, and merged-visible sampling options. Tool and vector-shape icons are individual SVG assets in `apps/web/src/icons/tools/`; CSS masks let them inherit the active foreground color and remain legible in both themes.
+- **Non-destructive layer masks:** affine transform masks, colorization masks with editable color strokes, and filter masks with per-layer filter stacks. Mask metadata is saved in `.nvtsphoto`; colorization currently uses a line-barrier region fill and is limited to 4 million document pixels. Filter masks apply to the entire layer; painted grayscale coverage and advanced warp transforms are not implemented yet.
 - **Layer model:** paint, filter, fill, file/image, vector, text, and group layers. Layers support names, order, visibility, lock state, opacity, blend mode, duplication, deletion, nested groups, and thumbnails.
 - **History:** pixel edits use the Wasm tile history; document structure and property changes are recorded by the TypeScript `DocumentController`. Undo/redo shortcuts are `Ctrl/Meta+Z`, `Ctrl/Meta+Shift+Z`, and `Ctrl/Meta+Y`.
 - **Text:** a text layer stores editable text and typography metadata along with a raster preview. The top tool bar contains font, style, size, and color; advanced options contain alignment, line height, letter spacing, stroke, and background controls.

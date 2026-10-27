@@ -1,14 +1,13 @@
-import { listRecentProjects, loadRecentProject, removeRecentProject, type RecentProjectInfo } from '@nvts/storage';
 import { TEMPLATES } from '@nvts/templates';
-import { PREFERENCES_PANEL_TEMPLATE, readPreferences, wirePreferences } from './panels/PreferencesPanel';
+import { PREFERENCES_PANEL_TEMPLATE, wirePreferences } from './panels/PreferencesPanel';
 import { PLUGINS_PANEL_TEMPLATE, wirePlugins } from './panels/PluginsPanel';
+import { RecentProjectsPanel } from './panels/RecentProjectsPanel';
 import { HOME_TEMPLATE } from './ShellTemplates';
 import { WorkspaceManager } from './managers/WorkspaceManager';
 
 type HomeSection = 'new' | 'open' | 'recent';
 type LaunchProject = (name: string, width: number, height: number, file?: File) => Promise<void>;
 type HomeMenu = { button: HTMLButtonElement; dropdown: HTMLElement };
-type RecentContextMenuState = { container: HTMLDivElement; removeButton: HTMLButtonElement };
 
 /** Owns the welcome screen, template picker, recent projects and file selection. */
 export class HomeScreenController {
@@ -16,14 +15,12 @@ export class HomeScreenController {
   private selectedTemplate = TEMPLATES.find((template) => template.id === 'full-hd')!;
   private width = this.selectedTemplate.width;
   private height = this.selectedTemplate.height;
-  private recentItems: RecentProjectInfo[] = [];
-  private removeRecentId: string | null = null;
+  private recentProjects!: RecentProjectsPanel;
   private openPreferences: () => void = () => {};
   private homeStatus!: HTMLElement;
   private templateGallery!: HTMLElement;
   private categorySelect!: HTMLSelectElement;
   private sectionTitle!: HTMLElement;
-  private recentContextMenu!: RecentContextMenuState;
 
   constructor(private readonly root: HTMLElement, private readonly launchProject: LaunchProject) {}
 
@@ -46,13 +43,18 @@ export class HomeScreenController {
     this.templateGallery = this.q<HTMLElement>('#home-template-grid');
     this.categorySelect = this.q<HTMLSelectElement>('#home-category');
     this.sectionTitle = this.q<HTMLElement>('#home-section-title');
-    this.recentContextMenu = this.createRecentContextMenu();
   }
 
   private bindCorePanels(): void {
     this.openPreferences = wirePreferences(this.root, async () => this.refreshRecent());
+    this.recentProjects = new RecentProjectsPanel(
+      this.root,
+      this.launchProject,
+      (error) => this.setHomeError(error),
+      () => this.openPreferences(),
+    );
+    this.recentProjects.mount();
     wirePlugins(this.root);
-    this.installRecentContextMenu();
   }
 
   private bindHomeControls(): void {
@@ -73,147 +75,8 @@ export class HomeScreenController {
     this.showSection('new');
   }
 
-  private createRecentContextMenu(): RecentContextMenuState {
-    const container = document.createElement('div');
-    container.className = 'recent-context-menu';
-    container.hidden = true;
-    container.setAttribute('role', 'menu');
-    const removeButton = document.createElement('button');
-    removeButton.type = 'button';
-    removeButton.textContent = 'Eliminar de recientes';
-    removeButton.setAttribute('role', 'menuitem');
-    container.append(removeButton);
-    return { container, removeButton };
-  }
-
-  private installRecentContextMenu(): void {
-    this.root.append(this.recentContextMenu.container);
-    this.recentContextMenu.removeButton.onclick = () => { void this.removeSelectedRecentProject(); };
-    this.root.addEventListener('pointerdown', (event) => {
-      if (event.target instanceof Node && !this.recentContextMenu.container.contains(event.target)) {
-        this.closeRecentContextMenu();
-      }
-    });
-    this.root.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape') this.closeRecentContextMenu();
-    });
-  }
-
-  private closeRecentContextMenu(): void {
-    this.recentContextMenu.container.hidden = true;
-    this.removeRecentId = null;
-  }
-
-  private async removeSelectedRecentProject(): Promise<void> {
-    const id = this.removeRecentId;
-    this.closeRecentContextMenu();
-    if (!id) return;
-    try {
-      await removeRecentProject(id);
-      this.recentItems = this.recentItems.filter((item) => item.id !== id);
-      this.renderRecent();
-    } catch (error) {
-      this.setHomeError(error);
-    }
-  }
-
-  private async refreshRecent(): Promise<void> {
-    if (!readPreferences().rememberRecentProjects) {
-      this.recentItems = [];
-      this.renderRecent();
-      return;
-    }
-    await this.loadRecentProjects();
-    this.renderRecent();
-  }
-
-  private async loadRecentProjects(): Promise<void> {
-    try {
-      this.recentItems = await listRecentProjects();
-    } catch (error) {
-      console.warn('No se pudieron cargar los proyectos recientes:', error);
-      this.recentItems = [];
-    }
-  }
-
-  private renderRecent(): void {
-    const host = this.q<HTMLElement>('#home-recents');
-    host.replaceChildren();
-    this.q<HTMLElement>('#home-recent-count').textContent = String(this.recentItems.length);
-    if (!readPreferences().rememberRecentProjects) {
-      this.renderRecentDisabled(host);
-      return;
-    }
-    if (!this.recentItems.length) {
-      this.renderRecentEmpty(host);
-      return;
-    }
-    this.recentItems.forEach((item) => host.append(this.createRecentCard(item)));
-  }
-
-  private renderRecentDisabled(host: HTMLElement): void {
-    host.innerHTML = '<div class="home-empty"><span>◷</span><strong>Proyectos recientes desactivados</strong><p>Podés activarlos desde Preferencias cuando quieras guardar una lista local.</p><button type="button" class="home-secondary" id="enable-recent-preference">Abrir preferencias</button></div>';
-    host.querySelector<HTMLButtonElement>('#enable-recent-preference')!.onclick = () => this.openPreferences();
-  }
-
-  private renderRecentEmpty(host: HTMLElement): void {
-    host.innerHTML = '<div class="home-empty"><span>◷</span><strong>Todavía no hay proyectos recientes</strong><p>Los proyectos guardados en este navegador aparecerán acá.</p></div>';
-  }
-
-  private createRecentCard(item: RecentProjectInfo): HTMLButtonElement {
-    const button = document.createElement('button');
-    button.className = 'recent-card';
-    button.type = 'button';
-    const preview = document.createElement('span');
-    preview.className = 'recent-preview';
-    const paper = document.createElement('span');
-    paper.className = 'recent-paper';
-    paper.style.aspectRatio = `${item.width} / ${item.height}`;
-    preview.append(paper);
-    const label = document.createElement('strong');
-    label.textContent = item.name;
-    const meta = document.createElement('small');
-    meta.textContent = `${item.width} × ${item.height} px · ${new Date(item.updatedAt).toLocaleDateString()}`;
-    button.append(preview, label, meta);
-    button.oncontextmenu = (event) => this.openRecentContextMenu(event, item.id);
-    button.onclick = () => { void this.openRecentProject(item, button); };
-    return button;
-  }
-
-  private openRecentContextMenu(event: MouseEvent, id: string): void {
-    event.preventDefault();
-    event.stopPropagation();
-    this.removeRecentId = id;
-    const { container, removeButton } = this.recentContextMenu;
-    container.hidden = false;
-    const menuWidth = 210;
-    const menuHeight = 48;
-    container.style.left = `${Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8))}px`;
-    container.style.top = `${Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8))}px`;
-    removeButton.focus();
-  }
-
-  private async openRecentProject(item: RecentProjectInfo, button: HTMLButtonElement): Promise<void> {
-    button.disabled = true;
-    try {
-      await this.openRecentProjectFile(item);
-    } catch (error) {
-      this.setHomeError(error);
-    } finally {
-      button.disabled = false;
-    }
-  }
-
-  private async openRecentProjectFile(item: RecentProjectInfo): Promise<void> {
-    const bytes = await loadRecentProject(item.id);
-    const file = this.createRecentProjectFile(item, bytes);
-    await this.launchProject(item.name, item.width, item.height, file);
-  }
-
-  private createRecentProjectFile(item: RecentProjectInfo, bytes: Uint8Array | null): File {
-    if (!bytes) throw new Error('No se encontró la copia local de este proyecto.');
-    const fileBytes = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-    return new File([fileBytes], `${item.name || 'Proyecto'}.nvtsphoto`, { type: 'application/x-nvtsphoto' });
+  private refreshRecent(): Promise<void> {
+    return this.recentProjects.refresh();
   }
 
   private bindHomeNavigation(): void {
@@ -237,7 +100,7 @@ export class HomeScreenController {
       new: 'Nuevo proyecto', open: 'Abrir archivo', recent: 'Proyectos recientes',
     };
     this.sectionTitle.textContent = labels[section];
-    if (section === 'recent') this.renderRecent();
+    if (section === 'recent') this.recentProjects.show();
   }
 
   private bindHomeMenus(): void {

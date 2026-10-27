@@ -5,7 +5,7 @@ export { EngineSession } from './EngineSession';
 export type { TileUploader, LayerProps, AddLayerOptions } from './EngineSession';
 export { HeapAccess, isSharedBuffer } from './SafeMemory';
 export { flushDirtyTiles } from './DirtyTiles';
-export { BlendMode, blendModeFromManifest } from './BlendMode';
+export { BlendMode, blendModeFromManifest, blendModeToManifest } from './BlendMode';
 export type { BlendModeValue } from './BlendMode';
 export type {
   NvtsEngineModule, ImageProcessor, TiledLayer, Compositor, HistoryManager,

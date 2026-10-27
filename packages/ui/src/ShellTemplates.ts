@@ -7,9 +7,13 @@ export const MAIN_MENU = `<nav class="menus" aria-label="Menú principal">
       <div id="file-menu-dropdown" class="file-menu-dropdown" role="menu" aria-label="Archivo" hidden>
         <button id="b-new" class="menu-item" role="menuitem" type="button"><span>Nuevo proyecto</span><kbd>Ctrl+N</kbd></button>
         <button id="b-open" class="menu-item" role="menuitem" type="button"><span>Abrir archivo…</span><kbd>Ctrl+O</kbd></button>
+        <button id="b-import-image" class="menu-item" role="menuitem" type="button"><span>Importar imagen como capa…</span></button>
         <div class="menu-divider" role="separator"></div>
         <button id="b-save" class="menu-item" role="menuitem" type="button"><span>Guardar</span><kbd>Ctrl+S</kbd></button>
         <button id="b-save-as" class="menu-item" role="menuitem" type="button"><span>Guardar como…</span><kbd>Ctrl+Shift+S</kbd></button>
+        <div class="menu-divider" role="separator"></div>
+        <button id="b-export-png" class="menu-item" role="menuitem" type="button"><span>Exportar composición como PNG…</span></button>
+        <button id="b-export-jpeg" class="menu-item" role="menuitem" type="button"><span>Exportar composición como JPEG…</span></button>
       </div>
     </div>
     <div class="menu-wrap">

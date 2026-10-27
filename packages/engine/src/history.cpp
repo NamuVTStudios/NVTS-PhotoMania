@@ -131,6 +131,7 @@ bool HistoryManager::step(std::deque<HistoryEntry>& from, std::deque<HistoryEntr
     entry.bytes = countBytes(entry);
     bytes_ += entry.bytes;
     to.push_back(std::move(entry));
+    trim();
     return true;
 }
 
@@ -138,10 +139,38 @@ bool HistoryManager::undo() { return step(undo_, redo_); }
 bool HistoryManager::redo() { return step(redo_, undo_); }
 
 void HistoryManager::trim() {
-    while (bytes_ > maxBytes_ && undo_.size() > 1) {
-        bytes_ -= undo_.front().bytes;
-        undo_.pop_front();
+    while (bytes_ > maxBytes_) {
+        if (!undo_.empty()) {
+            bytes_ -= undo_.front().bytes;
+            undo_.pop_front();
+            continue;
+        }
+        if (!redo_.empty()) {
+            bytes_ -= redo_.back().bytes;
+            redo_.pop_back();
+            continue;
+        }
+        break;
     }
+}
+
+bool HistoryManager::discardOldestUndo() {
+    if (active_ || undo_.empty()) return false;
+    bytes_ -= undo_.front().bytes;
+    undo_.pop_front();
+    return true;
+}
+
+bool HistoryManager::discardOldestRedo() {
+    if (active_ || redo_.empty()) return false;
+    bytes_ -= redo_.back().bytes;
+    redo_.pop_back();
+    return true;
+}
+
+void HistoryManager::discardRedo() {
+    for (const auto& entry : redo_) bytes_ -= entry.bytes;
+    redo_.clear();
 }
 
 void HistoryManager::clear() {
@@ -169,5 +198,8 @@ EMSCRIPTEN_BINDINGS(nvts_history) {
         .function("memoryBytes",  &nvts::HistoryManager::memoryBytes)
         .function("undoLabel",    &nvts::HistoryManager::undoLabel)
         .function("redoLabel",    &nvts::HistoryManager::redoLabel)
-        .function("clear",        &nvts::HistoryManager::clear);
+        .function("clear",        &nvts::HistoryManager::clear)
+        .function("discardOldestUndo", &nvts::HistoryManager::discardOldestUndo)
+        .function("discardOldestRedo", &nvts::HistoryManager::discardOldestRedo)
+        .function("discardRedo", &nvts::HistoryManager::discardRedo);
 }

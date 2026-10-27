@@ -14,6 +14,8 @@ export default defineConfig({
   },
 
   resolve: {
+    // Prioriza las fuentes TypeScript frente a artefactos JavaScript antiguos junto a ellas.
+    extensions: ['.ts', '.tsx', '.mts', '.js', '.jsx', '.mjs', '.json'],
     alias: {
       // Resolver directamente los paquetes del monorepo evita fallos cuando Vite
       // analiza imports internos antes de que pnpm cree enlaces en node_modules.

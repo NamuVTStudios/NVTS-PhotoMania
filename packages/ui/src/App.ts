@@ -2,10 +2,10 @@
 // Todo corre en el hilo principal por ahora (mover el motor a un Worker es un paso posterior).
 // Opciones de herramienta por contexto; el panel avanzado cambia según la herramienta activa.
 
-import { WasmRuntimeManager, type EngineClient } from '@nvts/wasm-bindings';
+import { WasmRuntimeManager, type EngineClient, type TiledLayer } from '@nvts/wasm-bindings';
 import { createRenderer, type RendererBackend } from '@nvts/renderer';
-import { DocumentController, blendModeToManifest, StrokeSession, refresh, runEdit, type EngineCtx, type LayerNode, } from '@nvts/document-model';
-import { isPixelLayerType, type BlendMode, type FilterKind, type LayerType, type VectorShape, type TextLayerStyle, type TextLayerAlign } from '@nvts/shared';
+import { DocumentController, StrokeSession, refresh, runEdit, type EngineCtx, type LayerNode, } from '@nvts/document-model';
+import { cloneVectorShape, cloneVectorShapes, FILTER_KINDS, getLayerMaskLabel, isPixelLayerType, type BlendMode, type ColorizeStroke, type FilterKind, type LayerMask, type LayerType, type VectorShape, type TextLayerStyle, type TextLayerAlign } from '@nvts/shared';
 import { ADVANCED_TOOL_OPTIONS_PANEL_TEMPLATE, renderAdvancedToolOptionsPanel } from './panels/AdvancedToolOptionsPanel';
 import { AppManager } from './managers/AppManager';
 import { ComicProjectManager } from './managers/ComicProjectManager';
@@ -15,106 +15,26 @@ import { UIManager } from './managers/UIManager';
 import { WorkspaceManager } from './managers/WorkspaceManager';
 import { HISTORY_PANEL_TEMPLATE, renderHistoryPanel } from './panels/HistoryPanel';
 import { LAYERS_PANEL_TEMPLATE, renderLayersPanel, wireLayersPanel } from './panels/LayersPanel';
+import { renderLayerMaskEditor } from './panels/LayerMaskEditor';
+import { colorizePixels } from './panels/ColorizeProcessor';
 import { COMIC_MANAGER_PANEL_TEMPLATE, renderComicManagerPanel, type ComicConfig, type ComicPageEntry } from './panels/ComicManagerPanel';
 import { STORYBOARD_PANEL_TEMPLATE } from './panels/StoryboardPanel';
 import { ANIMATION_TIMELINE_PANEL_TEMPLATE } from './panels/AnimationTimelinePanel';
 import { LAYER_EFFECTS_PANEL_TEMPLATE, wireLayerEffectsPanel } from './panels/LayerEffectsPanel';
 import { FILTER_PANEL_TEMPLATE, wireFilterPanel } from './panels/FilterPanel';
-import { applyCustomFilter, getCssFilter } from './panels/FilterProcessor';
+import { blendImageData, renderFilteredImage } from './panels/FilterProcessor';
 import { VECTOR_EDITOR_PANEL_TEMPLATE, wireVectorEditorPanel, renderVectorEditorPanel } from './panels/VectorEditorPanel';
 import { PLUGINS_PANEL_TEMPLATE, wirePlugins, type PluginApi } from './panels/PluginsPanel';
 import { PREFERENCES_PANEL_TEMPLATE, readPreferences, wirePreferences, type AppPreferences } from './panels/PreferencesPanel';
 import { LOGO_URL, MAIN_MENU } from './ShellTemplates';
+import { exportVectorShapeToSvg } from './VectorSvgExporter';
+import { renderVectorShape } from './VectorCanvasRenderer';
+import { containsEnabledMask, containsLayerType, findTopRasterLayer } from './LayerTreeQueries';
+import { createFilterCanvasPools, expandFilterTile, forEachFilterTile, readFilterTilePixels, type FilterCanvasPools, type FilterTile } from './FilterTileLayout';
+import { applyBrushStamp, type StampOperation } from './BrushStampProcessor';
 import { createDockLayoutManager, type DockLayoutController } from './panels/DockLayoutManager';
 import { openFromDisk, packNvtsPhoto, saveToDisk, unpackNvtsPhoto, rememberRecentProject, supportsFileSystemAccess, rememberLinkedFile, getLinkedFile } from '@nvts/storage';
 import type { WorkspaceDefinition, WorkspaceId } from './workspaces';
-
-function escapeSvgText(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function getVectorShapeSvgTransform(shape: VectorShape): string {
-  if (!shape.rotation) return '';
-  const centerX = shape.x + shape.width / 2;
-  const centerY = shape.y + shape.height / 2;
-  return ` transform="rotate(${shape.rotation} ${centerX} ${centerY})"`;
-}
-
-function getVectorShapeSvgStyle(shape: VectorShape, forceNoFill = false): string {
-  const noFillKinds: VectorShape['kind'][] = ['line', 'polyline', 'bezier', 'freehand', 'spiral'];
-  const defaultStrokeKinds: VectorShape['kind'][] = ['line', 'polyline', 'bezier', 'freehand', 'spiral'];
-  const fill = forceNoFill ? 'none'
-    : (shape.fillEnabled ?? !noFillKinds.includes(shape.kind))
-      ? (shape.fillColor ?? shape.color)
-      : 'none';
-  const stroke = (shape.strokeEnabled ?? defaultStrokeKinds.includes(shape.kind)) && shape.strokeWidth > 0
-    ? (shape.strokeColor ?? shape.color)
-    : 'none';
-  const dash = shape.strokeDash === 'dash'
-    ? ` stroke-dasharray="${Math.max(4, shape.strokeWidth * 3)} ${Math.max(3, shape.strokeWidth * 2)}"`
-    : shape.strokeDash === 'dot'
-      ? ` stroke-dasharray="1 ${Math.max(3, shape.strokeWidth * 2)}"`
-      : '';
-  return `fill="${escapeSvgText(fill)}" stroke="${escapeSvgText(stroke)}" stroke-width="${shape.strokeWidth}" stroke-linecap="${shape.lineCap ?? 'round'}" stroke-linejoin="${shape.lineJoin ?? 'round'}"${dash} opacity="${shape.opacity}"`;
-}
-
-function vectorStarPoints(shape: VectorShape, centerX: number, centerY: number): string {
-  const count = Math.max(3, Math.min(64, shape.starPoints ?? 5));
-  const outer = Math.min(Math.abs(shape.width), Math.abs(shape.height)) / 2;
-  const inner = outer * 0.44;
-  return Array.from({ length: count * 2 }, (_, index) => {
-    const radius = index % 2 === 0 ? outer : inner;
-    const angle = Math.PI * index / count - Math.PI / 2;
-    return `${centerX + Math.cos(angle) * radius},${centerY + Math.sin(angle) * radius}`;
-  }).join(' ');
-}
-
-function vectorSpiralPath(shape: VectorShape, centerX: number, centerY: number): string {
-  return Array.from({ length: 361 }, (_, index) => {
-    const t = index / 360;
-    const angle = t * Math.PI * 9;
-    const radius = Math.min(Math.abs(shape.width), Math.abs(shape.height)) / 2 * t;
-    return `${index ? 'L' : 'M'} ${centerX + Math.cos(angle) * radius} ${centerY + Math.sin(angle) * radius}`;
-  }).join(' ');
-}
-
-function vectorPathData(shape: VectorShape): string {
-  const pathPoints = shape.points ?? [{ x: shape.x, y: shape.y }, { x: shape.x + shape.width, y: shape.y + shape.height }];
-  let path = `M ${pathPoints[0].x} ${pathPoints[0].y}`;
-  for (let index = 1; index < pathPoints.length; index++) {
-    const previous = pathPoints[index - 1];
-    const next = pathPoints[index];
-    const useBezier = shape.kind === 'bezier' && (previous.outX !== undefined || next.inX !== undefined);
-    path += useBezier
-      ? ` C ${previous.outX ?? previous.x} ${previous.outY ?? previous.y} ${next.inX ?? next.x} ${next.inY ?? next.y} ${next.x} ${next.y}`
-      : ` L ${next.x} ${next.y}`;
-  }
-  return shape.kind === 'polygon' ? `${path} Z` : path;
-}
-
-function vectorShapeToSvg(shape: VectorShape): string {
-  const centerX = shape.x + shape.width / 2;
-  const centerY = shape.y + shape.height / 2;
-  const transform = getVectorShapeSvgTransform(shape);
-  const style = getVectorShapeSvgStyle(shape);
-  const { x, y, width, height } = shape;
-  if (shape.kind === 'rectangle') return `<rect x="${x}" y="${y}" width="${width}" height="${height}" ${style}${transform}/>`;
-  if (shape.kind === 'rounded-rectangle') return `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${shape.cornerRadius ?? 20}" ${style}${transform}/>`;
-  if (shape.kind === 'ellipse') return `<ellipse cx="${centerX}" cy="${centerY}" rx="${Math.abs(width / 2)}" ry="${Math.abs(height / 2)}" ${style}${transform}/>`;
-  if (shape.kind === 'line') return `<line x1="${x}" y1="${y}" x2="${x + width}" y2="${y + height}" ${style}${transform}/>`;
-  if (shape.kind === 'star') return `<polygon points="${vectorStarPoints(shape, centerX, centerY)}" ${style}${transform}/>`;
-  if (shape.kind === 'spiral') return `<path d="${vectorSpiralPath(shape, centerX, centerY)}" ${getVectorShapeSvgStyle(shape, true)}${transform}/>`;
-  if (shape.kind === 'text') return vectorTextToSvg(shape, style, transform);
-  return `<path d="${vectorPathData(shape)}" ${style}${transform}/>`;
-}
-
-function vectorTextToSvg(shape: VectorShape, style: string, transform: string): string {
-  const fontSize = shape.fontSize ?? 64;
-  const fontFamily = escapeSvgText(shape.fontFamily ?? 'Arial');
-  const text = escapeSvgText(shape.text ?? 'Texto vectorial');
-  const anchor = shape.textAlign === 'center' ? 'middle' : shape.textAlign === 'right' ? 'end' : 'start';
-  return `<text x="${shape.x}" y="${shape.y + Math.max(1, fontSize)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${shape.fontWeight ?? 'normal'}" font-style="${shape.fontStyle ?? 'normal'}" text-anchor="${anchor}" ${style}${transform}>${text}</text>`;
-}
 
 type Tool = ToolId;
 type ToolSettings = { size: number; opacity: number; hardness: number; spacing: number; smoothing: number; tolerance: number; contiguous: boolean; sampleMerged: boolean; shapeFill: boolean; lineCap: CanvasLineCap; lineJoin: CanvasLineJoin };
@@ -148,27 +68,12 @@ type WorkspacePanelElements = {
   timeline: HTMLElement;
   dock: HTMLElement;
 };
-type FilterCanvasPools = {
-  target: HTMLCanvasElement[];
-  layer: HTMLCanvasElement[];
-  filterSource: HTMLCanvasElement[];
-  filterResult: HTMLCanvasElement[];
-};
-type FilterTile = { x: number; y: number; width: number; height: number };
 type PixelRegion = { left: number; top: number; width: number; height: number };
-type StampOperation = {
-  region: PixelRegion;
-  centerX: number;
-  centerY: number;
-  radius: number;
-  hardEdge: number;
-  fadeWidth: number;
-  erase: boolean;
-  color: readonly [number, number, number];
-  opacity: number;
+type LayerContextAction = [string, () => void];
+type LayerBehavior = {
+  edit(layer: LayerNode): void;
+  contextActions(layer: LayerNode): LayerContextAction[];
 };
-type VectorPaintOptions = { fill: boolean; stroke: boolean; strokeWidth: number };
-
 interface TextToolSettings { fontFamily: string; fontSize: number; style: TextLayerStyle; color: string; align: TextLayerAlign; lineHeight: number; letterSpacing: number; strokeColor: string; strokeWidth: number; backgroundColor: string }
 
 const COMIC_CONFIG_STORAGE_KEY = 'nvts-photomania-comic-config-v1';
@@ -299,20 +204,28 @@ function isNotFoundError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'NotFoundError';
 }
 
+const FILTER_TILE_PADDING_BY_KIND: Partial<Record<FilterKind, number>> = {
+  blur: 36,
+  pixelate: 32,
+  sharpen: 1,
+  'edge-detect': 1,
+};
+
 function getFilterKindTilePadding(kind: FilterKind): number {
-  switch (kind) {
-    case 'blur': return 36;
-    case 'pixelate': return 32;
-    case 'sharpen':
-    case 'edge-detect': return 1;
-    default: return 0;
-  }
+  return FILTER_TILE_PADDING_BY_KIND[kind] ?? 0;
 }
 
 function documentNameFromFile(fileName: string): string {
   const leaf = fileName.split(/[\\/]/).pop() ?? fileName;
   return leaf.replace(/\.(nvtsphoto|png|jpe?g|webp|gif|bmp|tiff?)$/i, '').trim() || 'Sin título';
 }
+
+const CANVAS_BLEND_OPERATIONS: Record<LayerNode['blendMode'], GlobalCompositeOperation> = {
+  normal: 'source-over',
+  multiply: 'multiply',
+  screen: 'screen',
+  overlay: 'overlay',
+};
 
 const TEMPLATE = `
 <header class="topbar">
@@ -343,10 +256,12 @@ ${LAYERS_PANEL_TEMPLATE}
 ${COMIC_MANAGER_PANEL_TEMPLATE}
 ${STORYBOARD_PANEL_TEMPLATE}
 ${ANIMATION_TIMELINE_PANEL_TEMPLATE}
+${LAYER_EFFECTS_PANEL_TEMPLATE}
+${FILTER_PANEL_TEMPLATE}
   </aside>
   <aside class="animation-timeline-dock" aria-label="Panel inferior de animación"></aside>
 </main>
-${LAYER_EFFECTS_PANEL_TEMPLATE}${FILTER_PANEL_TEMPLATE}${VECTOR_EDITOR_PANEL_TEMPLATE}`;
+${VECTOR_EDITOR_PANEL_TEMPLATE}`;
 
 export class App {
   private ctl!: DocumentController;
@@ -366,6 +281,7 @@ export class App {
   private comicExportDirectoryHandle: FileSystemDirectoryHandle | null = null;
   private comicConfigWriteChain: Promise<void> = Promise.resolve();
   private activeId = '';
+  private activeMaskId = '';
   private readonly toolManager = new ToolManager('brush');
   private get tool(): Tool { return this.toolManager.activeTool; }
   private set tool(tool: Tool) { this.toolManager.setActiveTool(tool); }
@@ -376,6 +292,10 @@ export class App {
   private stroke: StrokeSession | null = null;
   private strokeLayer: ReturnType<DocumentController['layerPixels']> = null;
   private strokeTool: Tool | null = null;
+  private colorizeStroke: ColorizeStroke | null = null;
+  private colorizeStrokeLayerId: string | null = null;
+  private colorizeStrokeMaskId: string | null = null;
+  private readonly colorizeOutputCache = new Map<string, Uint8Array>();
   private last: { x: number; y: number } | null = null;
   private shapeStart: { x: number; y: number; clientX: number; clientY: number } | null = null;
   private isPanning = false;
@@ -387,11 +307,16 @@ export class App {
   private raf = 0;
   private recentSaveTimer: ReturnType<typeof setTimeout> | null = null;
   private filterEditLayerId: string | null = null;
+  private filterMaskEditLayerId: string | null = null;
+  private filterMaskEditId: string | null = null;
+  private filterMaskFilterIndex = 0;
+  private previousEditorDockWidth: string | null = null;
   private vectorEditLayerId: string | null = null;
   private vectorDraft: VectorShape[] = [];
   private vectorSelectedId: string | null = null;
   private layerContextMenu: HTMLElement | null = null;
   private layerContextDismiss: ((event: PointerEvent) => void) | null = null;
+  private readonly layerBehaviors = this.createLayerBehaviorRegistry();
 
   private constructor(
     private readonly root: HTMLElement,
@@ -473,15 +398,12 @@ export class App {
   }
 
   private async importImage(file: File): Promise<void> {
-    const bitmap = await createImageBitmap(file);
-    const canvas = document.createElement('canvas'); canvas.width = this.ctl.doc.width; canvas.height = this.ctl.doc.height;
-    const context = canvas.getContext('2d', { willReadFrequently: true });
-    if (!context) throw new Error('No se pudo preparar la imagen para importarla.');
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close();
-    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-    const layer = this.ctl.doc.layers.find((l) => l.name === 'Capa 1' && (l.type === 'paint' || l.type === 'raster'));
-    if (layer) this.ctl.layerPixels(layer)!.loadFromRGBA(new Uint8Array(pixels.data));
-    this.ctl.comp.invalidateAll(); this.scheduleRefresh();
+    const pixels = await this.imageFileToDocumentPixels(file);
+    this.ctl.addFileLayer(documentNameFromFile(file.name) || 'Imagen importada', pixels, file.name, undefined, file.lastModified, file.size);
+    this.activeId = this.ctl.doc.layers.at(-1)?.id ?? this.activeId;
+    this.syncUI();
+    this.updateHistoryUI();
+    this.scheduleRefresh();
   }
 
   // ───────────── Documento ─────────────
@@ -560,26 +482,7 @@ export class App {
   }
 
   private topRaster(nodes: LayerNode[] = this.ctl.doc.layers): LayerNode | undefined {
-    const reversed = [...nodes].reverse();
-    const paintCandidate = reversed.map((layer) => this.topPaintCandidate(layer)).find(Boolean);
-    if (paintCandidate) return paintCandidate;
-    return reversed.map((layer) => this.topPixelCandidate(layer)).find(Boolean);
-  }
-
-  private topPaintCandidate(layer: LayerNode): LayerNode | undefined {
-    const nestedCandidate = layer.type === 'group' ? this.topRaster(layer.children) : undefined;
-    return nestedCandidate ?? (layer.type === 'paint' || layer.type === 'raster' ? layer : undefined);
-  }
-
-  private topPixelCandidate(layer: LayerNode): LayerNode | undefined {
-    const nestedCandidate = this.topPixelCandidateFromGroup(layer);
-    return nestedCandidate ?? (isPixelLayerType(layer.type) ? layer : undefined);
-  }
-
-  private topPixelCandidateFromGroup(layer: LayerNode): LayerNode | undefined {
-    if (layer.type !== 'group') return undefined;
-    const nestedCandidate = this.topRaster(layer.children);
-    return nestedCandidate && isPixelLayerType(nestedCandidate.type) ? nestedCandidate : undefined;
+    return findTopRasterLayer(nodes);
   }
   // Durante el arranque bind() construye la barra antes de crear el documento.
   // En ese momento todavía no existe ctl; una herramienta puede consultar la capa activa.
@@ -590,10 +493,6 @@ export class App {
   private scheduleRefresh(): void {
     if (this.raf) return;
     this.raf = requestAnimationFrame(() => { this.raf = 0; this.renderFrame(); });
-  }
-
-  private hasFilterLayer(nodes: LayerNode[] = this.ctl.doc.layers): boolean {
-    return nodes.some((node) => node.type === 'filter' || (node.children.length > 0 && this.hasFilterLayer(node.children)));
   }
 
   private getFilterTilePadding(nodes: LayerNode[] = this.ctl.doc.layers): number {
@@ -608,59 +507,38 @@ export class App {
   /** Renderizador alternativo por tiles para que las capas de filtro afecten, de forma no destructiva,
    * solo al contenido que está debajo de ellas. Sin capas de filtro seguimos usando el compositor Wasm. */
   private renderFrame(): void {
-    if (this.hasFilterLayer()) this.renderWithFilterLayers();
+    const layers = this.ctl.doc.layers;
+    const hasNonDestructiveEffects = containsLayerType(layers, 'filter')
+      || containsEnabledMask(layers, 'filter')
+      || containsEnabledMask(layers, 'transform')
+      || containsEnabledMask(layers, 'colorize');
+    if (hasNonDestructiveEffects) this.renderWithFilterLayers();
     else refresh(this.ctx);
   }
 
-  private filterCss(kind: FilterKind, strength: number): string {
-    return getCssFilter(kind, strength);
-  }
-
   private canvasBlend(mode: LayerNode['blendMode']): GlobalCompositeOperation {
-    switch (mode) {
-      case 'multiply': return 'multiply';
-      case 'screen': return 'screen';
-      case 'overlay': return 'overlay';
-      default: return 'source-over';
-    }
+    return CANVAS_BLEND_OPERATIONS[mode];
   }
 
   private renderWithFilterLayers(): void {
+    this.colorizeOutputCache.clear();
     const { width, height } = this.ctl.doc;
     const tileSize = this.engine.module.TILE_SIZE || 256;
     const padding = this.getFilterTilePadding();
-    const pools: FilterCanvasPools = { target: [], layer: [], filterSource: [], filterResult: [] };
-    for (let y = 0; y < height; y += tileSize) this.renderFilterTileRow(width, height, tileSize, y, pools, padding);
+    const pools = createFilterCanvasPools();
+    forEachFilterTile(width, height, tileSize, (tile) => this.renderFilterTile(tile, pools, padding));
     this.renderer.render();
   }
 
-  private renderFilterTileRow(width: number, height: number, tileSize: number, y: number, pools: FilterCanvasPools, padding: number): void {
-    for (let x = 0; x < width; x += tileSize) {
-      const tile = { x, y, width: Math.min(tileSize, width - x), height: Math.min(tileSize, height - y) };
-      this.renderFilterTile(tile, pools, padding);
-    }
-  }
-
   private renderFilterTile(tile: FilterTile, pools: FilterCanvasPools, padding: number): void {
-    const expanded = this.expandFilterTile(tile, padding);
+    const expanded = expandFilterTile(tile, padding, this.ctl.doc.width, this.ctl.doc.height);
     const output = this.composeFilterLayers(this.ctl.doc.layers, 0, expanded, pools);
     const ctx = output.getContext('2d', { willReadFrequently: true })!;
-    const image = ctx.getImageData(tile.x - expanded.x, tile.y - expanded.y, tile.width, tile.height);
     this.renderer.writeRegion(
       tile.x, tile.y, tile.width, tile.height,
-      new Uint8Array(image.data.buffer, image.data.byteOffset, image.data.byteLength),
+      readFilterTilePixels(ctx, tile, expanded),
       tile.width * 4,
     );
-  }
-
-  private expandFilterTile(tile: FilterTile, padding: number): FilterTile {
-    const documentWidth = this.ctl.doc.width;
-    const documentHeight = this.ctl.doc.height;
-    const x = Math.max(0, tile.x - padding);
-    const y = Math.max(0, tile.y - padding);
-    const right = Math.min(documentWidth, tile.x + tile.width + padding);
-    const bottom = Math.min(documentHeight, tile.y + tile.height + padding);
-    return { x, y, width: right - x, height: bottom - y };
   }
 
   private getFilterCanvas(pool: HTMLCanvasElement[], depth: number, width: number, height: number): HTMLCanvasElement {
@@ -721,7 +599,7 @@ export class App {
     const source = this.getFilterCanvas(pools.filterSource, depth, tile.width, tile.height);
     const filtered = this.getFilterCanvas(pools.filterResult, depth, tile.width, tile.height);
     const pixels = this.createFilterImages(node, target, source, filtered, tile);
-    const blended = this.blendFilterImages(pixels.original, pixels.filtered, node.opacity);
+    const blended = blendImageData(pixels.original, pixels.filtered, node.opacity);
     this.replaceFilterPixels(targetCtx, blended, tile);
   }
 
@@ -737,22 +615,14 @@ export class App {
     sourceCtx.drawImage(target, 0, 0);
     const kind = node.filterKind ?? 'grayscale';
     const strength = node.filterStrength ?? 1;
-    filteredCtx.filter = this.filterCss(kind, strength);
-    filteredCtx.drawImage(source, 0, 0);
-    filteredCtx.filter = 'none';
-    const filteredImage = filteredCtx.getImageData(0, 0, tile.width, tile.height);
-    applyCustomFilter(filteredImage, kind, strength, tile.x, tile.y, this.ctl.doc.width, this.ctl.doc.height);
+    const filteredImage = renderFilteredImage(source, filteredCtx, kind, strength, {
+      x: tile.x, y: tile.y, width: tile.width, height: tile.height,
+      fullWidth: this.ctl.doc.width, fullHeight: this.ctl.doc.height,
+    });
     return {
       original: sourceCtx.getImageData(0, 0, tile.width, tile.height),
       filtered: filteredImage,
     };
-  }
-
-  private blendFilterImages(original: ImageData, filtered: ImageData, opacity: number): ImageData {
-    for (let index = 0; index < original.data.length; index++) {
-      original.data[index] = Math.round(original.data[index] * (1 - opacity) + filtered.data[index] * opacity);
-    }
-    return original;
   }
 
   private replaceFilterPixels(targetCtx: CanvasRenderingContext2D, image: ImageData, tile: FilterTile): void {
@@ -786,16 +656,152 @@ export class App {
     if (!backing) return;
     const rgba = new Uint8Array(tile.width * tile.height * 4);
     if (!backing.readRectToJS(tile.x, tile.y, tile.width, tile.height, rgba)) return;
+    const transformed = this.applyTransformMasksToTile(node, backing, tile, rgba);
     const layerCanvas = this.getFilterCanvas(pools.layer, depth, tile.width, tile.height);
     const layerCtx = layerCanvas.getContext('2d', { willReadFrequently: true })!;
     const image = layerCtx.createImageData(tile.width, tile.height);
-    image.data.set(rgba);
+    image.data.set(transformed);
+    this.applyColorizeMasksToTile(node, image, tile);
+    this.applyFilterMasksToTile(node, image, tile, depth, pools);
     layerCtx.putImageData(image, 0, 0);
     targetCtx.save();
     targetCtx.globalAlpha = node.opacity;
     targetCtx.globalCompositeOperation = this.canvasBlend(node.blendMode);
     targetCtx.drawImage(layerCanvas, 0, 0);
     targetCtx.restore();
+  }
+
+  private applyColorizeMasksToTile(node: LayerNode, image: ImageData, tile: FilterTile): void {
+    const masks = node.masks?.filter((mask): mask is Extract<LayerMask, { type: 'colorize' }> => mask.enabled && mask.type === 'colorize') ?? [];
+    for (const mask of masks) {
+      const pixels = this.getColorizeOutput(node, mask);
+      if (!pixels) continue;
+      for (let row = 0; row < tile.height; row++) {
+        const start = ((tile.y + row) * this.ctl.doc.width + tile.x) * 4;
+        image.data.set(pixels.subarray(start, start + tile.width * 4), row * tile.width * 4);
+      }
+    }
+  }
+
+  private getColorizeOutput(node: LayerNode, mask: Extract<LayerMask, { type: 'colorize' }>): Uint8Array | null {
+    const cacheKey = `${node.id}:${mask.id}`;
+    const cached = this.colorizeOutputCache.get(cacheKey);
+    if (cached) return cached;
+    const original = this.ctl.readPixels(node);
+    if (!original) return null;
+    const transformed = this.applyTransformMasksToFullLayer(node, original, this.ctl.doc.width, this.ctl.doc.height);
+    if (this.ctl.doc.width * this.ctl.doc.height > 4_000_000) {
+      this.q<HTMLElement>('#status').textContent = 'La colorización está limitada a documentos de hasta 4 millones de píxeles.';
+      this.colorizeOutputCache.set(cacheKey, transformed);
+      return transformed;
+    }
+    const result = mask.showOutput ? colorizePixels(transformed, this.ctl.doc.width, this.ctl.doc.height, mask) : transformed;
+    const output = mask.editStrokes ? this.drawColorizeStrokes(result, mask) : result;
+    this.colorizeOutputCache.set(cacheKey, output);
+    return output;
+  }
+
+  private drawColorizeStrokes(source: Uint8Array, mask: Extract<LayerMask, { type: 'colorize' }>): Uint8Array {
+    const { width, height } = this.ctl.doc;
+    const canvas = this.createPixelCanvas(width, height, source);
+    const context = canvas.getContext('2d')!;
+    context.globalAlpha = 0.7;
+    for (const stroke of mask.strokes) {
+      context.strokeStyle = stroke.color;
+      context.fillStyle = stroke.color;
+      context.lineWidth = stroke.radius * 2;
+      context.lineCap = 'round';
+      context.lineJoin = 'round';
+      if (stroke.points.length === 1) {
+        context.beginPath();
+        context.arc(stroke.points[0].x, stroke.points[0].y, stroke.radius, 0, Math.PI * 2);
+        context.fill();
+        continue;
+      }
+      context.beginPath();
+      context.moveTo(stroke.points[0].x, stroke.points[0].y);
+      for (const point of stroke.points.slice(1)) context.lineTo(point.x, point.y);
+      context.stroke();
+    }
+    return this.readSamplingCanvas(canvas, width, height);
+  }
+
+  private applyTransformMasksToTile(node: LayerNode, backing: TiledLayer, tile: FilterTile, rgba: Uint8Array): Uint8Array {
+    const masks = node.masks?.filter((mask): mask is Extract<LayerMask, { type: 'transform' }> => mask.enabled && mask.type === 'transform') ?? [];
+    if (!masks.length) return rgba;
+    const matrix = this.combineTransformMasks(masks);
+    if (matrix.isIdentity) return rgba;
+    const bounds = this.inverseTransformBounds(matrix, tile);
+    const pixels = new Uint8Array(bounds.width * bounds.height * 4);
+    if (bounds.width && bounds.height) backing.readRectToJS(bounds.x, bounds.y, bounds.width, bounds.height, pixels);
+    const source = this.createSamplingCanvas(bounds.width || 1, bounds.height || 1);
+    const sourceContext = source.getContext('2d', { willReadFrequently: true })!;
+    if (bounds.width && bounds.height) sourceContext.putImageData(new ImageData(new Uint8ClampedArray(pixels), bounds.width, bounds.height), 0, 0);
+    const output = this.createSamplingCanvas(tile.width, tile.height);
+    const outputContext = output.getContext('2d', { willReadFrequently: true })!;
+    outputContext.setTransform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e - tile.x, matrix.f - tile.y);
+    if (bounds.width && bounds.height) outputContext.drawImage(source, bounds.x, bounds.y);
+    return new Uint8Array(outputContext.getImageData(0, 0, tile.width, tile.height).data);
+  }
+
+  private combineTransformMasks(masks: Array<Extract<LayerMask, { type: 'transform' }>>): DOMMatrix {
+    const { width, height } = this.ctl.doc;
+    return masks.reduce((result, mask) => {
+      const transform = new DOMMatrix()
+        .translate(width / 2 + mask.offsetX, height / 2 + mask.offsetY)
+        .rotate(mask.rotation)
+        .skewX(mask.shearX)
+        .skewY(mask.shearY)
+        .scale(mask.scaleX, mask.scaleY)
+        .translate(-width / 2, -height / 2);
+      return result.multiply(transform);
+    }, new DOMMatrix());
+  }
+
+  private inverseTransformBounds(matrix: DOMMatrix, tile: FilterTile): { x: number; y: number; width: number; height: number } {
+    const inverse = matrix.inverse();
+    const points = [
+      new DOMPoint(tile.x, tile.y), new DOMPoint(tile.x + tile.width, tile.y),
+      new DOMPoint(tile.x, tile.y + tile.height), new DOMPoint(tile.x + tile.width, tile.y + tile.height),
+    ].map((point) => inverse.transformPoint(point));
+    const { width, height } = this.ctl.doc;
+    const x = Math.max(0, Math.floor(Math.min(...points.map((point) => point.x))));
+    const y = Math.max(0, Math.floor(Math.min(...points.map((point) => point.y))));
+    const right = Math.min(width, Math.ceil(Math.max(...points.map((point) => point.x))));
+    const bottom = Math.min(height, Math.ceil(Math.max(...points.map((point) => point.y))));
+    return { x, y, width: Math.max(0, right - x), height: Math.max(0, bottom - y) };
+  }
+
+  private applyFilterMasksToTile(
+    node: LayerNode,
+    image: ImageData,
+    tile: FilterTile,
+    depth: number,
+    pools: FilterCanvasPools,
+  ): void {
+    const masks = node.masks?.filter((mask): mask is Extract<LayerMask, { type: 'filter' }> => mask.enabled && mask.type === 'filter') ?? [];
+    for (const mask of masks) this.applyFilterStackToTile(mask, image, tile, depth, pools);
+  }
+
+  private applyFilterStackToTile(
+    mask: Extract<LayerMask, { type: 'filter' }>,
+    image: ImageData,
+    tile: FilterTile,
+    depth: number,
+    pools: FilterCanvasPools,
+  ): void {
+    for (const filter of mask.filters) {
+      const source = this.getFilterCanvas(pools.filterSource, depth, tile.width, tile.height);
+      const output = this.getFilterCanvas(pools.filterResult, depth, tile.width, tile.height);
+      const sourceContext = source.getContext('2d', { willReadFrequently: true })!;
+      const outputContext = output.getContext('2d', { willReadFrequently: true })!;
+      sourceContext.putImageData(image, 0, 0);
+      const filtered = renderFilteredImage(source, outputContext, filter.kind, filter.strength, {
+        x: tile.x, y: tile.y, width: tile.width, height: tile.height,
+        fullWidth: this.ctl.doc.width, fullHeight: this.ctl.doc.height,
+      });
+      image.data.set(filtered.data);
+    }
   }
 
   private applyWorkspace(workspace: WorkspaceId, announce = true): void {
@@ -2100,8 +2106,139 @@ export class App {
 
   // ───────────── Panel de capas ─────────────
 
+  private bindMaskControls(): void {
+    const manager = this.q<HTMLElement>('.layer-mask-manager');
+    manager.addEventListener('click', (event) => this.handleMaskClick(event));
+    manager.addEventListener('change', (event) => this.handleMaskChange(event));
+  }
+
+  private handleMaskClick(event: Event): void {
+    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button');
+    const layer = this.active();
+    if (!button || !layer) return;
+    const createType = button.dataset.createMask as LayerMask['type'] | undefined;
+    if (createType) {
+      const mask = this.ctl.addMask(layer.id, createType);
+      if (mask) {
+        this.activeMaskId = mask.id;
+        this.q<HTMLDetailsElement>('.layer-mask-manager').open = true;
+        this.finishMaskEdit(`Se añadió máscara de ${getLayerMaskLabel(mask.type)}.`);
+      }
+      return;
+    }
+    const deleteMask = button.dataset.deleteMask;
+    if (deleteMask && this.ctl.removeMask(layer.id, deleteMask)) {
+      this.activeMaskId = '';
+      this.finishMaskEdit('Se eliminó la máscara.');
+      return;
+    }
+    const removeFilter = button.dataset.removeMaskFilter;
+    if (removeFilter) {
+      const index = Number(button.dataset.filterIndex);
+      this.updateMaskField(layer.id, removeFilter, (mask) => mask.type === 'filter'
+        ? { ...mask, filters: mask.filters.filter((_, filterIndex) => filterIndex !== index) }
+        : mask);
+      return;
+    }
+    const clearColorize = button.dataset.clearColorize;
+    if (clearColorize) {
+      this.updateMaskField(layer.id, clearColorize, (mask) => mask.type === 'colorize' ? { ...mask, strokes: [] } : mask);
+      return;
+    }
+    if (button.dataset.updateColorize) {
+      this.colorizeOutputCache.clear();
+      this.scheduleRefresh();
+      return;
+    }
+    const addFilterMask = button.dataset.addMaskFilter;
+    if (addFilterMask) this.updateMaskField(layer.id, addFilterMask, (mask) => mask.type === 'filter'
+      ? { ...mask, filters: [...mask.filters, { kind: 'grayscale', strength: 1 }] }
+      : mask);
+  }
+
+  private handleMaskChange(event: Event): void {
+    const control = event.target as HTMLInputElement | HTMLSelectElement;
+    const layer = this.active();
+    if (!layer || !control.dataset.maskId) return;
+    const maskId = control.dataset.maskId;
+    if (control.dataset.maskField === 'enabled' && control instanceof HTMLInputElement) {
+      this.updateMaskField(layer.id, maskId, (mask) => ({ ...mask, enabled: control.checked }));
+      return;
+    }
+    if (control.dataset.filterIndex !== undefined) {
+      this.updateFilterMaskControl(layer.id, maskId, Number(control.dataset.filterIndex), control);
+      return;
+    }
+    if (control.dataset.maskField?.startsWith('transform.')) {
+      this.updateTransformMaskControl(layer.id, maskId, control as HTMLInputElement);
+      return;
+    }
+    if (control.dataset.maskField?.startsWith('colorize.')) this.updateColorizeMaskControl(layer.id, maskId, control as HTMLInputElement);
+  }
+
+  private updateMaskField(layerId: string, maskId: string, update: (mask: LayerMask) => LayerMask): void {
+    if (this.ctl.updateMask(layerId, maskId, update)) this.finishMaskEdit('Se actualizaron las opciones de la máscara.');
+  }
+
+  private updateTransformMaskControl(layerId: string, maskId: string, control: HTMLInputElement): void {
+    const property = control.dataset.maskField?.replace('transform.', '') as 'offsetX' | 'offsetY' | 'scaleX' | 'scaleY' | 'rotation' | 'shearX' | 'shearY';
+    const value = Number(control.value);
+    if (!Number.isFinite(value) || ((property === 'scaleX' || property === 'scaleY') && value === 0)) return;
+    this.updateMaskField(layerId, maskId, (mask) => mask.type === 'transform' ? { ...mask, [property]: value } : mask);
+  }
+
+  private updateColorizeMaskControl(layerId: string, maskId: string, control: HTMLInputElement): void {
+    const property = control.dataset.maskField?.replace('colorize.', '');
+    this.updateMaskField(layerId, maskId, (mask) => {
+      if (mask.type !== 'colorize') return mask;
+      if (property === 'editStrokes') return { ...mask, editStrokes: control.checked };
+      if (property === 'showOutput') return { ...mask, showOutput: control.checked };
+      if (property === 'limitToLayerBounds') return { ...mask, limitToLayerBounds: control.checked };
+      if (property === 'gapClose') return { ...mask, gapClose: Number(control.value) };
+      if (property === 'threshold') return { ...mask, threshold: Number(control.value) / 100 };
+      if (property === 'transparentColor') {
+        const colors = new Set(mask.transparentColors);
+        const color = control.dataset.maskColor ?? '';
+        if (control.checked) colors.add(color);
+        else colors.delete(color);
+        return { ...mask, transparentColors: [...colors] };
+      }
+      return mask;
+    });
+  }
+
+  private updateFilterMaskControl(layerId: string, maskId: string, index: number, control: HTMLInputElement | HTMLSelectElement): void {
+    this.updateMaskField(layerId, maskId, (mask) => {
+      if (mask.type !== 'filter' || !mask.filters[index]) return mask;
+      const filter = { ...mask.filters[index] };
+      if (control instanceof HTMLSelectElement) filter.kind = control.value as FilterKind;
+      else filter.strength = Number(control.value) / 100;
+      return { ...mask, filters: mask.filters.map((current, currentIndex) => currentIndex === index ? filter : current) };
+    });
+  }
+
+  private finishMaskEdit(message: string): void {
+    this.colorizeOutputCache.clear();
+    this.syncUI();
+    this.updateHistoryUI();
+    this.scheduleRefresh();
+    this.q<HTMLElement>('#status').textContent = message;
+  }
+
+  private renderLayerMasks(): void {
+    const container = this.root.querySelector<HTMLElement>('#layer-mask-list');
+    if (!container) return;
+    const layer = this.active();
+    const mask = layer?.masks?.find((candidate) => candidate.id === this.activeMaskId);
+    renderLayerMaskEditor(container, mask, { filterKinds: this.filterKinds(), filterLabel: (kind) => this.filterLabel(kind) });
+  }
+
+  private filterKinds(): FilterKind[] {
+    return [...FILTER_KINDS];
+  }
+
   private renderLayers(): void {
-    renderLayersPanel(this.root, this.ctl.doc.layers, this.activeId, {
+    renderLayersPanel(this.root, this.ctl.doc.layers, this.activeId, this.activeMaskId, {
       getTypeLabel: (type) => this.layerTypeLabel(type),
       getTypeIcon: (type) => this.layerTypeIcon(type),
       drawThumbnail: (canvas, layer) => this.drawLayerThumbnail(canvas, layer),
@@ -2110,19 +2247,35 @@ export class App {
         this.ctl.comp.invalidateAll(); this.renderLayers(); this.updateHistoryUI(); this.scheduleRefresh();
       },
       onRenameOrEdit: (layer) => this.editLayerByType(layer),
-      onOpenEffects: (layer) => {
-        this.activeId = layer.id; this.syncUI();
-        this.q<HTMLElement>('#effects-layer-name').textContent = layer.name;
-        this.q<HTMLElement>('#effects-panel').hidden = false;
-      },
+      onOpenEffects: (layer) => this.openLayerEffectsEditor(layer),
       onToggleLock: (layer) => {
         this.ctl.setProps(layer.id, { locked: !layer.locked });
         this.syncUI(); this.updateHistoryUI();
       },
-      onSelect: (layer) => { this.activeId = layer.id; this.syncUI(); },
-      onContextMenu: (layer, x, y) => { this.activeId = layer.id; this.syncUI(); this.showLayerContextMenu(x, y, layer); },
+      onSelect: (layer) => {
+        this.activeId = layer.id;
+        this.activeMaskId = '';
+        this.syncUI();
+        this.openLayerEffectsEditor(layer);
+      },
+      onSelectMask: (layer, mask) => {
+        this.activeId = layer.id;
+        this.activeMaskId = mask.id;
+        this.syncUI();
+        if (mask.type === 'filter') this.openFilterMaskEditor(layer, mask.id);
+        else {
+          this.hideRightEditors();
+          this.q<HTMLDetailsElement>('.layer-mask-manager').open = true;
+        }
+      },
+      onToggleMask: (layer, mask, enabled) => {
+        this.ctl.updateMask(layer.id, mask.id, (current) => ({ ...current, enabled }));
+        this.finishMaskEdit(enabled ? 'Se activó la máscara.' : 'Se desactivó la máscara.');
+      },
+      onContextMenu: (layer, x, y) => { this.activeId = layer.id; this.activeMaskId = ''; this.syncUI(); this.showLayerContextMenu(x, y, layer); },
       getDeleteBlockReason: (layer) => this.ctl.getLayerDeletionBlockReason(layer.id),
     });
+    this.renderLayerMasks();
   }
 
   private layerTypeLabel(type: LayerType): string {
@@ -2216,9 +2369,9 @@ export class App {
     return menu;
   }
 
-  private getLayerContextActions(layer: LayerNode): Array<[string, () => void]> {
+  private getLayerContextActions(layer: LayerNode): LayerContextAction[] {
     const actions: Array<[string, () => void]> = this.getCommonLayerContextActions(layer);
-    this.appendLayerSpecificContextActions(actions, layer);
+    actions.push(...this.layerBehaviors[layer.type].contextActions(layer));
     actions.push(['Eliminar capa', () => this.deleteLayerFromContext(layer)]);
     return actions;
   }
@@ -2231,19 +2384,6 @@ export class App {
       ['Bajar capa', () => this.moveLayerById(layer.id, -1)],
       ['Mover a grupo…', () => this.moveLayerIntoGroup(layer)],
     ];
-  }
-
-  private appendLayerSpecificContextActions(actions: Array<[string, () => void]>, layer: LayerNode): void {
-    if (layer.type === 'fill') actions.push(['Cambiar color de relleno…', () => this.changeFillColor(layer)]);
-    if (layer.type === 'filter') actions.push(['Configurar filtro…', () => this.openFilterEditor(layer)]);
-    if (layer.type === 'vector') actions.push(['Editar objetos vectoriales…', () => this.editVectorLayer(layer)]);
-    if (layer.type === 'text') {
-      actions.push(['Editar texto…', () => {
-        this.activeId = layer.id;
-        void this.createTextAt({ x: layer.textX ?? 0, y: layer.textY ?? 0 }, layer);
-      }]);
-    }
-    if (layer.type === 'file') this.appendFileLayerContextActions(actions, layer);
   }
 
   private appendFileLayerContextActions(actions: Array<[string, () => void]>, layer: LayerNode): void {
@@ -2352,11 +2492,118 @@ export class App {
 
   private editLayerByType(layer: LayerNode): void {
     this.activeId = layer.id;
-    if (layer.type === 'filter') { this.syncUI(); this.openFilterEditor(layer); }
-    else if (layer.type === 'fill') this.changeFillColor(layer);
-    else if (layer.type === 'vector') this.editVectorLayer(layer);
-    else if (layer.type === 'text') void this.createTextAt({ x: layer.textX ?? 0, y: layer.textY ?? 0 }, layer);
-    else this.renameLayer(layer);
+    this.layerBehaviors[layer.type].edit(layer);
+  }
+
+  private editTextLayer(layer: LayerNode): void {
+    this.activeId = layer.id;
+    void this.createTextAt({ x: layer.textX ?? 0, y: layer.textY ?? 0 }, layer);
+  }
+
+  private createLayerBehaviorRegistry(): Record<LayerType, LayerBehavior> {
+    const noContextActions = (): LayerContextAction[] => [];
+    const renameLayer = (layer: LayerNode) => this.renameLayer(layer);
+    return {
+      paint: { edit: renameLayer, contextActions: noContextActions },
+      raster: { edit: renameLayer, contextActions: noContextActions },
+      group: { edit: renameLayer, contextActions: noContextActions },
+      file: {
+        edit: renameLayer,
+        contextActions: (layer) => {
+          const actions: LayerContextAction[] = [];
+          this.appendFileLayerContextActions(actions, layer);
+          return actions;
+        },
+      },
+      filter: {
+        edit: (layer) => { this.syncUI(); this.openFilterEditor(layer); },
+        contextActions: (layer) => [['Configurar filtro…', () => this.openFilterEditor(layer)]],
+      },
+      fill: {
+        edit: (layer) => this.changeFillColor(layer),
+        contextActions: (layer) => [['Cambiar color de relleno…', () => this.changeFillColor(layer)]],
+      },
+      vector: {
+        edit: (layer) => this.editVectorLayer(layer),
+        contextActions: (layer) => [['Editar objetos vectoriales…', () => this.editVectorLayer(layer)]],
+      },
+      text: {
+        edit: (layer) => this.editTextLayer(layer),
+        contextActions: (layer) => [['Editar texto…', () => this.editTextLayer(layer)]],
+      },
+    };
+  }
+
+  private openLayerEffectsEditor(layer: LayerNode): void {
+    this.activeId = layer.id;
+    this.activeMaskId = '';
+    this.syncUI();
+    this.populateEffectsLayerSelector(layer.id);
+    this.showRightEditor('effects-panel');
+  }
+
+  private populateEffectsLayerSelector(selectedLayerId: string): void {
+    const selector = this.q<HTMLSelectElement>('#effects-layer-select');
+    selector.replaceChildren();
+    this.appendEffectsLayerOptions(selector, this.ctl.doc.layers, selectedLayerId, '');
+  }
+
+  private appendEffectsLayerOptions(selector: HTMLSelectElement, layers: LayerNode[], selectedLayerId: string, prefix: string): void {
+    for (const layer of layers) {
+      const option = Object.assign(document.createElement('option'), {
+        value: layer.id,
+        textContent: `${prefix}${layer.name}`,
+        selected: layer.id === selectedLayerId,
+      });
+      selector.append(option);
+      this.appendEffectsLayerOptions(selector, layer.children, selectedLayerId, `${prefix}↳ `);
+    }
+  }
+
+  private showRightEditor(panelId: 'effects-panel' | 'filters-panel'): void {
+    this.expandRightDockForEditor();
+    this.setRightEditorVisibility(true);
+    const panels: Array<'effects-panel' | 'filters-panel'> = ['effects-panel', 'filters-panel'];
+    for (const id of panels) this.q<HTMLElement>(`#${id}`).hidden = id !== panelId;
+  }
+
+  private hideRightEditors(): void {
+    this.q<HTMLElement>('#effects-panel').hidden = true;
+    this.q<HTMLElement>('#filters-panel').hidden = true;
+    this.setRightEditorVisibility(false);
+    this.restoreRightDockWidth();
+  }
+
+  private setRightEditorVisibility(visible: boolean): void {
+    const workspace = this.q<HTMLElement>('.workspace');
+    const dock = this.q<HTMLElement>('.right-dock');
+    workspace.classList.toggle('right-editor-open', visible);
+    dock.classList.toggle('right-editor-open', visible);
+    if (!visible) {
+      workspace.style.removeProperty('grid-template-columns');
+      dock.style.removeProperty('display');
+      return;
+    }
+    workspace.style.setProperty(
+      'grid-template-columns',
+      '54px minmax(0, 1fr) 6px var(--right-dock-width, 280px)',
+      'important',
+    );
+    dock.style.setProperty('display', 'flex', 'important');
+  }
+
+  private expandRightDockForEditor(): void {
+    const workspace = this.q<HTMLElement>('.workspace');
+    if (this.previousEditorDockWidth === null) this.previousEditorDockWidth = workspace.style.getPropertyValue('--right-dock-width');
+    workspace.style.setProperty('--right-dock-width', 'clamp(420px, 44vw, 820px)');
+  }
+
+  private restoreRightDockWidth(): void {
+    if (this.previousEditorDockWidth === null) return;
+    const workspace = this.q<HTMLElement>('.workspace');
+    if (this.previousEditorDockWidth) workspace.style.setProperty('--right-dock-width', this.previousEditorDockWidth);
+    else workspace.style.removeProperty('--right-dock-width');
+    this.previousEditorDockWidth = null;
   }
 
   private changeFillColor(layer: LayerNode): void {
@@ -2371,6 +2618,8 @@ export class App {
   private openFilterEditor(layer: LayerNode): void {
     if (this.ctl.isEffectivelyLocked(layer.id)) { alert('La capa o su grupo está bloqueado.'); return; }
     this.activeId = layer.id; this.filterEditLayerId = layer.id;
+    this.filterMaskEditLayerId = null;
+    this.filterMaskEditId = null;
     this.q<HTMLElement>('#filters-layer-name').textContent = layer.name;
     const kind = layer.filterKind ?? 'grayscale';
     this.q('#filters-panel').querySelectorAll<HTMLButtonElement>('[data-filter]').forEach((button) => button.classList.toggle('active', button.dataset.filter === kind));
@@ -2379,7 +2628,32 @@ export class App {
     this.q<HTMLElement>('#filter-radius-value').textContent = `${Math.round((layer.filterStrength ?? 1) * 100)}%`;
     this.q<HTMLElement>('#filter-hint').textContent = 'Este ajuste es no destructivo y afecta a las capas inferiores. Podés cambiarlo más tarde.';
     this.q<HTMLElement>('#filter-mode-hint').textContent = 'Capa de filtro editable';
-    this.q<HTMLElement>('#filters-panel').hidden = false;
+    this.showRightEditor('filters-panel');
+  }
+
+  private openFilterMaskEditor(layer: LayerNode, maskId: string): void {
+    const mask = layer.masks?.find((candidate) => candidate.id === maskId && candidate.type === 'filter');
+    if (!mask || mask.type !== 'filter') return;
+    this.filterEditLayerId = null;
+    this.filterMaskEditLayerId = layer.id;
+    this.filterMaskEditId = mask.id;
+    this.filterMaskFilterIndex = 0;
+    const filter = mask.filters[this.filterMaskFilterIndex];
+    const kind = filter?.kind ?? 'grayscale';
+    const strength = filter?.strength ?? 1;
+    this.prepareFilterEditor(layer.name, kind, strength, 'La máscara conserva el efecto en la capa y permite editarlo cuando quieras.', 'Máscara de filtro no destructiva');
+    this.showRightEditor('filters-panel');
+  }
+
+  private prepareFilterEditor(layerName: string, kind: FilterKind, strength: number, hint: string, mode: string): void {
+    this.q<HTMLElement>('#filters-layer-name').textContent = layerName;
+    this.q('#filters-panel').querySelectorAll<HTMLButtonElement>('[data-filter]').forEach((button) => button.classList.toggle('active', button.dataset.filter === kind));
+    this.q<HTMLElement>('#filter-title').textContent = this.filterLabel(kind);
+    const value = Math.round(strength * 100);
+    this.q<HTMLInputElement>('#filter-radius').value = String(value);
+    this.q<HTMLElement>('#filter-radius-value').textContent = `${value}%`;
+    this.q<HTMLElement>('#filter-hint').textContent = hint;
+    this.q<HTMLElement>('#filter-mode-hint').textContent = mode;
   }
 
   private filterLabel(kind: FilterKind): string {
@@ -2413,25 +2687,46 @@ export class App {
       return;
     }
     this.filterEditLayerId = null;
-    this.q<HTMLElement>('#filters-layer-name').textContent = layer.name;
-    this.q<HTMLElement>('#filter-hint').textContent = 'Este filtro se aplicará directamente a los píxeles de la capa seleccionada y se podrá deshacer.';
-    this.q<HTMLElement>('#filter-mode-hint').textContent = 'Filtro destructivo sobre la capa';
-    this.q('#filters-panel').querySelectorAll<HTMLButtonElement>('[data-filter]').forEach((button) => button.classList.toggle('active', button.dataset.filter === 'grayscale'));
-    this.q<HTMLElement>('#filter-title').textContent = this.filterLabel('grayscale');
-    this.q<HTMLInputElement>('#filter-radius').value = '100';
-    this.q<HTMLElement>('#filter-radius-value').textContent = '100%';
-    this.q<HTMLElement>('#filters-panel').hidden = false;
+    this.filterMaskEditLayerId = null;
+    this.filterMaskEditId = null;
+    this.prepareFilterEditor(
+      layer.name, 'grayscale', 1,
+      'Este filtro se aplicará directamente a los píxeles de la capa seleccionada y se podrá deshacer.',
+      'Filtro destructivo sobre la capa',
+    );
+    this.showRightEditor('filters-panel');
   }
 
   private applyFilterDialog(): void {
     const selection = this.getActiveFilterSelection();
     if (!selection) return;
+    if (this.filterMaskEditLayerId && this.filterMaskEditId) {
+      this.applyFilterMaskSelection(selection.kind, selection.strength);
+      return;
+    }
     if (this.updateExistingFilterLayer(selection.layer, selection.kind, selection.strength)) return;
     if (!this.canApplyDestructiveFilter(selection.layer)) {
       this.closeFilterDialog();
       return;
     }
     this.applyDestructiveFilter(selection.layer, selection.kind, selection.strength);
+  }
+
+  private applyFilterMaskSelection(kind: FilterKind, strength: number): void {
+    const layerId = this.filterMaskEditLayerId;
+    const maskId = this.filterMaskEditId;
+    const index = this.filterMaskFilterIndex;
+    if (!layerId || !maskId) return;
+    this.ctl.updateMask(layerId, maskId, (mask) => {
+      if (mask.type !== 'filter') return mask;
+      const filters = [...mask.filters];
+      filters[index] = { kind, strength };
+      return { ...mask, filters };
+    });
+    this.filterMaskEditLayerId = null;
+    this.filterMaskEditId = null;
+    this.closeFilterDialog();
+    this.finishMaskEdit('Se actualizó el filtro de la máscara.');
   }
 
   private getActiveFilterSelection(): { layer: LayerNode; kind: FilterKind; strength: number } | null {
@@ -2484,11 +2779,9 @@ export class App {
     output.height = height;
     const outputContext = output.getContext('2d', { willReadFrequently: true });
     if (!outputContext) throw new Error('El navegador no pudo preparar el filtro.');
-    outputContext.filter = this.filterCss(kind, strength);
-    outputContext.drawImage(source, 0, 0);
-    outputContext.filter = 'none';
-    const filtered = outputContext.getImageData(0, 0, width, height);
-    applyCustomFilter(filtered, kind, strength, 0, 0, width, height);
+    const filtered = renderFilteredImage(source, outputContext, kind, strength, {
+      x: 0, y: 0, width, height, fullWidth: width, fullHeight: height,
+    });
     return new Uint8Array(filtered.data);
   }
 
@@ -2506,6 +2799,11 @@ export class App {
 
   private closeFilterDialog(): void {
     this.q<HTMLElement>('#filters-panel').hidden = true;
+    this.setRightEditorVisibility(false);
+    this.filterEditLayerId = null;
+    this.filterMaskEditLayerId = null;
+    this.filterMaskEditId = null;
+    this.restoreRightDockWidth();
   }
 
   private async createLayerOfType(type: LayerType): Promise<void> {
@@ -2602,17 +2900,22 @@ export class App {
 
   private async imageFileToDocumentPixels(file: File): Promise<Uint8Array> {
     const bitmap = await createImageBitmap(file);
-    const { width, height } = this.ctl.doc;
-    const temp = document.createElement('canvas'); temp.width = width; temp.height = height;
-    const ctx = temp.getContext('2d', { willReadFrequently: true });
-    if (!ctx) { bitmap.close(); throw new Error('No se pudo preparar la imagen para la capa de archivo.'); }
-    // Centra la imagen y solo la reduce si excede el tamaño del lienzo; conserva su proporción.
-    const scale = Math.min(1, width / bitmap.width, height / bitmap.height);
-    const drawWidth = Math.max(1, Math.round(bitmap.width * scale));
-    const drawHeight = Math.max(1, Math.round(bitmap.height * scale));
-    const x = Math.round((width - drawWidth) / 2), y = Math.round((height - drawHeight) / 2);
-    ctx.clearRect(0, 0, width, height); ctx.drawImage(bitmap, x, y, drawWidth, drawHeight); bitmap.close();
-    return new Uint8Array(ctx.getImageData(0, 0, width, height).data);
+    try {
+      const { width, height } = this.ctl.doc;
+      const temp = document.createElement('canvas'); temp.width = width; temp.height = height;
+      const ctx = temp.getContext('2d', { willReadFrequently: true });
+      if (!ctx) throw new Error('No se pudo preparar la imagen para la capa de archivo.');
+      // Centra la imagen y solo la reduce si excede el tamaño del lienzo; conserva su proporción.
+      const scale = Math.min(1, width / bitmap.width, height / bitmap.height);
+      const drawWidth = Math.max(1, Math.round(bitmap.width * scale));
+      const drawHeight = Math.max(1, Math.round(bitmap.height * scale));
+      const x = Math.round((width - drawWidth) / 2), y = Math.round((height - drawHeight) / 2);
+      ctx.clearRect(0, 0, width, height);
+      ctx.drawImage(bitmap, x, y, drawWidth, drawHeight);
+      return new Uint8Array(ctx.getImageData(0, 0, width, height).data);
+    } finally {
+      bitmap.close();
+    }
   }
 
   private async refreshLinkedFileLayer(layer: LayerNode, askForPermission: boolean): Promise<void> {
@@ -2738,7 +3041,7 @@ export class App {
     if (this.ctl.isEffectivelyLocked(layer.id)) { alert('La capa o su grupo está bloqueado.'); return; }
     this.activeId = layer.id;
     this.vectorEditLayerId = layer.id;
-    this.vectorDraft = (layer.vectorShapes ?? []).map((shape) => ({ ...shape, points: shape.points?.map((point) => ({ ...point })) }));
+    this.vectorDraft = cloneVectorShapes(layer.vectorShapes);
     this.vectorSelectedId = this.vectorDraft[0]?.id ?? null;
     this.q<HTMLElement>('#vector-layer-name').textContent = layer.name;
     this.renderVectorEditor();
@@ -2873,7 +3176,10 @@ export class App {
     const index = this.vectorDraft.findIndex((shape) => shape.id === this.vectorSelectedId);
     if (index < 0) return;
     const original = this.vectorDraft[index];
-    const clone: VectorShape = { ...original, id: crypto.randomUUID(), x: original.x + 12, y: original.y + 12, points: original.points?.map((point) => ({ ...point })) };
+    const clone = cloneVectorShape(original);
+    clone.id = crypto.randomUUID();
+    clone.x += 12;
+    clone.y += 12;
     this.vectorDraft.splice(index + 1, 0, clone); this.vectorSelectedId = clone.id; this.renderVectorEditor();
   }
 
@@ -2896,7 +3202,7 @@ export class App {
     const layer = this.vectorEditLayerId ? this.ctl.find(this.vectorEditLayerId) : undefined;
     if (!layer || layer.type !== 'vector') { this.q<HTMLElement>('#vector-panel').hidden = true; return; }
     this.updateVectorShapeFromFields();
-    this.commitVectorShapes(layer, this.vectorDraft.map((shape) => ({ ...shape, points: shape.points?.map((point) => ({ ...point })) })));
+    this.commitVectorShapes(layer, cloneVectorShapes(this.vectorDraft));
     this.q<HTMLElement>('#vector-panel').hidden = true;
     this.vectorEditLayerId = null; this.vectorSelectedId = null; this.vectorDraft = [];
   }
@@ -2911,206 +3217,9 @@ export class App {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) { alert('No se pudo preparar la capa vectorial.'); return; }
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    for (const shape of shapes) this.drawVectorShape(ctx, shape);
+    for (const shape of shapes) renderVectorShape(ctx, shape);
     this.ctl.replaceVectorContent(layer.id, shapes, new Uint8Array(ctx.getImageData(0, 0, canvas.width, canvas.height).data));
     this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
-  }
-
-  private drawVectorShape(ctx: CanvasRenderingContext2D, shape: VectorShape): void {
-    const paint = this.getVectorPaintOptions(shape);
-    ctx.save();
-    this.applyVectorShapeStyles(ctx, shape);
-    this.drawVectorShapeGeometry(ctx, shape, paint);
-    ctx.restore();
-  }
-
-  private getVectorPaintOptions(shape: VectorShape): VectorPaintOptions {
-    const noFillKinds = ['line', 'polyline', 'bezier', 'freehand', 'spiral'];
-    const fill = shape.fillEnabled ?? !noFillKinds.includes(shape.kind);
-    const stroke = shape.strokeEnabled ?? noFillKinds.includes(shape.kind);
-    return { fill, stroke, strokeWidth: shape.strokeWidth };
-  }
-
-  private applyVectorShapeStyles(ctx: CanvasRenderingContext2D, shape: VectorShape): void {
-    const fill = shape.fillColor ?? shape.color ?? '#e03030';
-    const stroke = shape.strokeColor ?? shape.color ?? '#e03030';
-    const centerX = shape.x + shape.width / 2;
-    const centerY = shape.y + shape.height / 2;
-    ctx.globalAlpha = Math.max(0, Math.min(1, shape.opacity));
-    ctx.translate(centerX, centerY);
-    ctx.rotate(((shape.rotation ?? 0) * Math.PI) / 180);
-    ctx.translate(-centerX, -centerY);
-    ctx.fillStyle = fill;
-    ctx.strokeStyle = stroke;
-    ctx.lineWidth = Math.max(0, shape.strokeWidth);
-    ctx.lineCap = shape.lineCap ?? 'round';
-    ctx.lineJoin = shape.lineJoin ?? 'round';
-    ctx.setLineDash(this.vectorShapeLineDash(shape));
-  }
-
-  private vectorShapeLineDash(shape: VectorShape): number[] {
-    if (shape.strokeDash === 'dash') {
-      return [Math.max(4, shape.strokeWidth * 3), Math.max(3, shape.strokeWidth * 2)];
-    }
-    if (shape.strokeDash === 'dot') return [1, Math.max(3, shape.strokeWidth * 2)];
-    return [];
-  }
-
-  private drawVectorShapeGeometry(ctx: CanvasRenderingContext2D, shape: VectorShape, paint: VectorPaintOptions): void {
-    const closeAndPaint = (close = true) => {
-      if (close) ctx.closePath();
-      if (paint.fill) ctx.fill();
-      if (paint.stroke && paint.strokeWidth > 0) ctx.stroke();
-    };
-    if (this.drawBasicVectorShape(ctx, shape, closeAndPaint)) return;
-    if (this.drawVectorPathShape(ctx, shape, closeAndPaint)) return;
-    if (shape.kind === 'star') {
-      this.drawVectorStar(ctx, shape, closeAndPaint);
-      return;
-    }
-    if (shape.kind === 'spiral') {
-      this.drawVectorSpiral(ctx, shape, closeAndPaint);
-      return;
-    }
-    if (shape.kind === 'text') this.drawVectorText(ctx, shape, paint);
-  }
-
-  private drawBasicVectorShape(
-    ctx: CanvasRenderingContext2D,
-    shape: VectorShape,
-    closeAndPaint: (close?: boolean) => void,
-  ): boolean {
-    const { x, y, width, height } = shape;
-    if (shape.kind === 'rectangle') {
-      ctx.beginPath();
-      ctx.rect(x, y, width, height);
-      closeAndPaint();
-      return true;
-    }
-    if (shape.kind === 'rounded-rectangle') {
-      this.drawRoundedVectorRectangle(ctx, shape, closeAndPaint);
-      return true;
-    }
-    if (shape.kind === 'ellipse') {
-      ctx.beginPath();
-      ctx.ellipse(x + width / 2, y + height / 2, Math.abs(width / 2), Math.abs(height / 2), 0, 0, Math.PI * 2);
-      closeAndPaint();
-      return true;
-    }
-    if (shape.kind === 'line') {
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.lineTo(x + width, y + height);
-      closeAndPaint(false);
-      return true;
-    }
-    return false;
-  }
-
-  private drawRoundedVectorRectangle(
-    ctx: CanvasRenderingContext2D,
-    shape: VectorShape,
-    closeAndPaint: (close?: boolean) => void,
-  ): void {
-    const { x, y, width, height } = shape;
-    const radius = Math.max(0, Math.min(shape.cornerRadius ?? 20, Math.abs(width) / 2, Math.abs(height) / 2));
-    ctx.beginPath();
-    ctx.moveTo(x + radius, y);
-    ctx.lineTo(x + width - radius, y);
-    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
-    ctx.lineTo(x + width, y + height - radius);
-    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
-    ctx.lineTo(x + radius, y + height);
-    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
-    ctx.lineTo(x, y + radius);
-    ctx.quadraticCurveTo(x, y, x + radius, y);
-    closeAndPaint();
-  }
-
-  private drawVectorPathShape(
-    ctx: CanvasRenderingContext2D,
-    shape: VectorShape,
-    closeAndPaint: (close?: boolean) => void,
-  ): boolean {
-    if (!['polygon', 'polyline', 'freehand', 'bezier'].includes(shape.kind)) return false;
-    const points = shape.points?.length ? shape.points : [
-      { x: shape.x, y: shape.y },
-      { x: shape.x + shape.width, y: shape.y + shape.height },
-    ];
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let index = 1; index < points.length; index++) {
-      const previous = points[index - 1];
-      const next = points[index];
-      this.drawVectorPathSegment(ctx, shape, previous, next);
-    }
-    closeAndPaint(shape.kind === 'polygon');
-    return true;
-  }
-
-  private drawVectorPathSegment(
-    ctx: CanvasRenderingContext2D,
-    shape: VectorShape,
-    previous: NonNullable<VectorShape['points']>[number],
-    next: NonNullable<VectorShape['points']>[number],
-  ): void {
-    const isBezier = shape.kind === 'bezier' && (previous.outX !== undefined || next.inX !== undefined);
-    if (!isBezier) {
-      ctx.lineTo(next.x, next.y);
-      return;
-    }
-    ctx.bezierCurveTo(
-      previous.outX ?? previous.x, previous.outY ?? previous.y,
-      next.inX ?? next.x, next.inY ?? next.y, next.x, next.y,
-    );
-  }
-
-  private drawVectorStar(
-    ctx: CanvasRenderingContext2D,
-    shape: VectorShape,
-    closeAndPaint: (close?: boolean) => void,
-  ): void {
-    const spikes = Math.max(3, Math.min(64, Math.round(shape.starPoints ?? 5)));
-    const outer = Math.min(Math.abs(shape.width), Math.abs(shape.height)) / 2;
-    const inner = outer * 0.44;
-    ctx.beginPath();
-    for (let index = 0; index < spikes * 2; index++) {
-      const radius = index % 2 === 0 ? outer : inner;
-      const angle = (Math.PI * index / spikes) - Math.PI / 2;
-      const px = shape.x + shape.width / 2 + Math.cos(angle) * radius;
-      const py = shape.y + shape.height / 2 + Math.sin(angle) * radius;
-      index === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-    }
-    closeAndPaint();
-  }
-
-  private drawVectorSpiral(
-    ctx: CanvasRenderingContext2D,
-    shape: VectorShape,
-    closeAndPaint: (close?: boolean) => void,
-  ): void {
-    const turns = 4.5;
-    const radius = Math.min(Math.abs(shape.width), Math.abs(shape.height)) / 2;
-    ctx.beginPath();
-    for (let index = 0; index <= 360; index++) {
-      const t = index / 360;
-      const angle = t * Math.PI * 2 * turns;
-      const distance = radius * t;
-      const px = shape.x + shape.width / 2 + Math.cos(angle) * distance;
-      const py = shape.y + shape.height / 2 + Math.sin(angle) * distance;
-      index === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-    }
-    closeAndPaint(false);
-  }
-
-  private drawVectorText(ctx: CanvasRenderingContext2D, shape: VectorShape, paint: VectorPaintOptions): void {
-    ctx.font = `${shape.fontStyle ?? 'normal'} ${shape.fontWeight ?? 'normal'} ${Math.max(1, shape.fontSize ?? 64)}px ${shape.fontFamily ?? 'Arial'}`;
-    ctx.textAlign = shape.textAlign ?? 'left';
-    ctx.textBaseline = 'top';
-    const text = shape.text ?? 'Texto vectorial';
-    const width = Math.max(1, shape.width);
-    if (paint.fill) ctx.fillText(text, shape.x, shape.y, width);
-    if (paint.stroke && paint.strokeWidth > 0) ctx.strokeText(text, shape.x, shape.y, width);
   }
 
   private exportVectorLayerSvg(): void {
@@ -3127,7 +3236,7 @@ export class App {
   private createVectorLayerSvg(): string {
     const width = this.ctl.doc.width;
     const height = this.ctl.doc.height;
-    const shapes = this.vectorDraft.map(vectorShapeToSvg).join('\n  ');
+    const shapes = this.vectorDraft.map(exportVectorShapeToSvg).join('\n  ');
     return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">\n  ${shapes}\n</svg>`;
   }
 
@@ -3158,6 +3267,7 @@ export class App {
     this.bindToolAndViewControls();
     this.bindEditorPanels();
     this.bindFileToolbar();
+    this.bindMaskControls();
     this.bindCanvasEvents();
     this.bindKeyboardShortcuts();
   }
@@ -3436,9 +3546,11 @@ export class App {
 
   private bindToolButtons(): void {
     const on = (id: string, fn: () => void) => { this.q(id).onclick = fn; };
-    const openPanel = (id: string) => { this.q<HTMLElement>('#' + id).hidden = false; };
     on('#menu-filter', () => this.openDestructiveFilterPanel());
-    on('#menu-layer', () => openPanel('effects-panel'));
+    on('#menu-layer', () => {
+      const layer = this.active();
+      if (layer) this.openLayerEffectsEditor(layer);
+    });
     on('#rail-hand', () => this.setTool('hand'));
     on('#rail-brush', () => this.setTool('brush'));
     on('#rail-eraser', () => this.setTool('eraser'));
@@ -3473,7 +3585,9 @@ export class App {
       element.addEventListener('click', () => {
         const target = element.dataset.close;
         if (!target) return;
-        this.q<HTMLElement>('#' + target).hidden = true;
+        if (target === 'filters-panel') this.closeFilterDialog();
+        else if (target === 'effects-panel') this.hideRightEditors();
+        else this.q<HTMLElement>('#' + target).hidden = true;
       });
     });
   }
@@ -3483,7 +3597,10 @@ export class App {
       labelForFilter: (kind) => this.filterLabel(kind),
       applyFilter: () => this.applyFilterDialog(),
     });
-    wireLayerEffectsPanel(this.root);
+    wireLayerEffectsPanel(this.root, (layerId) => {
+      const layer = this.ctl.find(layerId);
+      if (layer) this.openLayerEffectsEditor(layer);
+    });
     wireVectorEditorPanel(this.root, {
       addShape: (kind) => this.addVectorShape(kind),
       deleteShape: () => this.deleteSelectedVectorShape(),
@@ -3507,8 +3624,54 @@ export class App {
   private bindFileToolbar(): void {
     this.q('#b-new').onclick = () => this.promptNew();
     this.q('#b-open').onclick = () => { void this.open(); };
+    this.q('#b-import-image').onclick = () => { void this.createFileLayer(); };
     this.q('#b-save').onclick = () => { void this.save(false); };
     this.q('#b-save-as').onclick = () => { void this.save(true); };
+    this.q('#b-export-png').onclick = () => { void this.exportVisibleImage('image/png'); };
+    this.q('#b-export-jpeg').onclick = () => { void this.exportVisibleImage('image/jpeg'); };
+  }
+
+  private async exportVisibleImage(mimeType: 'image/png' | 'image/jpeg'): Promise<void> {
+    try {
+      if (this.stroke) return;
+      const { width, height, name } = this.ctl.doc;
+      const composition = this.createSamplingCanvas(width, height);
+      this.composeSamplingLayers(this.ctl.doc.layers, composition, width, height, (layer) => this.ctl.readPixels(layer));
+      const output = mimeType === 'image/jpeg' ? this.flattenOnWhite(composition, width, height) : composition;
+      const blob = await this.encodeCanvas(output, mimeType);
+      this.downloadRaster(blob, name, mimeType);
+      this.q<HTMLElement>('#status').textContent = `Exportado como ${mimeType === 'image/png' ? 'PNG' : 'JPEG'} · ${width}×${height}`;
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  private flattenOnWhite(source: HTMLCanvasElement, width: number, height: number): HTMLCanvasElement {
+    const output = this.createSamplingCanvas(width, height);
+    const context = output.getContext('2d');
+    if (!context) throw new Error('No se pudo preparar la exportación JPEG.');
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, width, height);
+    context.drawImage(source, 0, 0);
+    return output;
+  }
+
+  private encodeCanvas(canvas: HTMLCanvasElement, mimeType: string): Promise<Blob> {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error(`El navegador no pudo codificar la imagen como ${mimeType}.`));
+      }, mimeType, mimeType === 'image/jpeg' ? 0.92 : undefined);
+    });
+  }
+
+  private downloadRaster(blob: Blob, documentName: string, mimeType: 'image/png' | 'image/jpeg'): void {
+    const extension = mimeType === 'image/png' ? 'png' : 'jpg';
+    const safeName = documentName.replace(/[\\/:*?"<>|]/g, '_').trim() || 'PhotoMania';
+    const url = URL.createObjectURL(blob);
+    const link = Object.assign(document.createElement('a'), { href: url, download: `${safeName}.${extension}` });
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   private bindCanvasEvents(): void {
@@ -3651,17 +3814,17 @@ export class App {
       this.q<HTMLElement>('#status').textContent = shapes.length ? 'No se encontró un objeto en esa posición.' : 'La capa está vacía. Usá “Editar vectores…” para agregar formas.';
       return;
     }
-    const copy: VectorShape = { ...hit, points: hit.points?.map((p) => ({ ...p })) };
+    const copy = cloneVectorShape(hit);
     const handle = Math.abs(point.x - (hit.x + hit.width)) <= 12 && Math.abs(point.y - (hit.y + hit.height)) <= 12;
     this.vectorDirectSelectedId = hit.id;
-    this.vectorGesture = { layerId: layer.id, shapeId: hit.id, mode: handle ? 'resize' : 'move', startPoint: point, original: copy, latest: { ...copy, points: copy.points?.map((p) => ({ ...p })) }, moved: false };
+    this.vectorGesture = { layerId: layer.id, shapeId: hit.id, mode: handle ? 'resize' : 'move', startPoint: point, original: copy, latest: cloneVectorShape(copy), moved: false };
     this.canvas.setPointerCapture(event.pointerId);
     this.drawVectorSelectionOverlay(copy);
     this.q<HTMLElement>('#status').textContent = `${this.vectorKindLabel(hit.kind)} seleccionado · ${handle ? 'redimensionar' : 'arrastrar para mover'}`;
   }
 
   private transformVectorShape(original: VectorShape, dx: number, dy: number, mode: 'move' | 'resize'): VectorShape {
-    const clone: VectorShape = { ...original, points: original.points?.map((point) => ({ ...point })) };
+    const clone = cloneVectorShape(original);
     if (mode === 'move') {
       clone.x = original.x + dx; clone.y = original.y + dy;
       clone.points = this.moveVectorPoints(clone.points, dx, dy);
@@ -3714,7 +3877,7 @@ export class App {
     this.vectorGesture = null;
     const layer = this.ctl.find(gesture.layerId);
     if (layer?.type === 'vector' && gesture.moved) {
-      const shapes = (layer.vectorShapes ?? []).map((shape) => shape.id === gesture.shapeId ? gesture.latest : { ...shape, points: shape.points?.map((p) => ({ ...p })) });
+      const shapes = cloneVectorShapes(layer.vectorShapes).map((shape) => shape.id === gesture.shapeId ? gesture.latest : shape);
       this.commitVectorShapes(layer, shapes);
     }
     this.vectorDirectSelectedId = gesture.shapeId;
@@ -3810,14 +3973,13 @@ export class App {
   }
 
   /** Borde suave configurado por dureza/opacidad; todas las escrituras quedan dentro de la acción del trazo. */
-  /** Borde suave configurado por dureza/opacidad; todas las escrituras quedan dentro de la acción del trazo. */
   private stamp(x: number, y: number): void {
     const layer = this.strokeLayer;
     if (!layer || !this.stroke) return;
     const operation = this.createStampOperation(x, y);
     if (!operation) return;
     const pixels = this.readStampPixels(layer, operation.region);
-    const changed = this.applyStampToPixels(pixels, operation);
+    const changed = applyBrushStamp(pixels, operation);
     if (changed && layer.writeRectFromJS(
       operation.region.left, operation.region.top, operation.region.width, operation.region.height, pixels,
     )) this.scheduleRefresh();
@@ -3856,67 +4018,6 @@ export class App {
     const pixels = new Uint8Array(region.width * region.height * 4);
     layer.readRectToJS(region.left, region.top, region.width, region.height, pixels);
     return pixels;
-  }
-
-  private applyStampToPixels(pixels: Uint8Array, operation: StampOperation): boolean {
-    let changed = false;
-    const pixelCount = operation.region.width * operation.region.height;
-    for (let pixel = 0; pixel < pixelCount; pixel++) {
-      changed = this.applyStampPixel(pixels, pixel, operation) || changed;
-    }
-    return changed;
-  }
-
-  private applyStampPixel(pixels: Uint8Array, pixel: number, operation: StampOperation): boolean {
-    const { region, centerX, centerY, radius } = operation;
-    const x = region.left + pixel % region.width + 0.5;
-    const y = region.top + Math.floor(pixel / region.width) + 0.5;
-    const distance = Math.hypot(x - centerX, y - centerY);
-    if (distance >= radius + 0.5) return false;
-    const coverage = this.stampCoverage(distance, operation);
-    const sourceAlpha = coverage * operation.opacity;
-    if (sourceAlpha <= 0) return false;
-    const offset = pixel * 4;
-    return operation.erase
-      ? this.applyEraserPixel(pixels, offset, sourceAlpha)
-      : this.applyBrushPixel(pixels, offset, sourceAlpha, operation.color);
-  }
-
-  private stampCoverage(distance: number, operation: StampOperation): number {
-    if (distance <= operation.hardEdge) return 1;
-    const t = Math.max(0, Math.min(1, (operation.radius + 0.5 - distance) / operation.fadeWidth));
-    return t * t * (3 - 2 * t);
-  }
-
-  private applyEraserPixel(pixels: Uint8Array, offset: number, sourceAlpha: number): boolean {
-    const oldAlpha = pixels[offset + 3] / 255;
-    const nextAlpha = oldAlpha * (1 - sourceAlpha);
-    const changed = nextAlpha !== oldAlpha;
-    pixels[offset + 3] = Math.round(nextAlpha * 255);
-    if (nextAlpha <= 0.0001) {
-      pixels[offset] = 0;
-      pixels[offset + 1] = 0;
-      pixels[offset + 2] = 0;
-      pixels[offset + 3] = 0;
-    }
-    return changed;
-  }
-
-  private applyBrushPixel(
-    pixels: Uint8Array,
-    offset: number,
-    sourceAlpha: number,
-    color: readonly [number, number, number],
-  ): boolean {
-    const oldAlpha = pixels[offset + 3] / 255;
-    const nextAlpha = sourceAlpha + oldAlpha * (1 - sourceAlpha);
-    if (nextAlpha <= 0) return false;
-    const oldWeight = oldAlpha * (1 - sourceAlpha);
-    pixels[offset] = Math.round((color[0] * sourceAlpha + pixels[offset] * oldWeight) / nextAlpha);
-    pixels[offset + 1] = Math.round((color[1] * sourceAlpha + pixels[offset + 1] * oldWeight) / nextAlpha);
-    pixels[offset + 2] = Math.round((color[2] * sourceAlpha + pixels[offset + 2] * oldWeight) / nextAlpha);
-    pixels[offset + 3] = Math.round(nextAlpha * 255);
-    return true;
   }
 
   private commitShape(start: { x: number; y: number }, end: { x: number; y: number }, tool: Tool): void {
@@ -4042,6 +4143,11 @@ export class App {
     const point = this.toDoc(event);
     if (!this.onDocument(point)) return;
     if (this.handleImmediateTool(point, event)) return;
+    const activeLayer = this.active();
+    if (activeLayer && isPixelLayerType(activeLayer.type)
+      && this.ctl.isEffectivelyVisible(activeLayer.id)
+      && !this.ctl.isEffectivelyLocked(activeLayer.id)
+      && this.beginColorizeStroke(event, point, activeLayer)) return;
     const layer = this.getEditablePaintLayer();
     if (!layer) return;
     if (this.tool === 'fill') {
@@ -4111,12 +4217,62 @@ export class App {
     this.drawToolPreview(event);
   }
 
+  private beginColorizeStroke(event: PointerEvent, point: { x: number; y: number }, layer: LayerNode): boolean {
+    if (this.tool !== 'brush') return false;
+    const mask = layer.masks?.find((candidate) => candidate.type === 'colorize' && candidate.enabled && candidate.editStrokes);
+    if (!mask || mask.type !== 'colorize') return false;
+    this.canvas.setPointerCapture(event.pointerId);
+    this.colorizeStroke = { color: this.foregroundHex(), radius: Math.max(1, this.brush.size / 2), points: [{ ...point }] };
+    this.colorizeStrokeLayerId = layer.id;
+    this.colorizeStrokeMaskId = mask.id;
+    this.last = point;
+    this.q<HTMLElement>('#status').textContent = 'Pintando una marca de colorización.';
+    return true;
+  }
+
+  private extendColorizeStroke(point: { x: number; y: number }, finalPoint: boolean): void {
+    if (!this.colorizeStroke || !this.last) return;
+    const step = Math.max(1, this.colorizeStroke.radius * (this.brush.spacing / 100));
+    const dx = point.x - this.last.x;
+    const dy = point.y - this.last.y;
+    const distance = Math.hypot(dx, dy);
+    if (distance < step && !finalPoint) return;
+    const count = Math.max(1, Math.floor(distance / step));
+    for (let index = 1; index <= count; index++) {
+      this.colorizeStroke.points.push({ x: this.last.x + dx * index / count, y: this.last.y + dy * index / count });
+    }
+    this.last = point;
+  }
+
+  private finishColorizeStroke(): void {
+    const stroke = this.colorizeStroke;
+    const layerId = this.colorizeStrokeLayerId;
+    const maskId = this.colorizeStrokeMaskId;
+    this.colorizeStroke = null;
+    this.colorizeStrokeLayerId = null;
+    this.colorizeStrokeMaskId = null;
+    this.last = null;
+    if (stroke && layerId && maskId) {
+      this.ctl.updateMask(layerId, maskId, (mask) => mask.type === 'colorize'
+        ? { ...mask, strokes: [...mask.strokes, stroke] }
+        : mask);
+    }
+    this.colorizeOutputCache.clear();
+    this.syncUI();
+    this.updateHistoryUI();
+    this.scheduleRefresh();
+  }
+
   private onPointerMove(e: PointerEvent, finalPoint = false): void {
     if (this.vectorGesture) { this.updateVectorGesture(this.toDoc(e)); return; }
     if (this.isPanning && this.panStart) {
       this.panX = this.panStart.x + e.clientX - this.panStart.clientX;
       this.panY = this.panStart.y + e.clientY - this.panStart.clientY;
       this.applyCanvasView();
+      return;
+    }
+    if (this.colorizeStroke) {
+      this.extendColorizeStroke(this.toDoc(e), finalPoint);
       return;
     }
     if (!this.stroke || !this.last || !this.strokeTool) return;
@@ -4183,6 +4339,10 @@ export class App {
       this.isPanning = false; this.panStart = null; this.applyCanvasView();
       return;
     }
+    if (this.colorizeStroke) {
+      this.finishColorizeStroke();
+      return;
+    }
     if (!this.stroke) { this.clearToolPreview(); return; }
     const tool = this.strokeTool;
     try {
@@ -4214,7 +4374,7 @@ export class App {
     this.commitFillResult(node, operation, result);
     this.q<HTMLElement>('#status').textContent = `Relleno aplicado · ${result.filled.toLocaleString()} píxeles`;
     this.updateHistoryUI();
-    if (this.hasFilterLayer()) this.scheduleRefresh();
+    if (containsLayerType(this.ctl.doc.layers, 'filter')) this.scheduleRefresh();
   }
 
   private fillLimitMessage(): string | null {
@@ -4460,11 +4620,9 @@ export class App {
     const filteredCtx = filtered.getContext('2d')!;
     const kind = layer.filterKind ?? 'grayscale';
     const strength = layer.filterStrength ?? 1;
-    filteredCtx.filter = this.filterCss(kind, strength);
-    filteredCtx.drawImage(original, 0, 0);
-    filteredCtx.filter = 'none';
-    const filteredImage = filtered.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, width, height);
-    applyCustomFilter(filteredImage, kind, strength, 0, 0, width, height);
+    const filteredImage = renderFilteredImage(original, filteredCtx, kind, strength, {
+      x: 0, y: 0, width, height, fullWidth: width, fullHeight: height,
+    });
     return {
       original: original.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, width, height),
       filtered: filteredImage,
@@ -4479,9 +4637,7 @@ export class App {
     width: number,
     height: number,
   ): void {
-    for (let index = 0; index < original.data.length; index++) {
-      original.data[index] = Math.round(original.data[index] * (1 - opacity) + filtered.data[index] * opacity);
-    }
+    blendImageData(original, filtered, opacity);
     targetCtx.clearRect(0, 0, width, height);
     targetCtx.putImageData(original, 0, 0);
   }
@@ -4511,7 +4667,10 @@ export class App {
     width: number,
     height: number,
   ): void {
-    const image = new ImageData(new Uint8ClampedArray(pixels), width, height);
+    const transformedPixels = this.applyTransformMasksToFullLayer(layer, pixels, width, height);
+    const colorizedPixels = this.applyColorizeMasksToFullLayer(layer, transformedPixels);
+    const filteredPixels = this.applyFilterMasksToFullLayer(layer, colorizedPixels, width, height);
+    const image = new ImageData(new Uint8ClampedArray(filteredPixels), width, height);
     scratchCtx.clearRect(0, 0, width, height);
     scratchCtx.putImageData(image, 0, 0);
     targetCtx.save();
@@ -4519,6 +4678,54 @@ export class App {
     targetCtx.globalCompositeOperation = this.canvasBlend(layer.blendMode);
     targetCtx.drawImage(scratch, 0, 0);
     targetCtx.restore();
+  }
+
+  private applyTransformMasksToFullLayer(layer: LayerNode, pixels: Uint8Array, width: number, height: number): Uint8Array {
+    const masks = layer.masks?.filter((mask): mask is Extract<LayerMask, { type: 'transform' }> => mask.enabled && mask.type === 'transform') ?? [];
+    if (!masks.length) return pixels;
+    const input = this.createPixelCanvas(width, height, pixels);
+    const output = this.createSamplingCanvas(width, height);
+    const context = output.getContext('2d', { willReadFrequently: true })!;
+    const matrix = this.combineTransformMasks(masks);
+    context.setTransform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
+    context.drawImage(input, 0, 0);
+    return this.readSamplingCanvas(output, width, height);
+  }
+
+  private applyFilterMasksToFullLayer(layer: LayerNode, pixels: Uint8Array, width: number, height: number): Uint8Array {
+    const masks = layer.masks?.filter((mask): mask is Extract<LayerMask, { type: 'filter' }> => mask.enabled && mask.type === 'filter') ?? [];
+    if (!masks.length) return pixels;
+    let current = new Uint8Array(pixels);
+    for (const mask of masks) current = new Uint8Array(this.applyFilterStackToPixels(mask, current, width, height));
+    return current;
+  }
+
+  private applyColorizeMasksToFullLayer(layer: LayerNode, fallback: Uint8Array): Uint8Array {
+    const masks = layer.masks?.filter((mask): mask is Extract<LayerMask, { type: 'colorize' }> => mask.enabled && mask.type === 'colorize') ?? [];
+    let current = fallback;
+    for (const mask of masks) current = this.getColorizeOutput(layer, mask) ?? current;
+    return current;
+  }
+
+  private applyFilterStackToPixels(
+    mask: Extract<LayerMask, { type: 'filter' }>,
+    pixels: Uint8Array,
+    width: number,
+    height: number,
+  ): Uint8Array {
+    let current = new ImageData(new Uint8ClampedArray(pixels), width, height);
+    for (const filter of mask.filters) {
+      const source = this.createSamplingCanvas(width, height);
+      const sourceContext = source.getContext('2d', { willReadFrequently: true })!;
+      sourceContext.putImageData(current, 0, 0);
+      const output = this.createSamplingCanvas(width, height);
+      const outputContext = output.getContext('2d', { willReadFrequently: true })!;
+      const result = renderFilteredImage(source, outputContext, filter.kind, filter.strength, {
+        x: 0, y: 0, width, height, fullWidth: width, fullHeight: height,
+      });
+      current = result;
+    }
+    return new Uint8Array(current.data);
   }
 
   private pickColorAt(x: number, y: number): void {

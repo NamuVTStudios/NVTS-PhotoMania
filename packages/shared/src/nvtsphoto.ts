@@ -7,14 +7,61 @@ export type LayerType = 'paint' | 'filter' | 'fill' | 'file' | 'vector' | 'text'
 export type TextLayerStyle = 'normal' | 'bold' | 'italic' | 'bold-italic';
 export type TextLayerAlign = 'left' | 'center' | 'right';
 export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay';
-export type FilterKind =
-  | 'grayscale' | 'invert' | 'sepia' | 'blur' | 'brightness' | 'contrast'
-  | 'saturation' | 'hue-rotate' | 'posterize' | 'threshold' | 'pixelate'
-  | 'solarize' | 'noise' | 'vignette' | 'duotone' | 'sharpen' | 'edge-detect';
+export const FILTER_KINDS = [
+  'grayscale', 'invert', 'sepia', 'blur', 'brightness', 'contrast', 'saturation', 'hue-rotate',
+  'posterize', 'threshold', 'pixelate', 'solarize', 'noise', 'vignette', 'duotone', 'sharpen', 'edge-detect',
+] as const;
+export type FilterKind = typeof FILTER_KINDS[number];
+
+const FILTER_KIND_SET: ReadonlySet<string> = new Set(FILTER_KINDS);
+
+export function isFilterKind(value: unknown): value is FilterKind {
+  return typeof value === 'string' && FILTER_KIND_SET.has(value);
+}
 export type VectorKind =
   | 'rectangle' | 'rounded-rectangle' | 'ellipse' | 'line'
   | 'polygon' | 'polyline' | 'bezier' | 'freehand'
   | 'star' | 'spiral' | 'text';
+
+export interface MaskBase {
+  id: string;
+  enabled: boolean;
+}
+
+export interface TransformMask extends MaskBase {
+  type: 'transform';
+  offsetX: number;
+  offsetY: number;
+  scaleX: number;
+  scaleY: number;
+  rotation: number;
+  shearX: number;
+  shearY: number;
+}
+
+export interface ColorizeStroke {
+  color: string;
+  radius: number;
+  points: VectorPoint[];
+}
+
+export interface ColorizeMask extends MaskBase {
+  type: 'colorize';
+  editStrokes: boolean;
+  showOutput: boolean;
+  gapClose: number;
+  threshold: number;
+  limitToLayerBounds: boolean;
+  transparentColors: string[];
+  strokes: ColorizeStroke[];
+}
+
+export interface FilterMask extends MaskBase {
+  type: 'filter';
+  filters: Array<{ kind: FilterKind; strength: number }>;
+}
+
+export type LayerMask = TransformMask | ColorizeMask | FilterMask;
 
 /** Un nodo de una ruta vectorial. Los controles Bezier son opcionales y absolutos. */
 export interface VectorPoint {
@@ -88,6 +135,8 @@ export interface LayerManifest {
   textStrokeColor?: string;
   textStrokeWidth?: number;
   textBackgroundColor?: string;
+  /** Máscaras no destructivas asociadas a esta capa. Opcional para conservar compatibilidad. */
+  masks?: LayerMask[];
   /** Nombre del archivo fuente de la capa de archivo. */
   sourceName?: string;
   /** ID local que vincula la capa con un FileSystemFileHandle guardado en IndexedDB. */

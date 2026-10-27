@@ -67,6 +67,9 @@ declare module '*/build/engine.js' {
     undoLabel(): string;
     redoLabel(): string;
     clear(): void;
+    discardOldestUndo(): boolean;
+    discardOldestRedo(): boolean;
+    discardRedo(): void;
     delete(): void;
   }
 

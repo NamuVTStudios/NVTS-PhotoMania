@@ -1,4 +1,4 @@
-import type { BlendMode, LayerType } from '@nvts/shared';
+import { getLayerMaskLabel, type BlendMode, type LayerMask, type LayerType } from '@nvts/shared';
 import type { LayerNode } from '@nvts/document-model';
 
 // Panel template. Event behavior lives in its panel renderer/controller.
@@ -7,6 +7,7 @@ export const LAYERS_PANEL_TEMPLATE = `
     <section class="dock-panel layers-panel"><header><strong>Capas</strong><div class="panel-spacer"></div><select id="dock-blend" aria-label="Modo de fusión"><option value="normal">Normal</option><option value="multiply">Multiplicar</option><option value="screen">Trama</option><option value="overlay">Superponer</option></select></header>
       <div class="layer-props"><label>Opacidad <input id="layer-opacity" type="number" min="0" max="100" value="100"/>%</label><button id="l-fill-color" type="button" hidden>Color de relleno…</button><button id="l-filter-options" type="button" hidden>Configurar filtro…</button><button id="l-vector-add" type="button" hidden>Editar vectores…</button><button id="l-text-edit" type="button" hidden>Editar texto…</button></div>
       <div id="layers"></div><div class="layer-empty" id="layer-empty"><span class="tool-icon tool-icon--layers" aria-hidden="true"></span><strong>Capas</strong><span>Seleccioná una capa o creá una nueva.</span></div>
+      <details class="layer-mask-manager"><summary>Máscara seleccionada</summary><div class="layer-mask-create"><button type="button" data-create-mask="transform">+ Transformación</button><button type="button" data-create-mask="colorize">+ Colorización</button><button type="button" data-create-mask="filter">+ Filtro</button></div><div id="layer-mask-list"></div></details>
       <div id="layer-create-menu" class="layer-create-menu" role="menu" aria-label="Crear capa" hidden>
         <button type="button" role="menuitem" data-layer-type="paint"><span class="tool-icon tool-icon--paint-layer" aria-hidden="true"></span><span>Capa de pintura</span></button>
         <button type="button" role="menuitem" data-layer-type="filter"><span class="tool-icon tool-icon--filter-layer" aria-hidden="true"></span><span>Capa de filtro</span></button>
@@ -38,6 +39,8 @@ export interface LayersPanelCallbacks {
   onOpenEffects(layer: LayerNode): void;
   onToggleLock(layer: LayerNode): void;
   onSelect(layer: LayerNode): void;
+  onSelectMask(layer: LayerNode, mask: LayerMask): void;
+  onToggleMask(layer: LayerNode, mask: LayerMask, enabled: boolean): void;
   onContextMenu(layer: LayerNode, x: number, y: number): void;
   getDeleteBlockReason(layer: LayerNode): string | null;
 }
@@ -137,15 +140,43 @@ function createLayerRow(layer: LayerNode, activeLayerId: string, depth: number, 
   return row;
 }
 
+function createLayerMaskRow(layer: LayerNode, mask: LayerMask, activeMaskId: string, depth: number, callbacks: LayersPanelCallbacks): HTMLDivElement {
+  const row = document.createElement('div');
+  row.className = `layer-mask-row${mask.id === activeMaskId ? ' active' : ''}`;
+  row.dataset.layerId = layer.id;
+  row.dataset.maskId = mask.id;
+  row.style.paddingLeft = `${24 + depth * 14}px`;
+  const enabled = Object.assign(document.createElement('input'), { type: 'checkbox', checked: mask.enabled });
+  enabled.title = 'Activar máscara';
+  enabled.setAttribute('aria-label', `Activar máscara de ${getLayerMaskLabel(mask.type)}`);
+  enabled.onclick = (event) => event.stopPropagation();
+  enabled.onchange = () => callbacks.onToggleMask(layer, mask, enabled.checked);
+  const icon = document.createElement('span');
+  icon.className = `tool-icon tool-icon--${getLayerMaskIcon(mask)}`;
+  icon.setAttribute('aria-hidden', 'true');
+  const label = document.createElement('span');
+  label.textContent = `Máscara de ${getLayerMaskLabel(mask.type)}`;
+  row.append(enabled, icon, label);
+  row.onclick = () => callbacks.onSelectMask(layer, mask);
+  return row;
+}
+
+function getLayerMaskIcon(mask: LayerMask): string {
+  if (mask.type === 'transform') return 'vector-select';
+  if (mask.type === 'colorize') return 'fill-layer';
+  return 'filter-layer';
+}
+
 function renderLayerTree(
   container: HTMLElement,
   nodes: LayerNode[],
   activeLayerId: string,
+  activeMaskId: string,
   depth: number,
   callbacks: LayersPanelCallbacks,
 ): number {
   let renderedCount = 0;
-  for (const layer of [...nodes].reverse()) renderedCount += renderLayerEntry(container, layer, activeLayerId, depth, callbacks);
+  for (const layer of [...nodes].reverse()) renderedCount += renderLayerEntry(container, layer, activeLayerId, activeMaskId, depth, callbacks);
   return renderedCount;
 }
 
@@ -153,17 +184,27 @@ function renderLayerEntry(
   container: HTMLElement,
   layer: LayerNode,
   activeLayerId: string,
+  activeMaskId: string,
   depth: number,
   callbacks: LayersPanelCallbacks,
 ): number {
   container.append(createLayerRow(layer, activeLayerId, depth, callbacks));
-  if (!isExpandableGroup(layer)) return 1;
+  let renderedCount = 1;
+  if (layer.masks?.length) {
+    const masks = document.createElement('div');
+    masks.className = 'layer-mask-children';
+    masks.dataset.parentLayerId = layer.id;
+    for (const mask of layer.masks) masks.append(createLayerMaskRow(layer, mask, activeMaskId, depth, callbacks));
+    renderedCount += layer.masks.length;
+    container.append(masks);
+  }
+  if (!isExpandableGroup(layer)) return renderedCount;
   const children = document.createElement('div');
   children.className = 'layer-children';
   children.dataset.parentLayerId = layer.id;
-  const childCount = renderLayerTree(children, layer.children, activeLayerId, depth + 1, callbacks);
+  const childCount = renderLayerTree(children, layer.children, activeLayerId, activeMaskId, depth + 1, callbacks);
   container.append(children);
-  return childCount + 1;
+  return childCount + renderedCount;
 }
 
 function isExpandableGroup(layer: LayerNode): boolean {
@@ -193,12 +234,13 @@ export function renderLayersPanel(
   root: HTMLElement,
   layers: LayerNode[],
   activeLayerId: string,
+  activeMaskId: string,
   callbacks: LayersPanelCallbacks,
 ): void {
   const list = root.querySelector<HTMLElement>('#layers');
   if (!list) return;
   list.replaceChildren();
-  const renderedCount = renderLayerTree(list, layers, activeLayerId, 0, callbacks);
+  const renderedCount = renderLayerTree(list, layers, activeLayerId, activeMaskId, 0, callbacks);
   const empty = root.querySelector<HTMLElement>('#layer-empty');
   if (empty) empty.hidden = renderedCount > 0;
   updateDeleteButton(root, layers, activeLayerId, callbacks);

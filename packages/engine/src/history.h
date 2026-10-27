@@ -57,6 +57,9 @@ public:
     std::string undoLabel() const { return undo_.empty() ? std::string() : undo_.back().label; }
     std::string redoLabel() const { return redo_.empty() ? std::string() : redo_.back().label; }
     void clear();                            // vacía el historial (p. ej. al abrir otro documento)
+    bool discardOldestUndo();                // permite al controlador recortar un prefijo combinado
+    bool discardOldestRedo();
+    void discardRedo();                      // una edición estructural nueva invalida el redo de píxeles
 
     // TileWriteObserver: lo invoca TiledLayer justo antes de mutar un tile.
     void onBeforeTileWrite(TiledLayer& layer, int32_t tx, int32_t ty, const Tile* existing) override;

@@ -5,8 +5,9 @@
 // Nota: zipSync/unzipSync son síncronos; con imágenes grandes conviene moverlos a un Worker.
 
 import { zipSync, unzipSync, strToU8, strFromU8, type Zippable } from 'fflate';
-import { NVTS_FORMAT, NVTS_VERSION, isPixelLayerType, type LayerManifest, type NvtsManifest, type LayerType } from '@nvts/shared';
+import { cloneLayerMasks, cloneVectorShapes, NVTS_FORMAT, NVTS_VERSION, isPixelLayerType, type LayerManifest, type NvtsManifest, type LayerType } from '@nvts/shared';
 import type { DocumentState, LayerNode, UnpackedDocument } from '@nvts/document-model';
+import { parseLayerMasks } from './LayerMaskCodec';
 
 const MAX_ENTRY_BYTES = 1 << 30; // 1 GiB por entrada: defensa básica contra "zip bombs"
 type UnzippedFiles = ReturnType<typeof unzipSync>;
@@ -15,7 +16,6 @@ const PICKER_TYPES = [{
   description: 'NVTS Photomania',
   accept: { 'application/x-nvtsphoto': ['.nvtsphoto' as const] },
 }];
-
 /** Devuelve los píxeles RGBA8 (ancho*alto*4) de una capa raster, o null si está vacía. */
 export type PixelReader = (layer: LayerNode) => Uint8Array | null;
 
@@ -28,7 +28,7 @@ function createLayerManifest(layer: LayerNode): LayerManifest {
     ...(layer.fillColor ? { fillColor: layer.fillColor } : {}),
     ...(layer.filterKind ? { filterKind: layer.filterKind } : {}),
     ...(layer.filterStrength !== undefined ? { filterStrength: layer.filterStrength } : {}),
-    ...(layer.vectorShapes ? { vectorShapes: layer.vectorShapes.map((shape) => ({ ...shape, points: shape.points?.map((point) => ({ ...point })) })) } : {}),
+    ...(layer.vectorShapes ? { vectorShapes: cloneVectorShapes(layer.vectorShapes) } : {}),
     ...(layer.sourceName ? { sourceName: layer.sourceName } : {}),
     ...(layer.sourceLinkId ? { sourceLinkId: layer.sourceLinkId } : {}),
     ...(layer.sourceLastModified !== undefined ? { sourceLastModified: layer.sourceLastModified } : {}),
@@ -46,6 +46,7 @@ function createLayerManifest(layer: LayerNode): LayerManifest {
     ...(layer.textStrokeColor ? { textStrokeColor: layer.textStrokeColor } : {}),
     ...(layer.textStrokeWidth !== undefined ? { textStrokeWidth: layer.textStrokeWidth } : {}),
     ...(layer.textBackgroundColor ? { textBackgroundColor: layer.textBackgroundColor } : {}),
+    ...(layer.masks?.length ? { masks: cloneLayerMasks(layer.masks) } : {}),
   };
 }
 
@@ -101,9 +102,7 @@ function createLayerFromManifest(manifest: LayerManifest): LayerNode {
     fillColor: manifest.fillColor,
     filterKind: manifest.filterKind,
     filterStrength: typeof manifest.filterStrength === 'number' ? Math.min(1, Math.max(0, manifest.filterStrength)) : undefined,
-    vectorShapes: Array.isArray(manifest.vectorShapes)
-      ? manifest.vectorShapes.map((shape) => ({ ...shape, points: shape.points?.map((point) => ({ ...point })) }))
-      : undefined,
+    vectorShapes: Array.isArray(manifest.vectorShapes) ? cloneVectorShapes(manifest.vectorShapes) : undefined,
     sourceName: manifest.sourceName, sourceLinkId: manifest.sourceLinkId,
     sourceLastModified: manifest.sourceLastModified, sourceFileSize: manifest.sourceFileSize,
     textContent: manifest.textContent, textX: manifest.textX, textY: manifest.textY,
@@ -111,6 +110,7 @@ function createLayerFromManifest(manifest: LayerManifest): LayerNode {
     textStyle: manifest.textStyle, textAlign: manifest.textAlign, textLineHeight: manifest.textLineHeight,
     textLetterSpacing: manifest.textLetterSpacing, textStrokeColor: manifest.textStrokeColor,
     textStrokeWidth: manifest.textStrokeWidth, textBackgroundColor: manifest.textBackgroundColor,
+    masks: parseLayerMasks(manifest.masks, String(manifest.name ?? 'Capa')),
     children: [],
   };
 }
