@@ -53,12 +53,12 @@ export class DocumentController {
   private undoStack: HistoryAction[] = [];
   private redoStack: HistoryAction[] = [];
   private replaying = false;
-  private readonly maxStructureHistoryBytes: number;
+  private readonly maxHistoryBytes: number;
 
   private constructor(readonly mod: NvtsEngineModule, readonly doc: DocumentState, historyMB: number) {
     this.comp = new mod.Compositor(doc.width, doc.height);
     this.history = new mod.HistoryManager(this.comp, historyMB);
-    this.maxStructureHistoryBytes = Math.max(0, historyMB) * 1024 * 1024;
+    this.maxHistoryBytes = Math.max(0, historyMB) * 1024 * 1024;
   }
 
   static create(mod: NvtsEngineModule, width: number, height: number, name = 'Sin título', historyMB = 512) {
@@ -485,11 +485,16 @@ export class DocumentController {
     this.syncPixelHistory();
     return [...this.undoStack].reverse().map((a, i) => ({ label: a.label, current: i === 0 }));
   }
+  get historyMemoryBytes(): number {
+    this.syncPixelHistory();
+    return this.history.memoryBytes() + this.countStructureHistoryBytes();
+  }
   recordPixelAction(label: string): void {
     if (this.replaying) return;
     this.redoStack = [];
     this.undoStack.push({ kind: 'pixels', label });
     this.syncPixelHistory();
+    this.trimStructureHistory();
   }
 
   undo(): 'pixels' | 'structure' | null {
@@ -635,21 +640,27 @@ export class DocumentController {
     }
   }
 
-  private trimStructureHistory(): void {
-    const structureBytes = () => [...this.undoStack, ...this.redoStack]
+  private countStructureHistoryBytes(): number {
+    return [...this.undoStack, ...this.redoStack]
       .reduce((total, action) => total + (action.kind === 'structure' ? action.memoryBytes : 0), 0);
+  }
+
+  private totalHistoryMemoryBytes(): number {
+    return this.history.memoryBytes() + this.countStructureHistoryBytes();
+  }
+
+  private trimStructureHistory(): void {
     this.syncPixelHistory();
-    while (structureBytes() > this.maxStructureHistoryBytes) {
+    while (this.totalHistoryMemoryBytes() > this.maxHistoryBytes) {
       const trimUndo = this.undoStack.length > 0;
       const stack = trimUndo ? this.undoStack : this.redoStack;
       if (!stack.length) return;
       const action = trimUndo ? stack[0] : stack[stack.length - 1];
-      if (action.kind === 'pixels') {
-        if (!this.discardOldestPixelHistory(trimUndo)) continue;
-      }
+      if (action.kind === 'pixels' && !this.discardOldestPixelHistory(trimUndo)) continue;
       if (trimUndo) stack.shift();
       else stack.pop();
     }
+    this.syncPixelHistory();
   }
 
   private cloneNode(n: LayerNode): LayerNode { return { ...n, vectorShapes: cloneVectorShapes(n.vectorShapes), masks: cloneLayerMasks(n.masks), children: n.children.map((c) => this.cloneNode(c)) }; }

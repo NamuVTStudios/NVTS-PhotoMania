@@ -513,6 +513,12 @@ button.primary {
     color: var(--accent)
 }
 
+.history-memory {
+    color: var(--muted);
+    font-size: 10px;
+    white-space: nowrap;
+}
+
 .history-panel {
     min-height: 140px;
     max-height: 300px;

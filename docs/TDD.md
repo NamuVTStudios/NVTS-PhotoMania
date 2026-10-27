@@ -10,7 +10,7 @@ This document describes the current repository implementation. It is not a promi
 - **C++/WebAssembly owns sparse pixel tile surfaces and the main raster compositor.** The UI writes edits through bindings instead of treating JSON as pixel storage.
 - **The engine is tile-oriented.** Tiles are 256×256 pixels in RGBA8 format. Mutations mark tiles dirty; the compositor recomposes changed tiles and the renderer uploads affected regions.
 - **Rendering is backend-agnostic at the UI boundary.** `RendererBackend` is implemented by WebGPU and WebGL2 renderers. WebGPU is attempted first; WebGL2 is used as a fallback where setup allows.
-- **Some features have UI-level rendering paths.** When a document contains filter layers, `App.ts` composes those effects by tile using Canvas 2D and uploads the resulting regions; otherwise it uses the Wasm compositor refresh path.
+- **Some features have UI-level rendering paths.** When a document contains filter layers or supported masks, `AppDocumentFeatures.ts` composes those effects by tile using Canvas 2D. Local brush edits invalidate only affected tiles plus effect padding; layer/property changes trigger a full invalidation. The presence of non-destructive effects and filter padding are cached until a general invalidation, avoiding a full layer-tree scan for every brush dab. Filter tiles are processed across animation frames (up to eight tiles or roughly 6 ms per frame); a single expensive tile can exceed that budget, but a full-canvas invalidation no longer loops through every tile in one frame. While drawing through an enabled transform/colorization mask dependency, full filtered recomposition is deferred until the stroke ends so every dab does not restart the full-document tile queue. Otherwise it uses the Wasm compositor refresh path.
 - **Panel modules do not own independent engines.** Each panel module defines/renderers its UI and forwards document mutations through callbacks to the `App` coordinator.
 
 ## Monorepo packages
@@ -24,7 +24,7 @@ This document describes the current repository implementation. It is not a promi
 | `packages/document-model` | Layer/document tree, pixel bridge, structural actions, integrated undo/redo | `DocumentController.ts`, `EditSession.ts`, `types.ts` |
 | `packages/storage` | `.nvtsphoto` serialization, file open/save, recent projects, linked-image handles | `NvtsPhotoIO.ts`, `RecentProjects.ts` |
 | `packages/templates` | UI-independent, reusable document preset definitions for NVTS programs | `src/types.ts`, individual preset modules, `src/index.ts` |
-| `packages/ui` | Application coordinator, toolbar, modular panels, preferences and plugins; consumes `@nvts/templates` | `App.ts`, `Toolbar.ts`, `panels/*.ts` |
+| `packages/ui` | Application entry point, startup orchestration, feature modules, toolbar, panels, workspaces, preferences and plugins; consumes `@nvts/templates` | `App.ts`, `app/*.ts`, `managers/*.ts`, `panels/*.ts`, `workspaces/*.ts` |
 | `apps/web` | Vite entry point, index HTML, global styles, public assets/Wasm runtime | `src/main.ts`, `src/styles.css`, `vite.config.ts` |
 
 ## Shared template package
@@ -63,7 +63,7 @@ Text metadata includes content, origin, font family, size, color, style, alignme
 
 ### Tile storage
 
-`TiledLayer` stores sparse 256×256 RGBA8 tiles. An absent tile represents transparency; a tile allocated for a layer contains a fixed-size pixel buffer. Writes mark tiles dirty. Pixel writes can notify the history manager before mutation, allowing copy-on-write snapshots of the pre-edit tile state.
+`TiledLayer` stores sparse 256×256 RGBA8 tiles. An absent tile represents transparency; a tile allocated for a layer contains a fixed-size pixel buffer. Writes mark tiles dirty. Pixel writes can notify the history manager before mutation, allowing snapshots of the pre-edit tile state. JS-to-C++ and C++-to-JS rectangle operations reuse a bounded scratch buffer (up to two 256×256 RGBA tiles, 512 KiB) for ordinary painting regions, while large one-off transfers use temporary memory so each layer does not retain a document-sized buffer.
 
 ### Compositor
 
@@ -78,15 +78,15 @@ The app targets one canvas using the common `RendererBackend` interface:
 - `WebGPURenderer`: primary backend when the browser and adapter support it.
 - `WebGL2Renderer`: fallback backend.
 
-The app uploads dirty image regions to the renderer. Resizing/recreating a renderer texture may require reuploading image content.
+The app uploads dirty image regions to the renderer. `WebGPURenderer` passes views backed by a regular `ArrayBuffer` directly to `writeTexture`; it copies only when a view is backed by shared memory that is not directly accepted by that API. Resizing/recreating a renderer texture may require reuploading image content.
 
 ### Tool editing
 
-The UI handles pointer gestures, zoom/pan coordinate conversion, tool configuration, geometric brush stamps, fill selection, eyedropper sampling, and text/vector editing interactions. Pixel changes are written to engine-backed layer surfaces through `EditSession`/document controller methods. Expensive rasterization, merged color sampling, filter operations, and full-document serialization can still use Canvas APIs or synchronous JavaScript loops.
+The UI handles pointer gestures, zoom/pan coordinate conversion, tool configuration, geometric brush stamps, fill selection, eyedropper sampling, and text/vector editing interactions. Pixel changes are written to engine-backed layer surfaces through `EditSession`/document controller methods. Brush/eraser dabs are queued and processed by animation-frame batches, up to 64 dabs or approximately 4 ms per frame, then yield to the browser. A single large dab can still exceed that budget. Expensive rasterization, merged color sampling, some filter operations, and full-document serialization can still use Canvas APIs or synchronous JavaScript loops; the engine has not yet been moved to a Worker.
 
 ## Undo/redo design
 
-The Wasm `HistoryManager` observes pixel writes and captures the old contents of touched tiles once per action. Undo/redo swaps tile buffers rather than copying entire layers. Its retained tile memory is limited by a configurable cap, currently initialized by the document controller to 512 MiB unless another value is provided. The cap applies across undo and redo; oldest entries are discarded as needed, including a single entry that exceeds the cap. The TypeScript controller separately accounts for structural snapshots and pixel-backed structural edits against the same configured MiB limit. Metadata estimates use UTF-8 JSON size and do not include JavaScript object/runtime overhead, so this is a practical history bound rather than a total process-memory guarantee.
+The Wasm `HistoryManager` observes pixel writes and captures the old contents of touched tiles once per action. Undo/redo swaps tile buffers rather than copying entire layers. The configured history budget (512 MiB by default) is shared by pixel snapshots and TypeScript structural snapshots. The native history manager includes snapshots for the active pixel action when trimming committed entries, rather than waiting until mouse release. The memory indicator includes pixel snapshots in undo/redo and snapshots held by an active action; structural metadata is estimated using UTF-8 JSON size. Oldest available actions are discarded when the combined budget is exceeded. This is a practical history bound, not a total process-memory guarantee: it excludes browser/GPU textures, working canvases, and JS/C++ allocator overhead.
 
 The TypeScript `DocumentController` maintains structure/property actions (create, duplicate, delete/restore, reparent/reorder, rename, layer properties, and supported text/vector content updates) alongside pixel-history actions. The controller coordinates the undo and redo stacks so the user navigates document mutations in sequence. A newly recorded action invalidates the redo branch in both layers of history. Opening another document initializes a fresh history. UI history entries are synchronized to the Wasm engine's retained undo/redo counts, so discarded pixel actions are not presented as available.
 
@@ -163,10 +163,11 @@ Each substantial panel has its own TypeScript file in `packages/ui/src/panels/`:
 - `PreferencesPanel.ts`
 - `StoryboardPanel.ts` — shot list and JSON export
 - `AnimationTimelinePanel.ts` — tracks and keyframe cells
-- `DockLayoutManager.ts` — floating, docking, reordering and resize logic for all six dock panels
-- `workspaces/` — one `.ts` configuration module for each workspace, collected by `index.ts`
+- `Panel.ts` — shared base class for panel controllers
 
-`App.ts` owns document/motor instances, event wiring, canvas gestures, command callbacks, workspace layout, keyboard shortcuts and interactions with browser storage. Global styling and theme tokens remain in `apps/web/src/styles.css`.
+Shared UI managers live in `packages/ui/src/managers/`, including `AppManager.ts`, `AppStartupManager.ts`, `UIManager.ts`, and `DockLayoutManager.ts`. Each workspace configuration lives in `packages/ui/src/workspaces/` and is collected by its `index.ts`.
+
+`packages/ui/src/App.ts` is the application entry point. `AppManager` coordinates the home-screen transition, while `AppStartupManager` mounts the editor shell, initializes the renderer and Wasm engine, and handles startup errors. The editor implementation is divided into feature modules under `packages/ui/src/app/`: shared state and internal contracts (`AppBase.ts`), document/rendering (`AppDocumentFeatures.ts`), workspaces (`AppWorkspaceFeatures.ts`), comic-project workflows (`AppComicFeatures.ts`), layer-state synchronization (`AppLayerStateFeatures.ts`), layer operations (`AppLayerPanelFeatures.ts`), vector editing (`AppVectorFeatures.ts`), event wiring (`AppEventFeatures.ts`), drawing and filling (`AppDrawingFeatures.ts`), sampling (`AppSamplingFeatures.ts`), and file/history workflows (`AppFileFeatures.ts`). Pure helpers and comic file-system utilities live in `AppUtilities.ts`; the editor shell markup lives in `components/EditorTemplate.ts`. The feature classes share one editor instance through an internal inheritance chain to preserve existing state and event behavior during this incremental extraction. Global styling and theme tokens remain in `apps/web/src/styles.css`.
 
 `DockLayoutManager.ts` turns all six right-dock panels—including Storyboard and Animation Timeline—into docking slots. It supports header-drag reordering, floating windows with move/resize controls, resizing between docked panels, and a draggable splitter for the overall side-dock width. It stores per-workspace layout state in local storage, including panel visibility, order, floating position/size, docked heights, dock width, and global panel visibility. Panel DOM nodes are moved rather than recreated so their tool and document event handlers remain attached. Each workspace's default visibility and order is defined in its own file under `packages/ui/src/workspaces/`; Storyboarding and Animation keep the animation timeline at the bottom, and Storyboarding also displays the storyboard panel.
 
@@ -236,7 +237,7 @@ The web app uses Vite, monorepo aliases and COOP/COEP dev-server headers. The br
 
 The incremental decomposition has extracted responsibilities into the following modules while retaining public APIs where applicable:
 
-- `packages/ui/src/App.ts`: project startup and initial loading, control synchronization, filter composition, text rasterization, SVG export, panel menu and zoom/tool controls, and local/disk persistence for `comicConfig.json`.
+- `packages/ui/src/App.ts`: small application entry point and startup-facing adapter; `AppStartupManager.ts` coordinates editor initialization, while feature logic resides in `packages/ui/src/app/`.
 - `packages/ui/src/components/Toolbar.ts` and `packages/ui/src/panels/`: toolbar creation; rendering and events for Layers, Preferences, Comic Manager, Storyboard, Animation Timeline, and Vector Editor; advanced controls split by tool type.
 - `packages/ui/src/screens/HomeScreenController.ts` and `packages/ui/src/components/ShellTemplates.ts`: home screen and shell templates separated from the main application coordinator.
 - `packages/document-model/src/DocumentController.ts`: layer duplication, linked-layer replacement, and deletion validation.
@@ -248,6 +249,6 @@ The incremental decomposition has extracted responsibilities into the following 
 - `packages/ui/src/panels/PluginsPanel.ts`: plugin lifecycle, loading, and UI rendering split into controller methods.
 - `packages/ui/src/managers/DockLayoutManager.ts`: the `createDockLayoutManager` factory creates a controller; panel slots, drag events, floating/docking, resizing, layout serialization, and restoration are distributed among focused methods.
 - `packages/renderer/webgpu/WebGPURenderer.ts` and `packages/renderer/webgl2/WebGL2Renderer.ts`: resource creation, canvas sizing, `contain`-scale calculation, and render command submission are separated into methods.
-- `packages/ui/src/App.ts`: full-document and single-pixel sampling share helpers for raster layers, groups, and filters; layer thumbnails and linked-file refresh are also separated.
+- `packages/ui/src/app/AppSamplingFeatures.ts`: full-document and single-pixel sampling share helpers for raster layers, groups, and filters. `AppLayerPanelFeatures.ts` owns layer thumbnails and linked-file refresh.
 
 The previous control-flow audit reported zero nested control-flow structures across the source files it reviewed. This repository reorganization moves several modules into clearer package boundaries; it does not constitute a new full control-flow audit. The audit excludes generated `dist/` and `build/` outputs, installed dependencies, and repository metadata. This does not mean every method already meets the responsibility limit: the refactor remains incremental, and some shape-drawing paths, event handlers, and renderer/document operations still need behavior-driven review. Before splitting methods that coordinate shared state, verify that extracted functions preserve event order, history, persistence, and rendering.

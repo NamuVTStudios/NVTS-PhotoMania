@@ -190,10 +190,11 @@ export class WebGPURenderer implements RendererBackend {
 
 function toGPUBuffer(
   pixels: Uint8Array | Uint8ClampedArray,
-): ArrayBuffer {
-  const buffer = new ArrayBuffer(pixels.byteLength);
-  new Uint8Array(buffer).set(pixels);
-  return buffer;
+): BufferSource {
+  if (pixels.buffer instanceof ArrayBuffer) return pixels as BufferSource;
+  const copy = new Uint8Array(pixels.byteLength);
+  copy.set(pixels);
+  return copy;
 }
 
 /* Integración con el motor (ejemplo):

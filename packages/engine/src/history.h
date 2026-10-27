@@ -53,7 +53,11 @@ public:
     bool canRedo() const { return !active_ && !redo_.empty(); }
     uint32_t undoCount() const { return static_cast<uint32_t>(undo_.size()); }
     uint32_t redoCount() const { return static_cast<uint32_t>(redo_.size()); }
-    uint32_t memoryBytes() const { return static_cast<uint32_t>(bytes_); }
+    // Incluye snapshots retenidos por undo/redo y las capturas de la acción abierta.
+    uint32_t memoryBytes() const {
+        const size_t total = bytes_ + openBytes_;
+        return total > 0xFFFFFFFFu ? 0xFFFFFFFFu : static_cast<uint32_t>(total);
+    }
     std::string undoLabel() const { return undo_.empty() ? std::string() : undo_.back().label; }
     std::string redoLabel() const { return redo_.empty() ? std::string() : redo_.back().label; }
     void clear();                            // vacía el historial (p. ej. al abrir otro documento)
@@ -76,7 +80,8 @@ private:
 
     Compositor& comp_;
     size_t maxBytes_;
-    size_t bytes_ = 0;                       // memoria total (undo + redo)
+    size_t bytes_ = 0;                       // memoria retenida (undo + redo)
+    size_t openBytes_ = 0;                   // capturas temporales de la acción en curso
     bool active_ = false;
     std::vector<TileSnapshot> open_;                          // capturas de la acción en curso
     std::unordered_map<TiledLayer*, Watched> watched_;

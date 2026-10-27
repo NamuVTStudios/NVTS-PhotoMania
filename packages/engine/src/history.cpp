@@ -71,14 +71,17 @@ void HistoryManager::onBeforeTileWrite(TiledLayer& layer, int32_t tx, int32_t ty
     if (existing) {
         snapshot.pixels.reset(new uint8_t[TILE_BYTES]);
         std::memcpy(snapshot.pixels.get(), existing->pixels.get(), TILE_BYTES);
+        openBytes_ += TILE_BYTES;
     }
     open_.push_back(std::move(snapshot));
+    trim();
 }
 
 void HistoryManager::endAction() {
     for (auto& entry : watched_) entry.first->setObserver(nullptr);
     watched_.clear();
     open_.clear();
+    openBytes_ = 0;
     active_ = false;
 }
 
@@ -139,7 +142,7 @@ bool HistoryManager::undo() { return step(undo_, redo_); }
 bool HistoryManager::redo() { return step(redo_, undo_); }
 
 void HistoryManager::trim() {
-    while (bytes_ > maxBytes_) {
+    while (bytes_ + openBytes_ > maxBytes_) {
         if (!undo_.empty()) {
             bytes_ -= undo_.front().bytes;
             undo_.pop_front();

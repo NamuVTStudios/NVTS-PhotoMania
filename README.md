@@ -37,27 +37,48 @@ pnpm build:wasm   # Rebuild the C++ engine and copy the Wasm assets
 
 The history and `.nvtsphoto` tests use Node's built-in test runner and the generated Wasm module. Rebuild the engine with `pnpm build:wasm` before running them after C++ changes.
 
-## Arquitectura, DRY, SOLID y orientación a objetos
+## Application Entry Point and Feature Modules
 
-- **Clase base `Panel`:** los controladores visuales que administran un panel interactivo heredan de `packages/ui/src/panels/Panel.ts`. La clase encapsula el elemento DOM y proporciona `show()`, `hide()`, `visible` y un punto de extensión de ciclo de vida.
-- **Jerarquía de paneles:** `FilterPanelController`, `LayerEffectsPanelController`, `AnimationTimelineController`, `StoryboardPanelController`, `PluginPanelController` y `RecentProjectsPanel` extienden `Panel`. Los renderizadores puros y procesadores de imagen continúan como módulos especializados; no se fuerza herencia donde no existe estado o comportamiento de panel.
-- **Responsabilidad única (S):** cada controlador de panel administra su interfaz y sus eventos; `App` coordina las operaciones del documento y el flujo entre herramientas.
-- **Abierto/cerrado (O) y polimorfismo:** los paneles pueden especializar el ciclo de vida definido por `Panel`; sus acciones de aplicación se conectan mediante callbacks en lugar de acoplar el panel al motor o al documento.
-- **Sustitución de Liskov (L):** todos los subtipos conservan el contrato de visibilidad de `Panel`. **Segregación de interfaces (I):** los callbacks se limitan a las acciones que cada panel necesita.
-- **Inversión de dependencias (D):** los paneles reciben callbacks para cambios de capa/aplicación, en lugar de importar o construir directamente el motor. El renderizado, el procesamiento de filtros, el modelo de documentos, la persistencia y la UI permanecen separados en sus paquetes o módulos.
-- **DRY:** la selección/configuración de filtros, el selector de capas y el estado de visibilidad se centralizan en sus controladores. `DockLayoutManager` preserva los paneles editoriales cuando reconstruye los slots acoplables, evitando que esos paneles se desconecten del DOM.
-- **Separación por paquetes:** los algoritmos puros de pincel, filtros y colorización viven en `@nvts/image-processing`; el renderizador de formas y el exportador SVG viven en `@nvts/vector`; las consultas sobre árboles de capas viven en `@nvts/document-model`. `@nvts/ui` contiene los elementos que realmente dependen de la interfaz: Managers, Panels, Workspaces, plantillas de shell y controladores de aplicación.
+`packages/ui/src/App.ts` is intentionally kept small: it exposes the application entry point and delegates home-screen coordination to `AppManager` and editor startup to `AppStartupManager`. The editor implementation is split by responsibility under `packages/ui/src/app/`:
 
-La refactorización es incremental: los módulos que solo definen datos, renderizan una vista o procesan píxeles no se convierten en clases artificialmente. Así se aplica herencia donde representa una relación real y se evita crear abstracciones que no aporten comportamiento compartido.
+- `AppBase.ts`: shared editor state and the internal contract used by feature modules.
+- `AppDocumentFeatures.ts`: document lifecycle, renderer updates, and filter composition.
+- `AppWorkspaceFeatures.ts`: workspace selection and panel layout.
+- `AppComicFeatures.ts`: comic-project configuration, file-system operations, and page workflows.
+- `AppLayerStateFeatures.ts`: editor-state synchronization and layer UI updates.
+- `AppLayerPanelFeatures.ts`: layer operations and linked image management.
+- `AppVectorFeatures.ts`: vector layer editing and SVG export.
+- `AppEventFeatures.ts`: event binding, menus, shortcuts, and vector gestures.
+- `AppDrawingFeatures.ts`: drawing tools, brush strokes, and fill operations.
+- `AppSamplingFeatures.ts`: canvas compositing and color sampling.
+- `AppFileFeatures.ts`: undo/redo and document file operations.
+- `AppUtilities.ts`: shared pure helpers and comic-project file-system utilities.
+- `managers/AppStartupManager.ts`: editor-shell mounting, renderer/engine initialization, and startup error handling.
+
+The feature modules share one runtime state through the internal `AppBase` hierarchy. This is a mechanical split of the existing controller to keep behavior stable while making each area easier to locate and review; future changes should continue moving cohesive responsibilities into independent services when doing so reduces coupling.
+
+## Architecture, DRY, SOLID, and Object-Oriented Design
+
+- **Base class `Panel`:** visual controllers that manage an interactive panel inherit from `packages/ui/src/panels/Panel.ts`. The class encapsulates the DOM element and provides `show()`, `hide()`, `visible`, and a lifecycle extension point.
+- **Panel hierarchy:** `FilterPanelController`, `LayerEffectsPanelController`, `AnimationTimelineController`, `StoryboardPanelController`, `PluginPanelController`, and `RecentProjectsPanel` extend `Panel`. Pure renderers and image processors remain specialized modules; inheritance is not forced where panel state or behavior is absent.
+- **Single Responsibility Principle (S):** each panel controller manages its own UI and events; `App` coordinates document operations and tool flow.
+- **Open/Closed Principle (O) and polymorphism:** panels can specialize the lifecycle defined by `Panel`; application actions are connected through callbacks instead of coupling panels directly to the engine or document.
+- **Liskov Substitution Principle (L):** all subtypes preserve the `Panel` visibility contract. **Interface Segregation Principle (I):** callbacks are limited to the actions each panel needs.
+- **Dependency Inversion Principle (D):** panels receive callbacks for layer/application changes instead of importing or constructing the engine directly. Rendering, filter processing, the document model, persistence, and UI remain separated into their own packages or modules.
+- **DRY:** filter selection/configuration, the layer selector, and visibility state are centralized in their controllers. `DockLayoutManager` preserves editor panels when rebuilding dock slots, preventing those panels from being disconnected from the DOM.
+- **Package boundaries:** pure brush, filter, and colorization algorithms live in `@nvts/image-processing`; shape rendering and SVG export live in `@nvts/vector`; layer-tree queries live in `@nvts/document-model`. `@nvts/ui` contains components that genuinely depend on the interface: Managers, Panels, Workspaces, shell templates, and application controllers.
+
+The refactoring is incremental: modules that only define data, render a view, or process pixels are not turned into classes artificially. Inheritance is used where it represents a real relationship, avoiding abstractions that provide no shared behavior.
 
 ## Current capabilities
 
 - **Document templates:** the 23 document presets (social posts/stories, screen sizes, A4, US/European comics, manga/manhwa, animation, and UV/2D textures) are maintained as individual modules in the shared `@nvts/templates` workspace package so other NVTS apps can reuse them.
 - **Canvas and navigation:** fit-to-window view, zoom with controls or Ctrl/Meta + mouse wheel, panning with the Hand tool or Space + drag, and responsive canvas sizing.
 - **Drawing tools:** brush, eraser, eyedropper, line, rectangle, ellipse, bucket fill, text, and vector selection. The brush exposes size, opacity, hardness, spacing, and smoothing controls; the fill tool includes tolerance, contiguous fill, and merged-visible sampling options. Tool and vector-shape icons are individual SVG assets in `apps/web/src/icons/tools/`; CSS masks let them inherit the active foreground color and remain legible in both themes.
-- **Non-destructive layer masks:** affine transform masks, colorization masks with editable color strokes, and filter masks with per-layer filter stacks. All three mask types are created from **Layers → New Layer** in the Layers panel; the “Máscaras de capa” disclosure keeps the selected mask controls available. Mask metadata is saved in `.nvtsphoto`; colorization currently uses a line-barrier region fill and is limited to 4 million document pixels. Filter masks apply to the entire layer; painted grayscale coverage and advanced warp transforms are not implemented yet.
+- **Non-destructive layer masks:** affine transform masks, colorization masks with editable color strokes, and filter masks with per-layer filter stacks. All three mask types are created from **Layers → New Layer** in the Layers panel; the mask disclosure section keeps the selected mask controls available. Mask metadata is saved in `.nvtsphoto`; colorization currently uses a line-barrier region fill and is limited to 4 million document pixels. Filter masks apply to the entire layer; painted grayscale coverage and advanced warp transforms are not implemented yet.
 - **Layer model:** paint, filter, fill, file/image, vector, text, and group layers. Layers support names, order, visibility, lock state, opacity, blend mode, duplication, deletion, nested groups, and thumbnails.
-- **History:** pixel edits use the Wasm tile history; document structure and property changes are recorded by the TypeScript `DocumentController`. Undo/redo shortcuts are `Ctrl/Meta+Z`, `Ctrl/Meta+Shift+Z`, and `Ctrl/Meta+Y`.
+- **History:** pixel edits use the Wasm tile history; document structure and property changes are recorded by the TypeScript `DocumentController`. Undo/redo shortcuts are `Ctrl/Meta+Z`, `Ctrl/Meta+Shift+Z`, and `Ctrl/Meta+Y`. The history panel shows an estimated memory total, including snapshots retained during an active brush/eraser stroke.
+- **Performance and large documents:** brush/eraser dabs are processed in short animation-frame batches (up to 64 dabs or roughly 4 ms per batch) so long pointer paths yield to the browser. When non-destructive effects are present, local edits invalidate only affected tiles plus filter padding; effect changes force a full invalidation. Effect tiles are rendered incrementally (up to eight tiles or about 6 ms per frame) so initial large filtered documents can appear progressively rather than monopolizing one frame. On a layer path with a transform/colorization mask that requires global recomposition, the filtered preview is recomputed after the pointer is released instead of restarting a full-canvas render during every dab. The engine reuses bounded read/write scratch buffers, the renderer avoids an extra GPU-upload copy for ordinary `ArrayBuffer` views, and pixel plus structural history share the configured memory budget. The editor still runs on the main thread; a Worker-based engine, streaming file I/O and fully asynchronous imports/exports remain future work.
 - **Text:** a text layer stores editable text and typography metadata along with a raster preview. The top tool bar contains font, style, size, and color; advanced options contain alignment, line height, letter spacing, stroke, and background controls.
 - **Vector layers:** editable shape metadata, object list, move/resize interactions, shape editing controls, and SVG export. The displayed compositor image is currently rasterized; this is not yet a feature-complete vector illustration package.
 - **Filters and layer effects:** 17 effects covering grayscale, invert, sepia, blur, brightness, contrast, saturation, hue rotation, sharpen, posterize, threshold, duotone, solarize, pixelation, edge detection, grain and vignette, plus blend/opacity controls. Filter layers render non-destructively in the current UI renderer path.
@@ -225,7 +246,21 @@ NVTS-PhotoMania/
 │  │  └─ package.json
 │  ├─ ui/
 │  │  ├─ src/
+│  │  │  ├─ app/
+│  │  │  │  ├─ AppBase.ts
+│  │  │  │  ├─ AppComicFeatures.ts
+│  │  │  │  ├─ AppDocumentFeatures.ts
+│  │  │  │  ├─ AppDrawingFeatures.ts
+│  │  │  │  ├─ AppEventFeatures.ts
+│  │  │  │  ├─ AppFileFeatures.ts
+│  │  │  │  ├─ AppLayerPanelFeatures.ts
+│  │  │  │  ├─ AppLayerStateFeatures.ts
+│  │  │  │  ├─ AppSamplingFeatures.ts
+│  │  │  │  ├─ AppUtilities.ts
+│  │  │  │  ├─ AppVectorFeatures.ts
+│  │  │  │  └─ AppWorkspaceFeatures.ts
 │  │  │  ├─ components/
+│  │  │  │  ├─ EditorTemplate.ts
 │  │  │  │  ├─ ShellTemplates.ts
 │  │  │  │  └─ Toolbar.ts
 │  │  │  ├─ features/
@@ -233,6 +268,7 @@ NVTS-PhotoMania/
 │  │  │  │     └─ types.ts
 │  │  │  ├─ managers/
 │  │  │  │  ├─ AppManager.ts
+│  │  │  │  ├─ AppStartupManager.ts
 │  │  │  │  ├─ ComicProjectManager.ts
 │  │  │  │  ├─ DockLayoutManager.ts
 │  │  │  │  ├─ DocumentLifecycleManager.ts
@@ -325,20 +361,20 @@ NVTS-PhotoMania/
 ```
 
 
-## Organización por responsabilidad
+## Organization by Responsibility
 
-- `packages/ui/src/components/`: componentes reutilizables de interfaz, como la barra de herramientas y las plantillas compartidas del shell.
-- `packages/ui/src/features/comics/`: tipos de dominio del proyecto de cómic, compartidos entre el gestor y su panel, sin que el Manager dependa de la vista.
-- `packages/ui/src/managers/`: coordinación de la aplicación, herramientas, espacios de trabajo, cómics y distribución de paneles.
-- `packages/ui/src/panels/`: renderizadores/controladores de los paneles que el usuario ve y utiliza.
-- `packages/ui/src/persistence/`: persistencia local de configuración de plugins y distribución de paneles. La persistencia propia de cada espacio de trabajo permanece en `workspaces/`.
-- `packages/ui/src/screens/`: controladores de pantallas completas, como la pantalla inicial.
-- `packages/ui/src/workspaces/`: definiciones y tipos de las distribuciones por actividad (ilustración, imagen, cómic, guion gráfico y animación).
-- `packages/image-processing/`: algoritmos que transforman píxeles sin gestionar la interfaz.
-- `packages/vector/`: renderizado geométrico y exportación SVG, separados de los controles del editor.
-- `packages/document-model/`: modelo de documento y consultas sobre el árbol de capas.
+- `packages/ui/src/components/`: reusable interface components, such as the toolbar and shared shell templates.
+- `packages/ui/src/features/comics/`: comic-project domain types shared by the manager and its panel, so the manager does not depend on the view.
+- `packages/ui/src/managers/`: coordination of the application, tools, workspaces, comics, and panel layout.
+- `packages/ui/src/panels/`: renderers/controllers for the panels users see and interact with.
+- `packages/ui/src/persistence/`: local persistence for plugin configuration and panel layouts. Workspace-specific persistence remains in `workspaces/`.
+- `packages/ui/src/screens/`: controllers for full screens, such as the home screen.
+- `packages/ui/src/workspaces/`: definitions and types for activity-specific layouts (illustration, image editing, comics, storyboarding, and animation).
+- `packages/image-processing/`: algorithms that transform pixels without managing the UI.
+- `packages/vector/`: geometric rendering and SVG export, separated from editor controls.
+- `packages/document-model/`: the document model and layer-tree queries.
 
-Por eso `Managers`, `Panels` y `Workspaces` siguen dentro de `@nvts/ui`: coordinan o presentan la interfaz. Lo que no necesita esa capa —procesamiento de píxeles, utilidades vectoriales y consultas del modelo— se separa en paquetes independientes para reducir dependencias y permitir que otras aplicaciones del ecosistema NVTS reutilicen el código.
+`Managers`, `Panels`, and `Workspaces` remain inside `@nvts/ui` because they coordinate or present the interface. Code that does not need that layer—pixel processing, vector utilities, and document-model queries—is separated into independent packages to reduce dependencies and allow other NVTS ecosystem applications to reuse it.
 
 ## Architecture managers
 

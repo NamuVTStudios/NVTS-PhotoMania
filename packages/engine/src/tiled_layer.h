@@ -116,6 +116,9 @@ private:
 
     uint32_t width_, height_, tilesX_, tilesY_;
     std::unordered_map<uint64_t, Tile> tiles_;
+    // Buffer reutilizable para las transferencias JS<->C++; evita reservar un vector en cada dab.
+    // write/read usan este scratch de forma secuencial en el hilo de ejecución del motor.
+    mutable std::vector<uint8_t> ioScratch_;
     std::vector<Tile*> dirtyList_;
     TileWriteObserver* observer_ = nullptr;
     std::vector<uint32_t> desc_;

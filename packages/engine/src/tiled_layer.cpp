@@ -33,6 +33,8 @@ uint8_t to8(float value) {
     return static_cast<uint8_t>(std::min(255.f, std::max(0.f, value)) + 0.5f);
 }
 
+constexpr size_t MAX_REUSABLE_IO_BYTES = static_cast<size_t>(TILE_BYTES) * 2;
+
 } // namespace
 
 TiledLayer::TiledLayer(uint32_t width, uint32_t height)
@@ -118,12 +120,42 @@ void TiledLayer::copyWriteRows(Tile& tile, int64_t tx, int64_t ty, int64_t px0, 
 }
 
 bool TiledLayer::writeRectFromJS(int32_t x, int32_t y, uint32_t w, uint32_t h, const val& bytes) {
-    const size_t need = static_cast<size_t>(w) * h * 4;
+    if (w == 0 || h == 0) return false;
+    const size_t rowBytes = static_cast<size_t>(w) * 4;
+    const size_t need = rowBytes * h;
     if (bytes["length"].as<unsigned>() < need) return false;
-    std::vector<uint8_t> tmp(need);
-    val dst(typed_memory_view(need, tmp.data()));
-    dst.call<void>("set", bytes.call<val>("subarray", 0, static_cast<unsigned>(need)));
-    writeRect(x, y, w, h, tmp.data(), static_cast<size_t>(w) * 4);
+
+    // Copia y escribe en trozos: las importaciones grandes no necesitan un segundo buffer del tamaño del documento.
+    const auto copyChunk = [&](size_t sourceOffset, size_t chunkBytes) {
+        ioScratch_.resize(chunkBytes);
+        val destination(typed_memory_view(chunkBytes, ioScratch_.data()));
+        destination.call<void>("set", bytes.call<val>("subarray",
+            static_cast<unsigned>(sourceOffset), static_cast<unsigned>(sourceOffset + chunkBytes)));
+    };
+
+    if (rowBytes <= MAX_REUSABLE_IO_BYTES) {
+        const size_t rowsPerChunk = std::max<size_t>(1, MAX_REUSABLE_IO_BYTES / rowBytes);
+        for (size_t row = 0; row < h; row += rowsPerChunk) {
+            const size_t rows = std::min(rowsPerChunk, static_cast<size_t>(h) - row);
+            const size_t chunkBytes = rows * rowBytes;
+            copyChunk(row * rowBytes, chunkBytes);
+            writeRect(x, static_cast<int32_t>(y + row), w, static_cast<uint32_t>(rows), ioScratch_.data(), rowBytes);
+        }
+        return true;
+    }
+
+    // Ruta defensiva para motores que admitan filas mayores que el buffer reutilizable.
+    const size_t columnsPerChunk = MAX_REUSABLE_IO_BYTES / 4;
+    for (size_t row = 0; row < h; ++row) {
+        for (size_t column = 0; column < w; column += columnsPerChunk) {
+            const size_t columns = std::min(columnsPerChunk, static_cast<size_t>(w) - column);
+            const size_t chunkBytes = columns * 4;
+            const size_t sourceOffset = (row * w + column) * 4;
+            copyChunk(sourceOffset, chunkBytes);
+            writeRect(static_cast<int32_t>(x + column), static_cast<int32_t>(y + row),
+                      static_cast<uint32_t>(columns), 1, ioScratch_.data(), chunkBytes);
+        }
+    }
     return true;
 }
 
@@ -254,12 +286,43 @@ bool TiledLayer::swapTilePixels(int32_t tx, int32_t ty, std::unique_ptr<uint8_t[
 // ── Region reads ──────────────────────────────────────────────────────────
 
 bool TiledLayer::readRectToJS(int32_t x, int32_t y, uint32_t w, uint32_t h, const val& dst) const {
-    const size_t need = static_cast<size_t>(w) * h * 4;
-    if (need == 0 || dst["length"].as<unsigned>() < need) return false;
-    std::vector<uint8_t> tmp(need, 0);
-    const ClippedRect rect = clipRect(x, y, w, h);
-    if (!rect.empty()) readTileRows(rect, x, y, w, tmp);
-    dst.call<void>("set", val(typed_memory_view(need, tmp.data())));
+    if (w == 0 || h == 0) return false;
+    const size_t rowBytes = static_cast<size_t>(w) * 4;
+    const size_t need = rowBytes * h;
+    if (dst["length"].as<unsigned>() < need) return false;
+
+    // La lectura copia por filas o segmentos horizontales y deja transparentes los tiles no asignados.
+    auto& scratch = ioScratch_;
+    const auto copyChunk = [&](int32_t chunkX, int32_t chunkY, uint32_t chunkWidth,
+                               uint32_t chunkHeight, size_t destinationOffset, size_t chunkBytes) {
+        scratch.resize(chunkBytes);
+        std::fill(scratch.begin(), scratch.end(), 0);
+        const ClippedRect rect = clipRect(chunkX, chunkY, chunkWidth, chunkHeight);
+        if (!rect.empty()) readTileRows(rect, chunkX, chunkY, chunkWidth, scratch);
+        dst.call<void>("set", val(typed_memory_view(chunkBytes, scratch.data())),
+                       static_cast<unsigned>(destinationOffset));
+    };
+
+    if (rowBytes <= MAX_REUSABLE_IO_BYTES) {
+        const size_t rowsPerChunk = std::max<size_t>(1, MAX_REUSABLE_IO_BYTES / rowBytes);
+        for (size_t row = 0; row < h; row += rowsPerChunk) {
+            const size_t rows = std::min(rowsPerChunk, static_cast<size_t>(h) - row);
+            const size_t chunkBytes = rows * rowBytes;
+            copyChunk(x, static_cast<int32_t>(y + row), w, static_cast<uint32_t>(rows), row * rowBytes, chunkBytes);
+        }
+        return true;
+    }
+
+    const size_t columnsPerChunk = MAX_REUSABLE_IO_BYTES / 4;
+    for (size_t row = 0; row < h; ++row) {
+        for (size_t column = 0; column < w; column += columnsPerChunk) {
+            const size_t columns = std::min(columnsPerChunk, static_cast<size_t>(w) - column);
+            const size_t chunkBytes = columns * 4;
+            const size_t destinationOffset = (row * w + column) * 4;
+            copyChunk(static_cast<int32_t>(x + column), static_cast<int32_t>(y + row),
+                      static_cast<uint32_t>(columns), 1, destinationOffset, chunkBytes);
+        }
+    }
     return true;
 }
 
