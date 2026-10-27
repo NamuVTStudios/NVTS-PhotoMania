@@ -2,6 +2,7 @@
 // Los comandos de historial se mantienen accesibles mediante Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y.
 
 import { BlendMode } from '@nvts/wasm-bindings';
+import { uiIcon } from './ShellTemplates';
 
 export interface ToolbarHandlers {
   onBrush(rgb: [number, number, number], size: number): void;
@@ -19,8 +20,8 @@ function renderToolbarMarkup(root: HTMLElement): void {
   root.innerHTML = `
     <label>Color <input id="tb-color" type="color" value="#e03030"></label>
     <label>Tamaño <input id="tb-size" type="range" min="2" max="96" value="24"></label>
-    <button id="tb-dark">Brillo −</button>
-    <button id="tb-light">Brillo +</button>
+    <button id="tb-dark">${uiIcon('brightness-down')}<span>Brillo −</span></button>
+    <button id="tb-light">${uiIcon('brightness-up')}<span>Brillo +</span></button>
     <label>Opacidad <input id="tb-opacity" type="range" min="0" max="100" value="100"></label>
     <label>Modo
       <select id="tb-blend">

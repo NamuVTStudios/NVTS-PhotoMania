@@ -1,10 +1,11 @@
 import { Panel } from './Panel';
+import { uiIcon } from '../components/ShellTemplates';
 
 /** Línea de tiempo de animación: pistas y fotogramas clave básicos. */
 export const ANIMATION_TIMELINE_PANEL_TEMPLATE = `
 <section id="animation-timeline-panel" class="dock-panel animation-timeline-panel" hidden aria-label="Línea de tiempo de animación">
-  <header><strong>▥ Línea de tiempo de animación</strong><div class="panel-spacer"></div><label class="timeline-fps">FPS <input id="timeline-fps" type="number" min="1" max="120" value="24"></label><button id="timeline-add-track" type="button">＋ Pista</button></header>
-  <div class="timeline-toolbar"><button id="timeline-first" type="button" title="Primer fotograma">|◀</button><button id="timeline-prev" type="button" title="Fotograma anterior">◀</button><button id="timeline-play" type="button">▶ Reproducir</button><button id="timeline-next" type="button" title="Fotograma siguiente">▶|</button><label>Fotograma <input id="timeline-current" type="number" min="1" value="1"></label><span id="timeline-status" role="status">Fotograma 1 · 24 FPS</span></div>
+  <header><strong class="panel-title-icon">${uiIcon('timeline')}<span>Línea de tiempo de animación</span></strong><div class="panel-spacer"></div><label class="timeline-fps">FPS <input id="timeline-fps" type="number" min="1" max="120" value="24"></label><button id="timeline-add-track" type="button">${uiIcon('plus')}<span>Pista</span></button></header>
+  <div class="timeline-toolbar"><button id="timeline-first" type="button" title="Primer fotograma" aria-label="Primer fotograma">${uiIcon('frame-first')}</button><button id="timeline-prev" type="button" title="Fotograma anterior" aria-label="Fotograma anterior">${uiIcon('frame-previous')}</button><button id="timeline-play" type="button">${uiIcon('play')}<span>Reproducir</span></button><button id="timeline-next" type="button" title="Fotograma siguiente" aria-label="Fotograma siguiente">${uiIcon('frame-next')}</button><label>Fotograma <input id="timeline-current" type="number" min="1" value="1"></label><span id="timeline-status" role="status">Fotograma 1 · 24 FPS</span></div>
   <div class="timeline-scroll"><div id="timeline-grid" class="timeline-grid"></div></div>
   <p class="panel-hint">Pistas y celdas de fotogramas clave. Esta primera versión organiza la exposición; la reproducción todavía no renderiza una secuencia animada del lienzo.</p>
 </section>`;
@@ -179,7 +180,9 @@ class AnimationTimelineController extends Panel {
 
   private togglePlayback(): void {
     this.playing = !this.playing;
-    this.elements.play.textContent = this.playing ? 'Ⅱ Pausar' : '▶ Reproducir';
+    this.elements.play.innerHTML = this.playing
+      ? `${uiIcon('pause')}<span>Pausar</span>`
+      : `${uiIcon('play')}<span>Reproducir</span>`;
     this.elements.status.textContent = this.playing
       ? 'Vista previa temporal activa (sin render de lienzo)'
       : `Fotograma ${this.elements.current.value} · ${this.elements.fps.value} FPS`;
@@ -189,7 +192,7 @@ class AnimationTimelineController extends Panel {
 
   private stopPlaybackPreview(): void {
     this.playing = false;
-    this.elements.play.textContent = '▶ Reproducir';
+    this.elements.play.innerHTML = `${uiIcon('play')}<span>Reproducir</span>`;
     this.updateStatus();
   }
 }

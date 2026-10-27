@@ -254,11 +254,162 @@ button.primary {
     gap: 3px
 }
 
+/* Iconos SVG vectoriales compartidos por menús, selector y acciones. */
+.ui-icon {
+    display: inline-block;
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    background-color: currentColor;
+    -webkit-mask-image: var(--ui-icon-url);
+    mask-image: var(--ui-icon-url);
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    vertical-align: middle;
+}
+
+.menu-item-label {
+    display: inline-flex;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+}
+
+.panel-title-icon {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.panel-title-icon > .ui-icon {
+    flex: 0 0 18px;
+    width: 18px;
+    height: 18px;
+}
+
+.history-panel > header > .ui-icon {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+}
+
+.history-entry .history-entry-icon {
+    display: inline-flex;
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    align-items: center;
+}
+
+.history-entry-icon > .ui-icon {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+}
+
+.home-empty > .ui-icon {
+    flex: 0 0 32px;
+    width: 32px;
+    height: 32px;
+    margin-bottom: 4px;
+}
+
+.vector-object-actions button:has(> .ui-icon),
+.vector-panel > footer button:has(> .ui-icon),
+.advanced-tool-actions button:has(> .ui-icon),
+.toolbar button:has(> .ui-icon) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.vector-object-actions button > .ui-icon,
+.vector-panel > footer button > .ui-icon,
+.advanced-tool-actions button > .ui-icon,
+.toolbar button > .ui-icon {
+    flex: 0 0 15px;
+    width: 15px;
+    height: 15px;
+}
+
+.editor-list button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 34px;
+    padding: 8px 9px;
+}
+
+.editor-list button > .ui-icon {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+}
+
+.panel-close,
+.preferences-dialog .preferences-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0;
+    line-height: 1;
+}
+
+.panel-close > .ui-icon,
+.preferences-dialog .preferences-close > .ui-icon {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+}
+
+.comic-manager-panel button:has(> .ui-icon),
+.storyboard-panel button:has(> .ui-icon),
+.animation-timeline-panel button:has(> .ui-icon) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.comic-page-actions button > .ui-icon,
+.timeline-toolbar button > .ui-icon {
+    flex-basis: 14px;
+    width: 14px;
+    height: 14px;
+}
+
+.menu-item-label > span:last-child {
+    min-width: 0;
+    white-space: normal;
+}
+
+.menus > button > .ui-icon {
+    flex-basis: 14px;
+    width: 14px;
+    height: 14px;
+}
+
 .menus>button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     background: transparent;
     border-color: transparent;
     padding: 7px;
     white-space: nowrap
+}
+
+.menus .menu-wrap > button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
 }
 
 #menu-file[aria-expanded="true"] {
@@ -988,6 +1139,9 @@ button.primary {
 }
 
 .home-topbar .home-back {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     width: 34px;
     height: 34px;
     padding: 0;
@@ -1095,11 +1249,21 @@ button.primary {
     font: inherit;
 }
 
-.home-sidebar button>span {
-    width: 17px;
-    text-align: center;
+.home-sidebar button > .ui-icon,
+.home-sidebar button > .provider-icon {
+    flex: 0 0 18px;
+    width: 18px;
+    height: 18px;
     color: #b99c9c;
-    font-size: 18px;
+}
+
+.home-sidebar .home-nav-label {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    text-align: left;
+    color: inherit;
+    font-size: inherit;
 }
 
 .home-sidebar button:hover:not(.home-disabled),
@@ -1112,13 +1276,26 @@ button.primary {
     font-weight: 650;
 }
 
-.home-sidebar button.active>span {
+.home-sidebar button.active > .ui-icon,
+.home-sidebar button.active > .provider-icon {
     color: #f2767d;
 }
 
 .home-sidebar button small {
     margin-left: auto;
     color: #e99b9b;
+}
+
+.home-side-caption {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.home-side-caption > .ui-icon {
+    flex: 0 0 14px;
+    width: 14px;
+    height: 14px;
 }
 
 .home-sidebar-divider {
@@ -1147,6 +1324,9 @@ button.primary {
 }
 
 .home-drop-hint {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     margin-top: auto;
     padding: 12px 10px !important;
     color: #9e7b7b !important;
@@ -1187,6 +1367,12 @@ button.primary {
     margin-bottom: 10px;
     color: #ad9090;
     font-size: 12px;
+}
+
+.home-template-toolbar label {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
 }
 
 .home-template-toolbar select {
@@ -1322,6 +1508,18 @@ button.primary {
     min-width: 0;
 }
 
+.home-field-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.home-field-label > .ui-icon {
+    flex-basis: 14px;
+    width: 14px;
+    height: 14px;
+}
+
 .home-field input {
     width: 100%;
     min-width: 0;
@@ -1368,7 +1566,7 @@ button.primary {
     height: 1px;
 }
 
-.home-lock:has(input:not(:checked)) span {
+.home-lock:has(input:not(:checked)) > .ui-icon {
     opacity: .45;
 }
 
@@ -1403,8 +1601,14 @@ button.primary {
     background: #f45b63;
 }
 
-.home-primary span {
-    font-size: 18px;
+.home-primary > span:first-child {
+    flex: 1 1 auto;
+}
+
+.home-primary > .ui-icon {
+    flex-basis: 18px;
+    width: 18px;
+    height: 18px;
 }
 
 .home-dropzone {
@@ -1439,6 +1643,12 @@ button.primary {
     font-size: 28px;
 }
 
+.home-download-icon > .ui-icon {
+    flex-basis: 36px;
+    width: 36px;
+    height: 36px;
+}
+
 .home-dropzone h3 {
     margin: 0;
     font-size: 16px;
@@ -1455,12 +1665,26 @@ button.primary {
 }
 
 .home-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     padding: 12px 17px;
     border: 1px solid #452d2d;
     border-radius: 11px;
     background: #241919;
     color: #f3dcdc;
     font: inherit;
+}
+
+.home-secondary > .ui-icon {
+    flex-basis: 17px;
+    width: 17px;
+    height: 17px;
+}
+
+.provider-icon {
+    object-fit: contain;
 }
 
 .home-filetypes {
@@ -1674,8 +1898,10 @@ button.primary {
         font-size: 11px;
     }
 
-    .home-sidebar button>span {
-        font-size: 17px;
+    .home-sidebar button > .ui-icon,
+    .home-sidebar button > .provider-icon {
+        width: 18px;
+        height: 18px;
     }
 
     .home-sidebar button small,
@@ -2084,7 +2310,8 @@ button.primary {
     color: #626675;
 }
 
-:root[data-theme="light"] .home-sidebar button>span {
+:root[data-theme="light"] .home-sidebar button > .ui-icon,
+:root[data-theme="light"] .home-sidebar button > .provider-icon {
     color: #777b89;
 }
 
@@ -2094,7 +2321,8 @@ button.primary {
     color: #292b34;
 }
 
-:root[data-theme="light"] .home-sidebar button.active>span {
+:root[data-theme="light"] .home-sidebar button.active > .ui-icon,
+:root[data-theme="light"] .home-sidebar button.active > .provider-icon {
     color: #d92e3b;
 }
 
@@ -3303,10 +3531,19 @@ button.primary {
 }
 
 .comic-page-rename {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     flex: 0 0 auto;
     padding: 5px 7px;
     background: transparent;
     border-color: transparent;
+}
+
+.comic-page-rename > .ui-icon {
+    flex: 0 0 14px;
+    width: 14px;
+    height: 14px;
 }
 
 .comic-page-actions {
@@ -4065,6 +4302,12 @@ button.primary {
     font-size: 15px;
     line-height: 1;
     cursor: pointer;
+}
+
+.panel-float-toggle > .ui-icon {
+    flex: 0 0 14px;
+    width: 14px;
+    height: 14px;
 }
 
 .panel-float-toggle:hover,

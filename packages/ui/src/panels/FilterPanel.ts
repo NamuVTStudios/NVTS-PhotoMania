@@ -1,10 +1,14 @@
 import type { FilterKind } from '@nvts/shared';
 import { Panel } from './Panel';
+import { uiIcon } from '../components/ShellTemplates';
 import { FILTER_LABELS, renderFilterGroups } from './FilterCatalog';
 
 export const FILTER_PANEL_TEMPLATE = `
-<section id="filters-panel" class="editor-panel" hidden><header><strong>⚒ Filtros</strong><span id="filters-layer-name"></span><button class="panel-close" data-close="filters-panel">×</button></header><div class="editor-content"><aside class="editor-list" aria-label="Categorías de filtros">${renderFilterGroups()}</aside><div class="editor-settings"><strong id="filter-title">${FILTER_LABELS.grayscale}</strong><label>Intensidad <input id="filter-radius" type="range" min="1" max="100" value="100"/><output id="filter-radius-value">100%</output></label><p class="hint" id="filter-hint">En una capa de filtro, el ajuste queda editable y afecta a las capas que están debajo.</p></div></div><footer><span id="filter-mode-hint">Ajuste no destructivo</span><button data-close="filters-panel">Cancelar</button><button class="primary" id="filter-apply">Aplicar</button></footer></section>
-`;
+<section id="filters-panel" class="editor-panel" hidden>
+  <header><strong class="panel-title-icon">${uiIcon('filter')}<span>Filtros</span></strong><span id="filters-layer-name"></span><button class="panel-close" data-close="filters-panel" type="button" aria-label="Cerrar filtros">${uiIcon('close')}</button></header>
+  <div class="editor-content"><aside class="editor-list" aria-label="Categorías de filtros">${renderFilterGroups()}</aside><div class="editor-settings"><strong id="filter-title">${FILTER_LABELS.grayscale}</strong><label>Intensidad <input id="filter-radius" type="range" min="1" max="100" value="100"/><output id="filter-radius-value">100%</output></label><p class="hint" id="filter-hint">En una capa de filtro, el ajuste queda editable y afecta a las capas que están debajo.</p></div></div>
+  <footer><span id="filter-mode-hint">Ajuste no destructivo</span><button data-close="filters-panel">Cancelar</button><button class="primary" id="filter-apply">Aplicar</button></footer>
+</section>`;
 
 export interface FilterPanelCallbacks {
   labelForFilter(kind: FilterKind): string;

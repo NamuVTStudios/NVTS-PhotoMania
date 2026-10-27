@@ -1,11 +1,12 @@
 import { clearRecentProjects } from '@nvts/storage';
+import { uiIcon } from '../components/ShellTemplates';
 
 // Panel template and markup. Behavior is wired by the application controller.
 
 export const PREFERENCES_PANEL_TEMPLATE = `
 <section id="preferences-overlay" class="preferences-overlay" hidden>
   <div class="preferences-dialog" role="dialog" aria-modal="true" aria-labelledby="preferences-title">
-    <header><div><strong id="preferences-title">Preferencias</strong><p>Personalizá NVTS PhotoMania.</p></div><button type="button" id="preferences-close" class="preferences-close" aria-label="Cerrar preferencias">×</button></header>
+    <header><div><strong id="preferences-title">Preferencias</strong><p>Personalizá NVTS PhotoMania.</p></div><button type="button" id="preferences-close" class="preferences-close" aria-label="Cerrar preferencias">${uiIcon('close')}</button></header>
     <div class="preferences-content">
       <label class="preference-row" for="pref-recent-projects">
         <span><strong>Guardar proyectos recientes</strong><small>Recordar documentos creados o abiertos en este navegador. Se guardan copias locales para poder recuperarlos.</small></span>

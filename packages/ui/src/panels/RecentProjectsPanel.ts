@@ -6,6 +6,7 @@ import {
 } from '@nvts/storage';
 import { readPreferences } from './PreferencesPanel';
 import { Panel } from './Panel';
+import { uiIcon } from '../components/ShellTemplates';
 
 type LaunchProject = (name: string, width: number, height: number, file?: File) => Promise<void>;
 type RecentContextMenu = { container: HTMLDivElement; removeButton: HTMLButtonElement };
@@ -113,12 +114,12 @@ export class RecentProjectsPanel extends Panel {
   }
 
   private renderDisabled(host: HTMLElement): void {
-    host.innerHTML = '<div class="home-empty"><span>◷</span><strong>Proyectos recientes desactivados</strong><p>Podés activarlos desde Preferencias cuando quieras guardar una lista local.</p><button type="button" class="home-secondary" id="enable-recent-preference">Abrir preferencias</button></div>';
+    host.innerHTML = `<div class="home-empty">${uiIcon('recent')}<strong>Proyectos recientes desactivados</strong><p>Podés activarlos desde Preferencias cuando quieras guardar una lista local.</p><button type="button" class="home-secondary" id="enable-recent-preference">${uiIcon('preferences')}<span>Abrir preferencias</span></button></div>`;
     host.querySelector<HTMLButtonElement>('#enable-recent-preference')!.onclick = this.openPreferences;
   }
 
   private renderEmpty(host: HTMLElement): void {
-    host.innerHTML = '<div class="home-empty"><span>◷</span><strong>Todavía no hay proyectos recientes</strong><p>Los proyectos guardados en este navegador aparecerán acá.</p></div>';
+    host.innerHTML = `<div class="home-empty">${uiIcon('recent')}<strong>Todavía no hay proyectos recientes</strong><p>Los proyectos guardados en este navegador aparecerán acá.</p></div>`;
   }
 
   private createCard(item: RecentProjectInfo): HTMLButtonElement {

@@ -1,10 +1,11 @@
 import type { VectorShape } from '@nvts/shared';
+import { uiIcon } from '../components/ShellTemplates';
 
 // Panel template. Editor interactions are wired by the application controller.
 
 export const VECTOR_EDITOR_PANEL_TEMPLATE = `
 <section id="vector-panel" class="editor-panel vector-panel" hidden>
-  <header><span class="tool-icon tool-icon--vector-layer" aria-hidden="true"></span><strong>Editor vectorial</strong><span id="vector-layer-name"></span><button class="panel-close" id="vector-close" type="button" aria-label="Cerrar editor vectorial">×</button></header>
+  <header><span class="tool-icon tool-icon--vector-layer" aria-hidden="true"></span><strong>Editor vectorial</strong><span id="vector-layer-name"></span><button class="panel-close" id="vector-close" type="button" aria-label="Cerrar editor vectorial">${uiIcon('close')}</button></header>
   <div class="vector-editor-grid">
     <aside class="editor-list" id="vector-shape-list" aria-label="Objetos vectoriales"></aside>
     <div class="editor-settings">
@@ -22,10 +23,10 @@ export const VECTOR_EDITOR_PANEL_TEMPLATE = `
         <label>Texto <input id="vector-text" type="text" value="Texto vectorial" maxlength="500"/></label><label>Familia tipográfica <select id="vector-font-family"><option>Arial</option><option>Inter</option><option>Georgia</option><option>Times New Roman</option><option>Verdana</option><option>monospace</option></select></label><label>Tamaño de letra <input id="vector-font-size" type="number" min="1" max="2000" value="64"/></label><label>Estilo <select id="vector-font-style"><option value="normal">Normal</option><option value="italic">Itálica</option></select></label><label>Grosor tipográfico <select id="vector-font-weight"><option value="normal">Normal</option><option value="bold">Negrita</option></select></label><label>Alineación <select id="vector-text-align"><option value="left">Izquierda</option><option value="center">Centro</option><option value="right">Derecha</option></select></label>
         <label class="vector-points-field">Nodos / puntos (JSON) <textarea id="vector-points" rows="5" spellcheck="false" placeholder='[{"x":100,"y":100},{"x":300,"y":200}]'></textarea></label>
       </div>
-      <div class="vector-object-actions"><button type="button" id="vector-duplicate-shape">Duplicar objeto</button><button type="button" id="vector-shape-up">Subir objeto</button><button type="button" id="vector-shape-down">Bajar objeto</button><button type="button" id="vector-export-svg">Exportar SVG…</button><button id="vector-delete-shape" type="button" class="danger-button">Eliminar objeto</button></div>
+      <div class="vector-object-actions"><button type="button" id="vector-duplicate-shape">${uiIcon('duplicate')}<span>Duplicar objeto</span></button><button type="button" id="vector-shape-up">${uiIcon('move-up')}<span>Subir objeto</span></button><button type="button" id="vector-shape-down">${uiIcon('move-down')}<span>Bajar objeto</span></button><button type="button" id="vector-export-svg">${uiIcon('export')}<span>Exportar SVG…</span></button><button id="vector-delete-shape" type="button" class="danger-button">${uiIcon('delete')}<span>Eliminar objeto</span></button></div>
     </div>
   </div>
-  <footer><span>Las modificaciones se registran como una acción de historial al aplicar.</span><button id="vector-cancel" type="button">Cancelar</button><button id="vector-clear" type="button">Vaciar capa</button><button id="vector-apply" class="primary" type="button">Aplicar cambios</button></footer>
+  <footer><span>Las modificaciones se registran como una acción de historial al aplicar.</span><button id="vector-cancel" type="button">${uiIcon('close')}<span>Cancelar</span></button><button id="vector-clear" type="button">${uiIcon('clear')}<span>Vaciar capa</span></button><button id="vector-apply" class="primary" type="button">${uiIcon('apply')}<span>Aplicar cambios</span></button></footer>
 </section>
 `;
 

@@ -1,7 +1,9 @@
+import { uiIcon } from '../components/ShellTemplates';
+
 // Panel template. Event behavior lives in its panel renderer/controller.
 
 export const HISTORY_PANEL_TEMPLATE = `
-    <section class="dock-panel history-panel"><header><span>⌄</span><strong>Historial</strong><span id="history-memory" class="history-memory" title="Memoria aproximada del historial">0 B</span><span id="history-count" class="count">0</span><div class="panel-spacer"></div></header><div id="history-list" class="history-list"></div></section>
+    <section class="dock-panel history-panel"><header>${uiIcon('history')}<strong>Historial</strong><span id="history-memory" class="history-memory" title="Memoria aproximada del historial">0 B</span><span id="history-count" class="count">0</span><div class="panel-spacer"></div></header><div id="history-list" class="history-list"></div></section>
 `;
 
 
@@ -27,7 +29,9 @@ export function renderHistoryPanel(
   entries.forEach((entry, index) => {
     const row = document.createElement('div');
     row.className = 'history-entry' + (index === 0 ? ' current' : '');
-    const marker = document.createElement('span'); marker.textContent = '▢';
+    const marker = document.createElement('span');
+    marker.className = 'history-entry-icon';
+    marker.innerHTML = uiIcon('history-item');
     const label = document.createElement('span'); label.textContent = entry.label;
     const number = document.createElement('small'); number.textContent = String(entries.length - index).padStart(2, '0');
     row.append(marker, label, number); row.title = entry.label; list.append(row);

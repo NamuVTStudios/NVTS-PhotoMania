@@ -563,6 +563,18 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
     }
 
   private drawComicSplitShape(context: CanvasRenderingContext2D, shape: VectorShape, offsetX: number, offsetY: number, scale: number): void {
+    if (shape.kind === 'line') return this.drawComicSplitLine(context, shape, offsetX, offsetY, scale);
+    this.drawComicSplitPath(context, shape, offsetX, offsetY, scale);
+  }
+
+  private drawComicSplitLine(context: CanvasRenderingContext2D, shape: VectorShape, offsetX: number, offsetY: number, scale: number): void {
+    context.beginPath();
+    context.moveTo(offsetX + shape.x * scale, offsetY + shape.y * scale);
+    context.lineTo(offsetX + (shape.x + shape.width) * scale, offsetY + (shape.y + shape.height) * scale);
+    context.stroke();
+  }
+
+  private drawComicSplitPath(context: CanvasRenderingContext2D, shape: VectorShape, offsetX: number, offsetY: number, scale: number): void {
     const points = shape.points ?? [];
     if (points.length < 2) return;
     context.beginPath();
@@ -628,14 +640,22 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       const existing = layer.vectorShapes ?? [];
       const frame = existing.find((shape) => shape.kind === 'rectangle' && shape.x === 0 && shape.y === 0
         && Math.abs(shape.width - this.ctl.doc.width) <= 1 && Math.abs(shape.height - this.ctl.doc.height) <= 1);
-      const splitEndpoints = shapes.flatMap((shape) => {
-        const path = shape.points ?? [];
-        return path.length >= 2 ? [path[0], path[path.length - 1]] : [];
-      });
+      const splitEndpoints = shapes.flatMap((shape) => this.getComicSplitEndpoints(shape));
       const updated = frame ? this.cutComicFrameAtSplit(existing, frame, splitEndpoints) : existing;
       this.commitVectorShapes(layer, [...updated, ...shapes]);
       this.reportComicPanelCreated('split');
     }
+
+
+  private getComicSplitEndpoints(shape: VectorShape): Array<{ x: number; y: number }> {
+    if (shape.kind === 'line') return [
+      { x: shape.x, y: shape.y },
+      { x: shape.x + shape.width, y: shape.y + shape.height },
+    ];
+    const points = shape.points ?? [];
+    if (points.length < 2) return [];
+    return [points[0], points[points.length - 1]];
+  }
 
   protected cutComicFrameAtSplit(shapes: VectorShape[], frame: VectorShape, endpoints: Array<{ x: number; y: number }>): VectorShape[] {
       const gap = Math.max(this.comicBorderWidth * 2, this.comicBorderWidth * 2);
@@ -1102,16 +1122,20 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       if (!this.stroke) { this.clearToolPreview(); return; }
       try {
         this.commitPointerUpAction(e, this.strokeTool);
-        if (this.hasPendingBrushDabs()) {
-          this.pendingStrokeFinish = { tool: this.strokeTool };
-          this.requestRefreshFrame();
-          return;
-        }
-        this.finishStroke(this.strokeTool);
+        this.finishPendingBrushDabsOrStroke(this.strokeTool);
       } catch (error) {
         this.abortStroke(error);
       }
     }
+
+  private finishPendingBrushDabsOrStroke(tool: Tool | null): void {
+    if (!this.hasPendingBrushDabs()) {
+      this.finishStroke(tool);
+      return;
+    }
+    this.pendingStrokeFinish = { tool: this.strokeTool };
+    this.requestRefreshFrame();
+  }
 
   private finishVectorGestureAtPointer(event?: PointerEvent): void {
     if (!this.vectorGesture) return;

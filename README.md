@@ -96,7 +96,7 @@ The refactoring is incremental: modules that only define data, render a view, or
 
 - **Document templates:** the 23 document presets (social posts/stories, screen sizes, A4, US/European comics, manga/manhwa, animation, and UV/2D textures) are maintained as individual modules in the shared `@nvts/templates` workspace package so other NVTS apps can reuse them.
 - **Canvas and navigation:** fit-to-window view, zoom with controls or Ctrl/Meta + mouse wheel, panning with the Hand tool or Space + drag, and responsive canvas sizing.
-- **Drawing tools:** brush, eraser, clone stamp, eyedropper, line, rectangle, ellipse, bucket fill, text, vector selection, and a comic frame/panel tool. Clone Stamp uses `Alt + click` to set the source point, then samples only the source patch needed for each dab and paints into the selected paint layer. Same-layer cloning preserves original snapshots only for touched 256×256 tiles, with a 64 MiB per-stroke guard. Comic mode creates a full-page outer frame on click or individual rectangular panels by dragging; both are editable vector shapes and participate in document history. The brush exposes size, opacity, hardness, spacing, and smoothing controls; the clone stamp reuses size/opacity controls; the comic tool exposes frame/panel/split mode, border width, one-or-two split lines, and the spacing between parallel dividers. Tool and vector-shape icons are individual SVG assets in `apps/web/src/icons/tools/`; CSS masks let them inherit the active foreground color and remain legible in both themes.
+- **Drawing tools:** brush, eraser, clone stamp, eyedropper, line, rectangle, ellipse, bucket fill, text, vector selection, and a comic frame/panel tool. Clone Stamp uses `Alt + click` to set the source point, then samples only the source patch needed for each dab and paints into the selected paint layer. Same-layer cloning preserves original snapshots only for touched 256×256 tiles, with a 64 MiB per-stroke guard. Comic mode creates a full-page outer frame on click or individual rectangular panels by dragging; both are editable vector shapes and participate in document history. The brush exposes size, opacity, hardness, spacing, and smoothing controls; the clone stamp reuses size/opacity controls; the comic tool exposes frame/panel/split mode, border width, one-or-two straight split lines, and the spacing between parallel dividers. Tool and vector-shape icons are individual SVG assets in `apps/web/src/icons/tools/`. Menus, the welcome screen, timeline controls, comic manager, filter/effect panels, and dialog close buttons use the collection of 95 SVG assets in `apps/web/public/icons/ui/`; CSS masks inherit the active text color and remain legible in both themes. Google Drive and Dropbox display their SVG logos but remain marked as future integrations until their cloud APIs are implemented.
 - **Non-destructive layer masks:** affine transform masks, colorization masks with editable color strokes, and filter masks with per-layer filter stacks. All three mask types are created from **Layers → New Layer** in the Layers panel; the mask disclosure section keeps the selected mask controls available. Mask metadata is saved in `.nvtsphoto`; colorization currently uses a line-barrier region fill and is limited to 4 million document pixels. Filter masks apply to the entire layer; painted grayscale coverage and advanced warp transforms are not implemented yet.
 - **Layer model:** paint, filter, fill, file/image, vector, text, and group layers. Layers support names, order, visibility, lock state, opacity, blend mode, duplication, deletion, nested groups, and thumbnails.
 - **History:** pixel edits use the Wasm tile history; document structure and property changes are recorded by the TypeScript `DocumentController`. Undo/redo shortcuts are `Ctrl/Meta+Z`, `Ctrl/Meta+Shift+Z`, and `Ctrl/Meta+Y`. The history panel shows an estimated memory total, including snapshots retained during an active brush/eraser stroke.
@@ -124,6 +124,103 @@ NVTS-PhotoMania/
 │     │  ├─ branding/
 │     │  │  ├─ photomania-icon.png
 │     │  │  └─ photomania-icon.svg
+│     │  ├─ icons/
+│     │  │  └─ ui/
+│     │  │     ├─ apply.svg
+│     │  │     ├─ arrow-left.svg
+│     │  │     ├─ arrow-right.svg
+│     │  │     ├─ blur.svg
+│     │  │     ├─ brightness-down.svg
+│     │  │     ├─ brightness-up.svg
+│     │  │     ├─ browse.svg
+│     │  │     ├─ clear.svg
+│     │  │     ├─ close.svg
+│     │  │     ├─ contrast.svg
+│     │  │     ├─ delete.svg
+│     │  │     ├─ device.svg
+│     │  │     ├─ drop-paste.svg
+│     │  │     ├─ dropbox.svg
+│     │  │     ├─ duplicate.svg
+│     │  │     ├─ edge-detect.svg
+│     │  │     ├─ edit.svg
+│     │  │     ├─ effects.svg
+│     │  │     ├─ export-jpeg.svg
+│     │  │     ├─ export-png.svg
+│     │  │     ├─ export.svg
+│     │  │     ├─ file.svg
+│     │  │     ├─ filter.svg
+│     │  │     ├─ folder-open.svg
+│     │  │     ├─ folder.svg
+│     │  │     ├─ frame-first.svg
+│     │  │     ├─ frame-next.svg
+│     │  │     ├─ frame-previous.svg
+│     │  │     ├─ google-drive.svg
+│     │  │     ├─ help.svg
+│     │  │     ├─ history-item.svg
+│     │  │     ├─ history.svg
+│     │  │     ├─ image.svg
+│     │  │     ├─ import-image.svg
+│     │  │     ├─ import.svg
+│     │  │     ├─ invert.svg
+│     │  │     ├─ layer.svg
+│     │  │     ├─ link.svg
+│     │  │     ├─ move-down.svg
+│     │  │     ├─ move-up.svg
+│     │  │     ├─ new-project.svg
+│     │  │     ├─ noise.svg
+│     │  │     ├─ open-file.svg
+│     │  │     ├─ page.svg
+│     │  │     ├─ palette.svg
+│     │  │     ├─ panels-visible.svg
+│     │  │     ├─ panels.svg
+│     │  │     ├─ pause.svg
+│     │  │     ├─ pixelate.svg
+│     │  │     ├─ play.svg
+│     │  │     ├─ plugin-install.svg
+│     │  │     ├─ plugin-manage.svg
+│     │  │     ├─ plugins.svg
+│     │  │     ├─ plus.svg
+│     │  │     ├─ pop-out.svg
+│     │  │     ├─ posterize.svg
+│     │  │     ├─ preferences.svg
+│     │  │     ├─ project-name.svg
+│     │  │     ├─ ratio-lock.svg
+│     │  │     ├─ recent.svg
+│     │  │     ├─ ruler-horizontal.svg
+│     │  │     ├─ ruler-vertical.svg
+│     │  │     ├─ saturation.svg
+│     │  │     ├─ save-as.svg
+│     │  │     ├─ save.svg
+│     │  │     ├─ select.svg
+│     │  │     ├─ sepia.svg
+│     │  │     ├─ sharpen.svg
+│     │  │     ├─ solarize.svg
+│     │  │     ├─ storyboard.svg
+│     │  │     ├─ style-bevel.svg
+│     │  │     ├─ style-color-overlay.svg
+│     │  │     ├─ style-gradient-overlay.svg
+│     │  │     ├─ style-outer-glow.svg
+│     │  │     ├─ style-stroke.svg
+│     │  │     ├─ sun.svg
+│     │  │     ├─ template-animation.svg
+│     │  │     ├─ template-comic.svg
+│     │  │     ├─ template-print.svg
+│     │  │     ├─ template-screen.svg
+│     │  │     ├─ template-social.svg
+│     │  │     ├─ template-storyboard.svg
+│     │  │     ├─ template-texture.svg
+│     │  │     ├─ threshold.svg
+│     │  │     ├─ timeline.svg
+│     │  │     ├─ view.svg
+│     │  │     ├─ vignette.svg
+│     │  │     ├─ workspace-animation.svg
+│     │  │     ├─ workspace-comics.svg
+│     │  │     ├─ workspace-general.svg
+│     │  │     ├─ workspace-illustration.svg
+│     │  │     ├─ workspace-image.svg
+│     │  │     ├─ workspace-storyboard.svg
+│     │  │     ├─ workspace-vector.svg
+│     │  │     └─ workspace.svg
 │     │  └─ wasm/
 │     │     ├─ coi-serviceworker.js
 │     │     └─ engine.wasm
@@ -379,6 +476,7 @@ NVTS-PhotoMania/
 │  ├─ vector-shape-cloning.test.mjs
 │  └─ vector-svg-export.test.mjs
 ├─ tools/
+│  ├─ audit-control-flow.mjs
 │  └─ copy-wasm.mjs
 ├─ .env.example
 ├─ .gitattributes
@@ -517,10 +615,10 @@ The **Storyboarding** workspace exposes the storyboard panel and the **Animation
 
 ## Comic panel tools
 
-- The comic tool supports an outer page frame, rectangular panels, and a split/cut mode that draws one full-page horizontal or vertical divider, or two parallel dividers. The two-line option exposes a configurable distance between the dividers; the live preview uses the same gap as the committed vector geometry.
+- The comic tool supports an outer page frame, rectangular panels, and a split/cut mode that draws a straight divider across the page based on the gesture start and end points, or two straight parallel dividers. The two-line option exposes a configurable perpendicular distance between the dividers; the live preview uses the same geometry as the committed vector shapes.
 - Creating a rectangular panel also creates a dedicated paint layer whose `comicClipBounds` metadata limits brush, eraser, clone-stamp, shape, and fill writes to the panel rectangle. The bounds are serialized in `.nvtsphoto` files.
 - The panel border remains editable vector content on the selected vector layer; the dedicated paint layer is selected after creation.
 - Current limitation: panel clipping is rectangular; polygonal and slanted panel boundaries are not yet supported.
 
 
-Comic frame splitting supports freehand curved divider paths, one or two parallel paths, and opens the full-page outer frame border at divider endpoints when a matching frame rectangle exists.
+Comic frame splitting creates straight dividers from the gesture start/end points, supports one or two parallel lines with adjustable spacing, and opens the full-page outer frame border where the dividers meet it when a matching frame rectangle exists. Run `pnpm audit:control-flow` to check maintained source files for nested control-flow statements; generated WebAssembly artifacts and installed dependencies are excluded.

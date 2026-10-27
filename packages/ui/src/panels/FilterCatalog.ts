@@ -1,4 +1,5 @@
 import type { FilterKind } from '@nvts/shared';
+import { uiIcon } from '../components/ShellTemplates';
 
 type FilterDefinition = { kind: FilterKind; label: string };
 type FilterGroup = { title: string; filters: readonly FilterDefinition[] };
@@ -43,12 +44,32 @@ export const FILTER_LABELS: Record<FilterKind, string> = Object.fromEntries(
   FILTER_GROUPS.flatMap((group) => group.filters.map(({ kind, label }) => [kind, label])),
 ) as Record<FilterKind, string>;
 
+const FILTER_ICON_NAMES: Record<FilterKind, string> = {
+  grayscale: 'image',
+  brightness: 'sun',
+  contrast: 'contrast',
+  saturation: 'saturation',
+  'hue-rotate': 'palette',
+  sepia: 'sepia',
+  invert: 'invert',
+  blur: 'blur',
+  sharpen: 'sharpen',
+  posterize: 'posterize',
+  threshold: 'threshold',
+  duotone: 'style-color-overlay',
+  solarize: 'solarize',
+  pixelate: 'pixelate',
+  'edge-detect': 'edge-detect',
+  noise: 'noise',
+  vignette: 'vignette',
+};
+
 /** Builds the category list from the same catalog used to label selected filters. */
 export function renderFilterGroups(): string {
   return FILTER_GROUPS.map(({ title, filters }) => {
     const buttons = filters.map(({ kind, label }) => {
       const active = kind === 'grayscale' ? ' class="active"' : '';
-      return `<button${active} data-filter="${kind}">${label}</button>`;
+      return `<button${active} data-filter="${kind}">${uiIcon(FILTER_ICON_NAMES[kind])}<span>${label}</span></button>`;
     }).join('');
     return `<div class="filter-group"><strong>${title}</strong>${buttons}</div>`;
   }).join('');

@@ -1,25 +1,26 @@
 import type { ComicConfig, ComicPageEntry } from '../features/comics/types';
+import { uiIcon } from '../components/ShellTemplates';
 
 // Panel template. Event behavior lives in its panel renderer/controller.
 
 export const COMIC_MANAGER_PANEL_TEMPLATE = `
     <section id="comic-manager-panel" class="dock-panel comic-manager-panel" hidden aria-label="Gestor de cómics">
-      <header><strong>▤ Gestor de cómics</strong><div class="panel-spacer"></div><span id="comic-config-status" class="comic-status" role="status">Configuración local</span></header>
+      <header><strong class="panel-title-icon">${uiIcon('workspace-comics')}<span>Gestor de cómics</span></strong><div class="panel-spacer"></div><span id="comic-config-status" class="comic-status" role="status">Configuración local</span></header>
       <div class="comic-manager-content">
         <section class="comic-project-setup" aria-label="Estructura del proyecto de cómic">
           <div class="comic-project-section-title"><strong>Proyecto y carpetas</strong><span>comicConfig.json</span></div>
           <label class="comic-field">Nombre del proyecto<input id="comic-project-name" type="text" maxlength="160" value="Mi cómic" /></label>
           <label class="comic-field">Ruta del proyecto<input id="comic-project-location" type="text" readonly value="Elegí una carpeta base para crear el proyecto" /></label>
           <div class="comic-project-actions">
-            <button id="comic-select-location" type="button">Elegir carpeta base…</button>
-            <button id="comic-link-project" type="button">Vincular proyecto existente…</button>
+            <button id="comic-select-location" type="button">${uiIcon('folder-open')}<span>Elegir carpeta base…</span></button>
+            <button id="comic-link-project" type="button">${uiIcon('link')}<span>Vincular proyecto existente…</span></button>
           </div>
           <div class="comic-field-grid comic-folder-grid">
             <label class="comic-field">Directorio de páginas<input id="comic-pages-dir-name" type="text" value="páginas" readonly /></label>
             <label class="comic-field">Directorio de exportación<input id="comic-export-dir-name" type="text" value="exportación" readonly /></label>
           </div>
-          <button id="comic-create-project" class="primary comic-create-project" type="button">Crear estructura del proyecto</button>
-          <button id="comic-export-project" type="button">Exportar copia del proyecto</button>
+          <button id="comic-create-project" class="primary comic-create-project" type="button">${uiIcon('folder')}<span>Crear estructura del proyecto</span></button>
+          <button id="comic-export-project" type="button">${uiIcon('export')}<span>Exportar copia del proyecto</span></button>
           <p class="comic-note">En la carpeta del proyecto se guardará <code>comicConfig.json</code>, junto con <code>páginas/</code> y <code>exportación/</code>. El navegador puede ocultar la ruta absoluta por privacidad.</p>
         </section>
         <label class="comic-field">Título de la serie<input id="comic-title" type="text" maxlength="160" value="Mi cómic" /></label>
@@ -38,18 +39,18 @@ export const COMIC_MANAGER_PANEL_TEMPLATE = `
         <div class="comic-pages-heading"><strong>Páginas</strong><span id="comic-page-count">0 páginas</span></div>
         <div id="comic-pages-list" class="comic-pages-list"></div>
         <div class="comic-page-actions">
-          <button id="comic-add-page" type="button" title="Añadir página">＋ Página</button>
-          <button id="comic-duplicate-page" type="button" title="Duplicar página" disabled>Duplicar</button>
-          <button id="comic-page-up" type="button" title="Mover página arriba" disabled>↑</button>
-          <button id="comic-page-down" type="button" title="Mover página abajo" disabled>↓</button>
-          <button id="comic-delete-page" type="button" title="Eliminar página" disabled>−</button>
+          <button id="comic-add-page" type="button" title="Añadir página">${uiIcon('plus')}<span>Página</span></button>
+          <button id="comic-duplicate-page" type="button" title="Duplicar página" aria-label="Duplicar página" disabled>${uiIcon('duplicate')}</button>
+          <button id="comic-page-up" type="button" title="Mover página arriba" aria-label="Mover página arriba" disabled>${uiIcon('move-up')}</button>
+          <button id="comic-page-down" type="button" title="Mover página abajo" aria-label="Mover página abajo" disabled>${uiIcon('move-down')}</button>
+          <button id="comic-delete-page" type="button" title="Eliminar página" aria-label="Eliminar página" disabled>${uiIcon('delete')}</button>
         </div>
-        <button id="comic-create-canvas" class="primary comic-create-canvas" type="button" disabled>Crear lienzo de la página seleccionada</button>
-        <button id="comic-page-open-file" type="button" disabled>Abrir archivo .nvtsphoto para esta página…</button>
+        <button id="comic-create-canvas" class="primary comic-create-canvas" type="button" disabled>${uiIcon('new-project')}<span>Crear lienzo de la página seleccionada</span></button>
+        <button id="comic-page-open-file" type="button" disabled>${uiIcon('open-file')}<span>Abrir archivo .nvtsphoto para esta página…</span></button>
         <input id="comic-page-open-input" type="file" accept=".nvtsphoto,application/x-nvtsphoto" hidden />
         <p class="comic-note">Cada página se trabaja como documento independiente <code>.nvtsphoto</code> y se guarda en el directorio <code>páginas/</code> si el proyecto está configurado. La configuración del tomo vive en <code>comicConfig.json</code>.</p>
       </div>
-      <footer class="comic-manager-footer"><button id="comic-config-import" type="button">Importar comicConfig.json…</button><button id="comic-config-export" class="primary" type="button">Guardar comicConfig.json</button><input id="comic-config-file" type="file" accept=".json,application/json" hidden /></footer>
+      <footer class="comic-manager-footer"><button id="comic-config-import" type="button">${uiIcon('import')}<span>Importar comicConfig.json…</span></button><button id="comic-config-export" class="primary" type="button">${uiIcon('save')}<span>Guardar comicConfig.json</span></button><input id="comic-config-file" type="file" accept=".json,application/json" hidden /></footer>
     </section>
 `;
 
@@ -110,7 +111,7 @@ function createComicPageRenameButton(page: ComicPageEntry, callbacks: ComicManag
   edit.className = 'comic-page-rename';
   edit.title = 'Renombrar página';
   edit.setAttribute('aria-label', `Renombrar ${page.name}`);
-  edit.textContent = '✎';
+  edit.innerHTML = uiIcon('edit');
   edit.onclick = () => {
     const value = prompt('Nombre de la página', page.name);
     if (value === null) return;

@@ -1,3 +1,4 @@
+import { uiIcon } from '../components/ShellTemplates';
 /** Docking, floating and resizing behavior for PhotoMania's side panels. */
 import {
   readDockLayout,
@@ -204,7 +205,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
     button.type = 'button';
     if (!header) return button;
     button.className = 'panel-float-toggle';
-    button.textContent = '↗';
+    button.innerHTML = uiIcon('pop-out');
     button.title = 'Separar panel en una ventana flotante';
     button.setAttribute('aria-label', `Separar panel: ${definition.title}`);
     button.setAttribute('aria-pressed', 'false');

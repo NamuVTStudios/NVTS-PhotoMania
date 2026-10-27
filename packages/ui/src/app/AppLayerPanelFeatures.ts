@@ -786,22 +786,28 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
   protected async imageFileToDocumentPixels(file: File): Promise<Uint8Array> {
       const bitmap = await createImageBitmap(file);
       try {
-        const { width, height } = this.ctl.doc;
-        const temp = document.createElement('canvas'); temp.width = width; temp.height = height;
-        const ctx = temp.getContext('2d', { willReadFrequently: true });
-        if (!ctx) throw new Error('No se pudo preparar la imagen para la capa de archivo.');
-        // Centra la imagen y solo la reduce si excede el tamaño del lienzo; conserva su proporción.
-        const scale = Math.min(1, width / bitmap.width, height / bitmap.height);
-        const drawWidth = Math.max(1, Math.round(bitmap.width * scale));
-        const drawHeight = Math.max(1, Math.round(bitmap.height * scale));
-        const x = Math.round((width - drawWidth) / 2), y = Math.round((height - drawHeight) / 2);
-        ctx.clearRect(0, 0, width, height);
-        ctx.drawImage(bitmap, x, y, drawWidth, drawHeight);
-        return new Uint8Array(ctx.getImageData(0, 0, width, height).data);
+        return this.renderBitmapToDocumentPixels(bitmap);
       } finally {
         bitmap.close();
       }
     }
+
+  private renderBitmapToDocumentPixels(bitmap: ImageBitmap): Uint8Array {
+    const { width, height } = this.ctl.doc;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('No se pudo preparar la imagen para la capa de archivo.');
+    const scale = Math.min(1, width / bitmap.width, height / bitmap.height);
+    const drawWidth = Math.max(1, Math.round(bitmap.width * scale));
+    const drawHeight = Math.max(1, Math.round(bitmap.height * scale));
+    const x = Math.round((width - drawWidth) / 2);
+    const y = Math.round((height - drawHeight) / 2);
+    context.clearRect(0, 0, width, height);
+    context.drawImage(bitmap, x, y, drawWidth, drawHeight);
+    return new Uint8Array(context.getImageData(0, 0, width, height).data);
+  }
 
   protected async refreshLinkedFileLayer(layer: LayerNode, askForPermission: boolean): Promise<void> {
       if (layer.type !== 'file') return;

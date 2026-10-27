@@ -1,114 +1,124 @@
-import type { VectorShape, VectorPoint } from '@nvts/shared';
+import type { VectorShape } from '@nvts/shared';
 
 export interface ComicSplitPoint {
   x: number;
   y: number;
 }
 
-/** Builds one freehand divider or two parallel offset dividers from a drawn path. */
+type DividerLine = { point: ComicSplitPoint; direction: ComicSplitPoint };
+type LineIntersection = ComicSplitPoint & { t: number };
+
+/** Creates one straight divider or two straight, parallel dividers across the document. */
 export function createComicSplitShapes(
   documentWidth: number,
   documentHeight: number,
-  path: ComicSplitPoint[],
+  gesture: ComicSplitPoint[],
   lineCount: 1 | 2,
   lineDistance: number,
   strokeWidth: number,
 ): VectorShape[] {
-  const points = simplifyPath(path.map((point) => ({
-    x: clamp(point.x, 0, documentWidth),
-    y: clamp(point.y, 0, documentHeight),
-  })));
-  if (points.length < 2) return [];
-  const offsets = lineCount === 2 ? [-clamp(lineDistance, 1, Math.max(documentWidth, documentHeight)) / 2,
-    clamp(lineDistance, 1, Math.max(documentWidth, documentHeight)) / 2] : [0];
-  return offsets.map((offset) => createPathShape(
-    extendPathToDocumentBounds(offsetPath(points, offset), documentWidth, documentHeight),
-    strokeWidth,
-  ));
+  if (gesture.length < 2 || documentWidth < 1 || documentHeight < 1) return [];
+  const gestureLine = createGestureLine(gesture, documentWidth, documentHeight);
+  if (!gestureLine) return [];
+  const offsets = getDividerOffsets(lineCount, lineDistance, documentWidth, documentHeight);
+  return offsets.map((offset) => createDividerShape(gestureLine, offset, documentWidth, documentHeight, strokeWidth)).filter(isValidShape);
 }
 
-function simplifyPath(points: ComicSplitPoint[]): ComicSplitPoint[] {
-  return points.filter((point, index) => index === 0 || Math.hypot(point.x - points[index - 1].x, point.y - points[index - 1].y) >= 1);
+function createGestureLine(
+  gesture: ComicSplitPoint[],
+  width: number,
+  height: number,
+): DividerLine | null {
+  const start = clampPoint(gesture[0], width, height);
+  const end = clampPoint(gesture[gesture.length - 1], width, height);
+  const direction = { x: end.x - start.x, y: end.y - start.y };
+  if (Math.hypot(direction.x, direction.y) < 1) return null;
+  return { point: start, direction };
 }
 
-function extendPathToDocumentBounds(points: ComicSplitPoint[], width: number, height: number): ComicSplitPoint[] {
-  const first = extendEndpoint(points[0], points[1], width, height);
-  const lastIndex = points.length - 1;
-  const last = extendEndpoint(points[lastIndex], points[lastIndex - 1], width, height);
-  return [first, ...points.slice(1, -1), last];
+function getDividerOffsets(count: 1 | 2, distance: number, width: number, height: number): number[] {
+  if (count === 1) return [0];
+  const halfDistance = clamp(distance, 1, Math.max(width, height)) / 2;
+  return [-halfDistance, halfDistance];
 }
 
-function extendEndpoint(endpoint: ComicSplitPoint, neighbor: ComicSplitPoint, width: number, height: number): ComicSplitPoint {
-  const direction = getEndpointDirection(endpoint, neighbor, width, height);
-  const intersections: Array<{ t: number; x: number; y: number }> = [];
-  collectVerticalIntersections(endpoint, direction, width, height, intersections);
-  collectHorizontalIntersections(endpoint, direction, width, height, intersections);
-  intersections.sort((a, b) => a.t - b.t);
-  return intersections[0] ? { x: intersections[0].x, y: intersections[0].y } : clampPoint(endpoint, width, height);
+function createDividerShape(
+  baseLine: DividerLine,
+  offset: number,
+  width: number,
+  height: number,
+  strokeWidth: number,
+): VectorShape | null {
+  const line = offsetLine(baseLine, offset);
+  const points = clipLineToDocument(line, width, height);
+  if (points.length !== 2) return null;
+  return createLineShape(points, strokeWidth);
 }
 
-function getEndpointDirection(endpoint: ComicSplitPoint, neighbor: ComicSplitPoint, width: number, height: number): ComicSplitPoint {
-  const inside = endpoint.x >= 0 && endpoint.x <= width && endpoint.y >= 0 && endpoint.y <= height;
-  if (inside) return { x: endpoint.x - neighbor.x, y: endpoint.y - neighbor.y };
-  return { x: neighbor.x - endpoint.x, y: neighbor.y - endpoint.y };
+function offsetLine(line: DividerLine, offset: number): DividerLine {
+  const length = Math.hypot(line.direction.x, line.direction.y);
+  const normal = { x: -line.direction.y / length, y: line.direction.x / length };
+  return {
+    point: { x: line.point.x + normal.x * offset, y: line.point.y + normal.y * offset },
+    direction: line.direction,
+  };
 }
 
-function collectVerticalIntersections(
-  endpoint: ComicSplitPoint, direction: ComicSplitPoint, width: number, height: number,
-  intersections: Array<{ t: number; x: number; y: number }>,
+function clipLineToDocument(line: DividerLine, width: number, height: number): ComicSplitPoint[] {
+  const intersections: LineIntersection[] = [];
+  addVerticalIntersections(line, width, height, intersections);
+  addHorizontalIntersections(line, width, height, intersections);
+  const unique = uniqueIntersections(intersections);
+  unique.sort((first, second) => first.t - second.t);
+  if (unique.length < 2) return [];
+  return [unique[0], unique[unique.length - 1]].map(({ x, y }) => ({ x, y }));
+}
+
+function addVerticalIntersections(
+  line: DividerLine,
+  width: number,
+  height: number,
+  target: LineIntersection[],
 ): void {
-  if (direction.x === 0) return;
-  for (const x of [0, width]) addVerticalIntersection(endpoint, direction, x, height, intersections);
+  [0, width].forEach((x) => addVerticalIntersection(line, x, height, target));
 }
 
-function addVerticalIntersection(
-  endpoint: ComicSplitPoint, direction: ComicSplitPoint, x: number, height: number,
-  intersections: Array<{ t: number; x: number; y: number }>,
+function addVerticalIntersection(line: DividerLine, x: number, height: number, target: LineIntersection[]): void {
+  const dx = line.direction.x;
+  if (dx === 0) return;
+  const t = (x - line.point.x) / dx;
+  const y = line.point.y + line.direction.y * t;
+  if (y < -0.000001 || y > height + 0.000001) return;
+  target.push({ x, y: clamp(y, 0, height), t });
+}
+
+function addHorizontalIntersections(
+  line: DividerLine,
+  width: number,
+  height: number,
+  target: LineIntersection[],
 ): void {
-  const t = (x - endpoint.x) / direction.x;
-  const y = endpoint.y + direction.y * t;
-  if (y < 0 || y > height || t < 0) return;
-  intersections.push({ t, x, y });
+  [0, height].forEach((y) => addHorizontalIntersection(line, y, width, target));
 }
 
-function collectHorizontalIntersections(
-  endpoint: ComicSplitPoint, direction: ComicSplitPoint, width: number, height: number,
-  intersections: Array<{ t: number; x: number; y: number }>,
-): void {
-  if (direction.y === 0) return;
-  for (const y of [0, height]) addHorizontalIntersection(endpoint, direction, y, width, intersections);
+function addHorizontalIntersection(line: DividerLine, y: number, width: number, target: LineIntersection[]): void {
+  const dy = line.direction.y;
+  if (dy === 0) return;
+  const t = (y - line.point.y) / dy;
+  const x = line.point.x + line.direction.x * t;
+  if (x < -0.000001 || x > width + 0.000001) return;
+  target.push({ x: clamp(x, 0, width), y, t });
 }
 
-function addHorizontalIntersection(
-  endpoint: ComicSplitPoint, direction: ComicSplitPoint, y: number, width: number,
-  intersections: Array<{ t: number; x: number; y: number }>,
-): void {
-  const t = (y - endpoint.y) / direction.y;
-  const x = endpoint.x + direction.x * t;
-  if (x < 0 || x > width || t < 0) return;
-  intersections.push({ t, x, y });
+function uniqueIntersections(points: LineIntersection[]): LineIntersection[] {
+  return points.filter((point, index, source) => source.findIndex((candidate) => (
+    Math.abs(candidate.x - point.x) < 0.000001 && Math.abs(candidate.y - point.y) < 0.000001
+  )) === index);
 }
 
-function clampPoint(point: ComicSplitPoint, width: number, height: number): ComicSplitPoint {
-  return { x: clamp(point.x, 0, width), y: clamp(point.y, 0, height) };
-}
-
-function offsetPath(points: ComicSplitPoint[], offset: number): ComicSplitPoint[] {
-  if (offset === 0) return points;
-  return points.map((point, index) => {
-    const previous = points[Math.max(0, index - 1)];
-    const next = points[Math.min(points.length - 1, index + 1)];
-    const dx = next.x - previous.x;
-    const dy = next.y - previous.y;
-    const length = Math.hypot(dx, dy) || 1;
-    return { x: point.x - (dy / length) * offset, y: point.y + (dx / length) * offset };
-  });
-}
-
-function createPathShape(points: ComicSplitPoint[], strokeWidth: number): VectorShape {
+function createLineShape(points: ComicSplitPoint[], strokeWidth: number): VectorShape {
   const xs = points.map((point) => point.x);
   const ys = points.map((point) => point.y);
-  const vectorPoints: VectorPoint[] = points.map((point) => ({ ...point }));
   return {
     id: crypto.randomUUID(),
     kind: 'freehand',
@@ -116,7 +126,7 @@ function createPathShape(points: ComicSplitPoint[], strokeWidth: number): Vector
     y: Math.min(...ys),
     width: Math.max(...xs) - Math.min(...xs),
     height: Math.max(...ys) - Math.min(...ys),
-    points: vectorPoints,
+    points: points.map((point) => ({ ...point })),
     color: '#000000',
     opacity: 1,
     strokeWidth: clamp(strokeWidth, 1, 20),
@@ -126,8 +136,16 @@ function createPathShape(points: ComicSplitPoint[], strokeWidth: number): Vector
     fillColor: 'transparent',
     strokeDash: 'solid',
     lineCap: 'butt',
-    lineJoin: 'round',
+    lineJoin: 'miter',
   };
+}
+
+function isValidShape(shape: VectorShape | null): shape is VectorShape {
+  return shape !== null;
+}
+
+function clampPoint(point: ComicSplitPoint, width: number, height: number): ComicSplitPoint {
+  return { x: clamp(point.x, 0, width), y: clamp(point.y, 0, height) };
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

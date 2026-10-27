@@ -1,9 +1,22 @@
 import type { LayerNode } from '@nvts/document-model';
 import { Panel } from './Panel';
+import { uiIcon } from '../components/ShellTemplates';
 
 export const LAYER_EFFECTS_PANEL_TEMPLATE = `
-<section id="effects-panel" class="editor-panel" hidden><header><strong>✧ Estilos de capa</strong><select id="effects-layer-select" aria-label="Capa para editar estilos"></select><button class="panel-close" data-close="effects-panel">×</button></header><div class="editor-content"><aside class="editor-list"><button class="active">□ Trazo</button><button>□ Superposición de colores</button><button>□ Superposición de degradados</button><button>□ Resplandor exterior</button><button>□ Bisel y relieve</button></aside><div class="editor-settings"><strong>Trazo</strong><label>Tamaño <input type="range" min="1" max="40" value="3"/><output>3 px</output></label><label>Opacidad <input type="range" min="0" max="100" value="100"/><output>100%</output></label><label>Posición <select><option>Exterior</option><option>Interior</option><option>Centro</option></select></label><label>Color <input type="color" value="#000000"/></label></div></div><footer><span>Vista previa en vivo</span><button data-close="effects-panel">Cancelar</button><button class="primary" id="effects-apply">Aplicar</button></footer></section>
-`;
+<section id="effects-panel" class="editor-panel" hidden>
+  <header><strong class="panel-title-icon">${uiIcon('effects')}<span>Estilos de capa</span></strong><select id="effects-layer-select" aria-label="Capa para editar estilos"></select><button class="panel-close" data-close="effects-panel" type="button" aria-label="Cerrar estilos">${uiIcon('close')}</button></header>
+  <div class="editor-content">
+    <aside class="editor-list">
+      <button class="active">${uiIcon('style-stroke')}<span>Trazo</span></button>
+      <button>${uiIcon('style-color-overlay')}<span>Superposición de colores</span></button>
+      <button>${uiIcon('style-gradient-overlay')}<span>Superposición de degradados</span></button>
+      <button>${uiIcon('style-outer-glow')}<span>Resplandor exterior</span></button>
+      <button>${uiIcon('style-bevel')}<span>Bisel y relieve</span></button>
+    </aside>
+    <div class="editor-settings"><strong>Trazo</strong><label>Tamaño <input type="range" min="1" max="40" value="3"/><output>3 px</output></label><label>Opacidad <input type="range" min="0" max="100" value="100"/><output>100%</output></label><label>Posición <select><option>Exterior</option><option>Interior</option><option>Centro</option></select></label><label>Color <input type="color" value="#000000"/></label></div>
+  </div>
+  <footer><span>Vista previa en vivo</span><button data-close="effects-panel">Cancelar</button><button class="primary" id="effects-apply">Aplicar</button></footer>
+</section>`;
 
 /** Owns the layer selector and visibility behavior for the layer-effects editor. */
 export class LayerEffectsPanelController extends Panel {

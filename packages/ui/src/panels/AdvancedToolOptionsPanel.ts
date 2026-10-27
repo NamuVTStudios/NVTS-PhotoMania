@@ -1,3 +1,4 @@
+import { uiIcon } from '../components/ShellTemplates';
 import type { TextLayerAlign } from '@nvts/shared';
 
 // Panel template. Event behavior lives in its panel renderer/controller.
@@ -48,7 +49,7 @@ function getAdvancedToolMarkup(tool: string, brush: AdvancedBrushSettings, text:
 }
 
 function getBrushMarkup(brush: AdvancedBrushSettings): string {
-  return `<label class="advanced-setting">Dureza <output id="advanced-hardness-value">${brush.hardness}%</output><input id="advanced-hardness" type="range" min="0" max="100" value="${brush.hardness}"/></label><label class="advanced-setting">Espaciado <output id="advanced-spacing-value">${brush.spacing}%</output><input id="advanced-spacing" type="range" min="1" max="100" value="${brush.spacing}"/></label><label class="advanced-setting">Suavizado del trazo <output id="advanced-smoothing-value">${brush.smoothing}%</output><input id="advanced-smoothing" type="range" min="0" max="100" value="${brush.smoothing}"/></label><p class="hint">La dureza controla el borde del pincel; el espaciado cambia la frecuencia de las pinceladas y el suavizado reduce temblores.</p><div class="advanced-tool-actions"><strong>Ajustes rápidos de la capa</strong><div><button id="advanced-brightness-down" type="button">Brillo −</button><button id="advanced-brightness-up" type="button">Brillo +</button></div><p class="hint">Ajusta los píxeles de la capa de pintura activa y se registra en el historial.</p></div>`;
+  return `<label class="advanced-setting">Dureza <output id="advanced-hardness-value">${brush.hardness}%</output><input id="advanced-hardness" type="range" min="0" max="100" value="${brush.hardness}"/></label><label class="advanced-setting">Espaciado <output id="advanced-spacing-value">${brush.spacing}%</output><input id="advanced-spacing" type="range" min="1" max="100" value="${brush.spacing}"/></label><label class="advanced-setting">Suavizado del trazo <output id="advanced-smoothing-value">${brush.smoothing}%</output><input id="advanced-smoothing" type="range" min="0" max="100" value="${brush.smoothing}"/></label><p class="hint">La dureza controla el borde del pincel; el espaciado cambia la frecuencia de las pinceladas y el suavizado reduce temblores.</p><div class="advanced-tool-actions"><strong>Ajustes rápidos de la capa</strong><div><button id="advanced-brightness-down" type="button">${uiIcon('brightness-down')}<span>Brillo −</span></button><button id="advanced-brightness-up" type="button">${uiIcon('brightness-up')}<span>Brillo +</span></button></div><p class="hint">Ajusta los píxeles de la capa de pintura activa y se registra en el historial.</p></div>`;
 }
 
 function getEraserMarkup(brush: AdvancedBrushSettings): string {

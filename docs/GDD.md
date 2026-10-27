@@ -137,4 +137,4 @@ Dedicated Storyboarding and Animation workspaces are available. Storyboarding pr
 - Current limitation: panel clipping is rectangular; polygonal and slanted panel boundaries are not yet supported.
 
 
-Comic frame splitting supports freehand curved divider paths, one or two parallel paths, and opens the full-page outer frame border at divider endpoints when a matching frame rectangle exists.
+Comic frame splitting creates straight dividers from the gesture start/end points, supports one or two parallel lines with adjustable spacing, and opens the full-page outer frame border where the dividers meet it when a matching frame rectangle exists.

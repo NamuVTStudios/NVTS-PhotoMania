@@ -9,7 +9,8 @@
     "build": "pnpm --filter @nvts/web build",
     "preview": "pnpm --filter @nvts/web preview",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --test"
+    "test": "node --test",
+    "audit:control-flow": "node tools/audit-control-flow.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

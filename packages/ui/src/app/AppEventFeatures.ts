@@ -415,8 +415,8 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
     }
 
   protected async exportVisibleImage(mimeType: 'image/png' | 'image/jpeg'): Promise<void> {
+      if (this.stroke) return;
       try {
-        if (this.stroke) return;
         const { width, height, name } = this.ctl.doc;
         const composition = this.createSamplingCanvas(width, height);
         this.composeSamplingLayers(this.ctl.doc.layers, composition, width, height, (layer) => this.ctl.readPixels(layer));

@@ -1,10 +1,11 @@
 import { Panel } from './Panel';
+import { uiIcon } from '../components/ShellTemplates';
 
 /** Panel de guion gráfico: organiza tomas y notas por plano. */
 export const STORYBOARD_PANEL_TEMPLATE = `
 <section id="storyboard-panel" class="dock-panel storyboard-panel" hidden aria-label="Guion gráfico">
-  <header><strong>▤ Guion gráfico</strong><div class="panel-spacer"></div><button id="storyboard-add-shot" type="button">＋ Plano</button></header>
-  <div class="storyboard-toolbar"><label>Secuencia <input id="storyboard-sequence" value="Secuencia 1" maxlength="100"></label><button id="storyboard-export" type="button">Exportar JSON</button></div>
+  <header><strong class="panel-title-icon">${uiIcon('storyboard')}<span>Guion gráfico</span></strong><div class="panel-spacer"></div><button id="storyboard-add-shot" type="button">${uiIcon('plus')}<span>Plano</span></button></header>
+  <div class="storyboard-toolbar"><label>Secuencia <input id="storyboard-sequence" value="Secuencia 1" maxlength="100"></label><button id="storyboard-export" type="button">${uiIcon('export')}<span>Exportar JSON</span></button></div>
   <div id="storyboard-shots" class="storyboard-shots" aria-live="polite"></div>
   <p class="panel-hint">Organizá los planos, su descripción y duración. Los datos se guardan en este navegador.</p>
 </section>`;
