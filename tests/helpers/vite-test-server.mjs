@@ -1,7 +1,9 @@
 import { resolve } from 'node:path';
 import { createServer } from 'vite';
 
-/** Creates an isolated Vite SSR server shared by source-module tests. */
+/** Creates an isolated Vite SSR server shared by source-module tests.
+ * The test script runs test files sequentially to avoid overlapping Vite/WebSocket servers.
+ */
 export function createViteTestServer() {
   return createServer({
     configFile: resolve('apps/web/vite.config.ts'),
