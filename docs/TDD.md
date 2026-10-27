@@ -277,3 +277,7 @@ The latest static control-flow audit scanned 143 project TypeScript/JavaScript f
 
 
 Comic frame splitting creates straight dividers from the gesture start/end points, supports one or two parallel lines with adjustable spacing, and opens the full-page outer frame border where the dividers meet it when a matching frame rectangle exists.
+
+### WebAssembly heap export compatibility
+
+The engine build explicitly exports `HEAPU8` with `-s EXPORTED_RUNTIME_METHODS=HEAPU8`. Newer Emscripten releases no longer expose standard heap views on the returned module by default, while the TypeScript memory wrappers need `module.HEAPU8`. `EngineClient.create` validates this contract and reports an actionable initialization error if the export is missing.

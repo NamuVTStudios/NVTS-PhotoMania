@@ -16,6 +16,15 @@ export interface EngineCapabilities {
   sharedMemory: boolean;
 }
 
+function validateHeapExport(mod: NvtsEngineModule): void {
+  const heap = (mod as Partial<NvtsEngineModule>).HEAPU8;
+  if (!(heap instanceof Uint8Array)) {
+    throw new Error(
+      'El motor Wasm no expone HEAPU8. Recompílalo con -s EXPORTED_RUNTIME_METHODS=HEAPU8.',
+    );
+  }
+}
+
 function rethrowEngineInitializationError(error: unknown): never {
   const detail = error instanceof Error ? error.message : String(error);
   throw new Error(
@@ -44,6 +53,7 @@ export class EngineClient {
       mod = await createNvtsEngine({
         locateFile: (p) => wasmBaseUrl + p, // dónde servir engine.wasm
       });
+      validateHeapExport(mod);
     } catch (error) {
       rethrowEngineInitializationError(error);
     }

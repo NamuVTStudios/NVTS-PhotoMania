@@ -24,6 +24,7 @@ emcc "$SCRIPT_DIR/src/engine.cpp" \
      -s WASM=1 \
      -s DEFAULT_TO_CXX=1 \
      -s ALLOW_MEMORY_GROWTH=1 \
+     -s EXPORTED_RUNTIME_METHODS=HEAPU8 \
      -s EXIT_RUNTIME=0 \
      -s ENVIRONMENT=web,worker,node \
      -s MODULARIZE=1 \
