@@ -29,6 +29,7 @@ function createLayerManifest(layer: LayerNode): LayerManifest {
     ...(layer.filterKind ? { filterKind: layer.filterKind } : {}),
     ...(layer.filterStrength !== undefined ? { filterStrength: layer.filterStrength } : {}),
     ...(layer.vectorShapes ? { vectorShapes: cloneVectorShapes(layer.vectorShapes) } : {}),
+    ...(layer.comicClipBounds ? { comicClipBounds: { ...layer.comicClipBounds } } : {}),
     ...(layer.sourceName ? { sourceName: layer.sourceName } : {}),
     ...(layer.sourceLinkId ? { sourceLinkId: layer.sourceLinkId } : {}),
     ...(layer.sourceLastModified !== undefined ? { sourceLastModified: layer.sourceLastModified } : {}),
@@ -103,6 +104,7 @@ function createLayerFromManifest(manifest: LayerManifest): LayerNode {
     filterKind: manifest.filterKind,
     filterStrength: typeof manifest.filterStrength === 'number' ? Math.min(1, Math.max(0, manifest.filterStrength)) : undefined,
     vectorShapes: Array.isArray(manifest.vectorShapes) ? cloneVectorShapes(manifest.vectorShapes) : undefined,
+    comicClipBounds: manifest.comicClipBounds ? { ...manifest.comicClipBounds } : undefined,
     sourceName: manifest.sourceName, sourceLinkId: manifest.sourceLinkId,
     sourceLastModified: manifest.sourceLastModified, sourceFileSize: manifest.sourceFileSize,
     textContent: manifest.textContent, textX: manifest.textX, textY: manifest.textY,
@@ -233,16 +235,19 @@ export async function openFromDisk(): Promise<(UnpackedDocument & { handle: File
 }
 
 async function chooseNvtsFile(): Promise<{ handle: FileSystemFileHandle | null; file: File } | null> {
-  if (!hasFSA()) {
-    const file = await chooseNvtsFileWithInput();
-    return file ? { handle: null, file } : null;
-  }
+  if (!hasFSA()) return chooseNvtsFileFromInput();
   try {
     const [handle] = await window.showOpenFilePicker({ types: PICKER_TYPES, multiple: false });
     return { handle, file: await handle.getFile() };
   } catch (error) {
     return handlePickerFailure(error);
   }
+}
+
+async function chooseNvtsFileFromInput(): Promise<{ handle: FileSystemFileHandle | null; file: File } | null> {
+  const file = await chooseNvtsFileWithInput();
+  if (!file) return null;
+  return { handle: null, file };
 }
 
 function chooseNvtsFileWithInput(): Promise<File | null> {

@@ -20,9 +20,9 @@ export class AppFileFeatures extends AppSamplingFeatures {
     }
 
   protected handleHistoryResult(kind: 'pixels' | 'structure' | null): void {
-      if (kind === 'pixels') this.renderFrame();
-      else if (kind === 'structure') this.refreshAfterStructuralHistory();
-    }
+    if (kind === 'pixels') return this.renderFrame();
+    if (kind === 'structure') this.refreshAfterStructuralHistory();
+  }
 
   protected refreshAfterStructuralHistory(): void {
       if (!this.ctl.find(this.activeId)) this.activeId = this.topRaster()?.id ?? '';

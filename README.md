@@ -49,13 +49,35 @@ The history and `.nvtsphoto` tests use Node's built-in test runner and the gener
 - `AppLayerPanelFeatures.ts`: layer operations and linked image management.
 - `AppVectorFeatures.ts`: vector layer editing and SVG export.
 - `AppEventFeatures.ts`: event binding, menus, shortcuts, and vector gestures.
-- `AppDrawingFeatures.ts`: drawing tools, brush strokes, and fill operations.
+- `AppDrawingFeatures.ts`: drawing-tool interactions, clone-stamp sampling, comic frame/panel creation, brush strokes, and fill operations.
 - `AppSamplingFeatures.ts`: canvas compositing and color sampling.
 - `AppFileFeatures.ts`: undo/redo and document file operations.
 - `AppUtilities.ts`: shared pure helpers and comic-project file-system utilities.
 - `managers/AppStartupManager.ts`: editor-shell mounting, renderer/engine initialization, and startup error handling.
 
 The feature modules share one runtime state through the internal `AppBase` hierarchy. This is a mechanical split of the existing controller to keep behavior stable while making each area easier to locate and review; future changes should continue moving cohesive responsibilities into independent services when doing so reduces coupling.
+
+## Tool Inheritance
+
+Concrete tools are modeled using the requested inheritance structure:
+
+- `ToolsBase` defines the tool ID, display label, target kind, and `canUseLayer()` compatibility contract.
+- `ToolsRaster` extends `ToolsBase` for tools that edit pixels on paint/raster layers. Brush, eraser, line, rectangle, ellipse, fill, and clone stamp inherit from it.
+- `ToolsVectors` extends `ToolsBase` for tools that edit vector layers. Vector selection and the comic frame/panel tool inherit from it.
+- Hand, eyedropper, and text creation inherit directly from `ToolsBase` because they navigate/sample the canvas or create text independently of raster/vector paint targets.
+- `ToolCatalog.ts` registers concrete classes. `ToolManager` resolves the registered class and checks layer compatibility before allowing the app to activate a target-specific tool.
+
+The clone stamp records a source point with `Alt + click`, reads only the source patch needed for each dab, and applies a circular softness/opacity mask while copying to the destination layer. If source and destination are the same layer, it keeps original snapshots only for the 256×256 tiles the stroke touches, preventing self-cloning from progressively smearing newly written pixels; this self-clone cache is capped at 64 MiB per stroke. The comic tool creates the outer page frame with a click in **Marco exterior** mode and creates individual rectangular panels by dragging in **Viñeta** mode. Both comic operations update the selected vector layer through its existing vector-content/history pathway.
+
+## Strategy Pattern
+
+The editor uses interchangeable strategies where behavior varies by tool or algorithm:
+
+- `packages/ui/src/app/EditorStrategies.ts` defines brush/eraser and clone-stamp algorithms, contiguous/global fill strategies, and immediate-tool strategies. `AppDrawingFeatures` selects the relevant implementation based on the active tool and fill settings.
+- `packages/ui/src/tools/` contains the inheritance hierarchy and catalog: `ToolsBase` is the common parent, `ToolsRaster` handles tools that edit paint/raster layers, and `ToolsVectors` handles tools that edit vector layers. Concrete tool classes are registered through `ToolCatalog.ts`; `ToolManager` owns the active ID and exposes layer compatibility checks.
+- `packages/image-processing/src/filters/FilterProcessor.ts` uses strategy registries for CSS-backed and pixel-backed filter algorithms. The same filter strategy is reused by destructive filters, non-destructive filter layers, and sampling/composition paths.
+
+To add another brush, fill algorithm, immediate tool, or pixel filter, implement the corresponding contract and register it rather than adding another branch to the central drawing or filter flow. A dedicated raster-selection tool is not currently part of `ToolId`; vector selection is covered by the immediate-tool strategy until a separate raster-selection feature is implemented.
 
 ## Architecture, DRY, SOLID, and Object-Oriented Design
 
@@ -74,7 +96,7 @@ The refactoring is incremental: modules that only define data, render a view, or
 
 - **Document templates:** the 23 document presets (social posts/stories, screen sizes, A4, US/European comics, manga/manhwa, animation, and UV/2D textures) are maintained as individual modules in the shared `@nvts/templates` workspace package so other NVTS apps can reuse them.
 - **Canvas and navigation:** fit-to-window view, zoom with controls or Ctrl/Meta + mouse wheel, panning with the Hand tool or Space + drag, and responsive canvas sizing.
-- **Drawing tools:** brush, eraser, eyedropper, line, rectangle, ellipse, bucket fill, text, and vector selection. The brush exposes size, opacity, hardness, spacing, and smoothing controls; the fill tool includes tolerance, contiguous fill, and merged-visible sampling options. Tool and vector-shape icons are individual SVG assets in `apps/web/src/icons/tools/`; CSS masks let them inherit the active foreground color and remain legible in both themes.
+- **Drawing tools:** brush, eraser, clone stamp, eyedropper, line, rectangle, ellipse, bucket fill, text, vector selection, and a comic frame/panel tool. Clone Stamp uses `Alt + click` to set the source point, then samples only the source patch needed for each dab and paints into the selected paint layer. Same-layer cloning preserves original snapshots only for touched 256×256 tiles, with a 64 MiB per-stroke guard. Comic mode creates a full-page outer frame on click or individual rectangular panels by dragging; both are editable vector shapes and participate in document history. The brush exposes size, opacity, hardness, spacing, and smoothing controls; the clone stamp reuses size/opacity controls; the comic tool exposes frame/panel/split mode, border width, one-or-two split lines, and the spacing between parallel dividers. Tool and vector-shape icons are individual SVG assets in `apps/web/src/icons/tools/`; CSS masks let them inherit the active foreground color and remain legible in both themes.
 - **Non-destructive layer masks:** affine transform masks, colorization masks with editable color strokes, and filter masks with per-layer filter stacks. All three mask types are created from **Layers → New Layer** in the Layers panel; the mask disclosure section keeps the selected mask controls available. Mask metadata is saved in `.nvtsphoto`; colorization currently uses a line-barrier region fill and is limited to 4 million document pixels. Filter masks apply to the entire layer; painted grayscale coverage and advanced warp transforms are not implemented yet.
 - **Layer model:** paint, filter, fill, file/image, vector, text, and group layers. Layers support names, order, visibility, lock state, opacity, blend mode, duplication, deletion, nested groups, and thumbnails.
 - **History:** pixel edits use the Wasm tile history; document structure and property changes are recorded by the TypeScript `DocumentController`. Undo/redo shortcuts are `Ctrl/Meta+Z`, `Ctrl/Meta+Shift+Z`, and `Ctrl/Meta+Y`. The history panel shows an estimated memory total, including snapshots retained during an active brush/eraser stroke.
@@ -109,6 +131,8 @@ NVTS-PhotoMania/
 │     │  ├─ icons/
 │     │  │  └─ tools/
 │     │  │     ├─ brush.svg
+│     │  │     ├─ clone-stamp.svg
+│     │  │     ├─ comic-panel.svg
 │     │  │     ├─ delete.svg
 │     │  │     ├─ duplicate.svg
 │     │  │     ├─ ellipse.svg
@@ -258,13 +282,15 @@ NVTS-PhotoMania/
 │  │  │  │  ├─ AppSamplingFeatures.ts
 │  │  │  │  ├─ AppUtilities.ts
 │  │  │  │  ├─ AppVectorFeatures.ts
-│  │  │  │  └─ AppWorkspaceFeatures.ts
+│  │  │  │  ├─ AppWorkspaceFeatures.ts
+│  │  │  │  └─ EditorStrategies.ts
 │  │  │  ├─ components/
 │  │  │  │  ├─ EditorTemplate.ts
 │  │  │  │  ├─ ShellTemplates.ts
 │  │  │  │  └─ Toolbar.ts
 │  │  │  ├─ features/
 │  │  │  │  └─ comics/
+│  │  │  │     ├─ createComicSplitShapes.ts
 │  │  │  │     └─ types.ts
 │  │  │  ├─ managers/
 │  │  │  │  ├─ AppManager.ts
@@ -296,6 +322,11 @@ NVTS-PhotoMania/
 │  │  │  │  └─ PluginStorage.ts
 │  │  │  ├─ screens/
 │  │  │  │  └─ HomeScreenController.ts
+│  │  │  ├─ tools/
+│  │  │  │  ├─ ToolCatalog.ts
+│  │  │  │  ├─ ToolsBase.ts
+│  │  │  │  ├─ ToolsRaster.ts
+│  │  │  │  └─ ToolsVectors.ts
 │  │  │  ├─ workspaces/
 │  │  │  │  ├─ AnimationWorkspace.ts
 │  │  │  │  ├─ ComicsWorkspace.ts
@@ -337,6 +368,7 @@ NVTS-PhotoMania/
 │  ├─ blend-mode.test.mjs
 │  ├─ brush-stamp-processor.test.mjs
 │  ├─ dock-layout-storage.test.mjs
+│  ├─ editor-tool-hierarchy.test.mjs
 │  ├─ filter-processor.test.mjs
 │  ├─ filter-tile-layout.test.mjs
 │  ├─ history-and-format.test.mjs
@@ -383,7 +415,7 @@ The UI package now separates several existing responsibilities into focused mana
 - `AppManager` initializes preferences and coordinates the welcome screen with the project-launch callback.
 - `UIManager` mounts the editor shell, connects the shared storyboard/timeline panels, and renders launch errors.
 - `DocumentLifecycleManager` creates new documents, restores unpacked `.nvtsphoto` data, and disposes the previous document when replacing it. The renderer and editor-specific refresh remain in `App`.
-- `ToolManager` tracks the active drawing/navigation tool. Tool availability checks and UI updates remain in `App`.
+- `ToolManager` tracks the active tool, resolves concrete class definitions, and enforces the `ToolsBase` compatibility contract for raster, vector, and layer-independent tools. UI updates and pointer gestures remain in the app feature modules.
 - `WorkspaceManager` validates workspace IDs and centralizes workspace persistence and definition lookup.
 - `ComicProjectManager` manages the selected comic page and page-list operations; filesystem access, configuration persistence, and rendering remain in `App`.
 - `WasmRuntimeManager` is a Singleton per JavaScript context. It memoizes the `EngineClient` initialization so repeated launches reuse the same Wasm runtime. A failed initialization clears its cached promise so the app can retry. It deliberately does not make individual documents, sessions, or panels global singletons. If the engine is moved to a Worker later, each Worker will have its own JavaScript context and runtime manager.
@@ -481,3 +513,14 @@ The shared `@nvts/templates` package includes `storyboard-horizontal.ts` (1920×
 Each workspace is configured in its own TypeScript file under `packages/ui/src/workspaces/` (`GeneralWorkspace.ts`, `DigitalIllustrationWorkspace.ts`, `VectorIllustrationWorkspace.ts`, `ImageManipulationWorkspace.ts`, `ComicsWorkspace.ts`, `StoryboardingWorkspace.ts`, and `AnimationWorkspace.ts`). `index.ts` is only the shared registry.
 
 The **Storyboarding** workspace exposes the storyboard panel and the **Animation** workspace places its animation timeline in a dedicated bottom dock, separate from the right-side tool, history and layer panels. The bottom timeline height is adjustable and persisted per workspace. Each right-side panel also has its own lower resize handle, so resizing History no longer depends on the Layers panel being visible. The storyboard panel supports adding/removing shots, editing shot titles, descriptions and duration, local persistence in the browser, and exporting the shot list as `storyboard.json`. The timeline supports tracks, selectable frames and keyframe cells (double-click a cell to toggle a keyframe), plus FPS and current-frame controls. These are initial organizational tools, not yet a full Krita-equivalent animation renderer: playback is a UI preview only and does not render the canvas as a sequence.
+
+
+## Comic panel tools
+
+- The comic tool supports an outer page frame, rectangular panels, and a split/cut mode that draws one full-page horizontal or vertical divider, or two parallel dividers. The two-line option exposes a configurable distance between the dividers; the live preview uses the same gap as the committed vector geometry.
+- Creating a rectangular panel also creates a dedicated paint layer whose `comicClipBounds` metadata limits brush, eraser, clone-stamp, shape, and fill writes to the panel rectangle. The bounds are serialized in `.nvtsphoto` files.
+- The panel border remains editable vector content on the selected vector layer; the dedicated paint layer is selected after creation.
+- Current limitation: panel clipping is rectangular; polygonal and slanted panel boundaries are not yet supported.
+
+
+Comic frame splitting supports freehand curved divider paths, one or two parallel paths, and opens the full-page outer frame border at divider endpoints when a matching frame rectangle exists.

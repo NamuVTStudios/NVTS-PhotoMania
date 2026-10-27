@@ -80,7 +80,21 @@ The app targets one canvas using the common `RendererBackend` interface:
 
 The app uploads dirty image regions to the renderer. `WebGPURenderer` passes views backed by a regular `ArrayBuffer` directly to `writeTexture`; it copies only when a view is backed by shared memory that is not directly accepted by that API. Resizing/recreating a renderer texture may require reuploading image content.
 
-### Tool editing
+### Tool class hierarchy
+
+`packages/ui/src/tools/ToolsBase.ts` is the common abstract parent for concrete editor tools and declares each tool's target (`any`, `raster`, or `vector`) plus `canUseLayer()`. `ToolsRaster` and `ToolsVectors` specialize the target compatibility contract. The catalog currently registers paint tools (brush, eraser, line, rectangle, ellipse, fill, clone stamp), vector tools (vector selection and comic frame/panel), and layer-independent tools (hand, eyedropper, text). `ToolManager` owns the catalog, active tool ID, and compatibility lookup; the app still owns pointer gestures and document commits.
+
+The clone stamp captures a source point using `Alt + click`. Each dab reads only its mapped source patch. When source and destination are the same layer, original tile snapshots are retained for the 256×256 destination tiles touched by the stroke; source patches overlay those original tile pixels so the clone does not progressively sample its own output. This avoids allocating a full-document source buffer for every clone stroke. The self-clone tile cache is limited to 64 MiB per stroke; if a stroke exceeds that limit, it is canceled before the next write and its state is cleared. The tool samples the chosen source layer rather than the merged visible composite.
+
+The comic frame/panel tool is vector-targeted. In **Marco exterior** mode, one click creates an outline rectangle matching the full document dimensions. In **Viñeta** mode, a drag creates an outline rectangle. A single call to `replaceVectorContent` persists each new shape and its rasterized preview as one history operation. The tool currently creates rectangular panels; slanted, rounded, gutter-aware, and automatic panel layouts remain future extensions.
+
+### Strategy pattern
+
+Tool-specific algorithms are selected through strategy contracts instead of being embedded in a single conditional path. `EditorStrategies.ts` provides `BrushStrategy` implementations for painting and erasing, `CloneStampStrategy` for source-pixel copying, `FillStrategy` implementations for contiguous and global fills, and `ImmediateToolStrategy` implementations for eyedropper, text creation, and vector selection. `AppDrawingFeatures` selects the appropriate implementation from the active tool and fill configuration.
+
+Filter composition follows the same approach: `FilterProcessor.ts` keeps registries of interchangeable CSS and pixel-processing functions. The registries are shared by destructive filters, non-destructive filter layers, and image sampling, preventing those paths from implementing different versions of the same effect. Raster selection is not currently a standalone tool; the selection strategy currently covers vector selection.
+
+## Tool editing
 
 The UI handles pointer gestures, zoom/pan coordinate conversion, tool configuration, geometric brush stamps, fill selection, eyedropper sampling, and text/vector editing interactions. Pixel changes are written to engine-backed layer surfaces through `EditSession`/document controller methods. Brush/eraser dabs are queued and processed by animation-frame batches, up to 64 dabs or approximately 4 ms per frame, then yield to the browser. A single large dab can still exceed that budget. Expensive rasterization, merged color sampling, some filter operations, and full-document serialization can still use Canvas APIs or synchronous JavaScript loops; the engine has not yet been moved to a Worker.
 
@@ -251,4 +265,15 @@ The incremental decomposition has extracted responsibilities into the following 
 - `packages/renderer/webgpu/WebGPURenderer.ts` and `packages/renderer/webgl2/WebGL2Renderer.ts`: resource creation, canvas sizing, `contain`-scale calculation, and render command submission are separated into methods.
 - `packages/ui/src/app/AppSamplingFeatures.ts`: full-document and single-pixel sampling share helpers for raster layers, groups, and filters. `AppLayerPanelFeatures.ts` owns layer thumbnails and linked-file refresh.
 
-The previous control-flow audit reported zero nested control-flow structures across the source files it reviewed. This repository reorganization moves several modules into clearer package boundaries; it does not constitute a new full control-flow audit. The audit excludes generated `dist/` and `build/` outputs, installed dependencies, and repository metadata. This does not mean every method already meets the responsibility limit: the refactor remains incremental, and some shape-drawing paths, event handlers, and renderer/document operations still need behavior-driven review. Before splitting methods that coordinate shared state, verify that extracted functions preserve event order, history, persistence, and rendering.
+The latest static control-flow audit scanned 143 project TypeScript/JavaScript files, including tests. It found no nested control-flow structures in authored source after the refactor; the only remaining matches were in `packages/shared/src/index.js`, a generated CommonJS helper file that was intentionally left untouched. The audit excludes installed dependencies, `build/`, `dist/`, and repository metadata. The change extracts focused helpers across the document model, image processing, UI, storage, vector rendering, docking, and tests while preserving public APIs where practical. Pixel-filter, colorization, tile-layout, comic-divider, and clone-stamp behavior was compared against the pre-refactor implementation in isolated Node checks. A full project build and normal test suite could not be run in this environment because `pnpm`, Vite, and several project type dependencies are unavailable; the TypeScript syntax pass succeeded, and the temporary typecheck reported only missing-environment/dependency typings after the refactor-specific type errors were corrected. Continue to verify event order, history, persistence, and rendering when adding new behavior.
+
+
+## Comic panel layers and clipping
+
+- The comic tool supports an outer page frame, rectangular panels, and a split/cut mode that creates either one full-page horizontal or vertical divider or two parallel dividers with configurable spacing. The live preview reflects the selected line count and spacing.
+- Creating a rectangular panel also creates a dedicated paint layer whose `comicClipBounds` metadata limits brush, eraser, clone-stamp, shape, and fill writes to the panel rectangle. The bounds are serialized in `.nvtsphoto` files.
+- The panel border remains editable vector content on the selected vector layer; the dedicated paint layer is selected after creation.
+- Current limitation: panel clipping is rectangular; polygonal and slanted panel boundaries are not yet supported.
+
+
+Comic frame splitting supports freehand curved divider paths, one or two parallel paths, and opens the full-page outer frame border at divider endpoints when a matching frame rectangle exists.

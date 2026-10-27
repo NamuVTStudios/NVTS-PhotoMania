@@ -97,24 +97,36 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
     }
 
   protected updateColorizeMaskControl(layerId: string, maskId: string, control: HTMLInputElement): void {
-      const property = control.dataset.maskField?.replace('colorize.', '');
-      this.updateMaskField(layerId, maskId, (mask) => {
-        if (mask.type !== 'colorize') return mask;
-        if (property === 'editStrokes') return { ...mask, editStrokes: control.checked };
-        if (property === 'showOutput') return { ...mask, showOutput: control.checked };
-        if (property === 'limitToLayerBounds') return { ...mask, limitToLayerBounds: control.checked };
-        if (property === 'gapClose') return { ...mask, gapClose: Number(control.value) };
-        if (property === 'threshold') return { ...mask, threshold: Number(control.value) / 100 };
-        if (property === 'transparentColor') {
-          const colors = new Set(mask.transparentColors);
-          const color = control.dataset.maskColor ?? '';
-          if (control.checked) colors.add(color);
-          else colors.delete(color);
-          return { ...mask, transparentColors: [...colors] };
-        }
-        return mask;
-      });
-    }
+    const property = control.dataset.maskField?.replace('colorize.', '');
+    this.updateMaskField(layerId, maskId, (mask) => this.createUpdatedColorizeMask(mask, property, control));
+  }
+
+  private createUpdatedColorizeMask(
+    mask: LayerMask, property: string | undefined, control: HTMLInputElement,
+  ): LayerMask {
+    if (mask.type !== 'colorize') return mask;
+    if (property === 'editStrokes') return { ...mask, editStrokes: control.checked };
+    if (property === 'showOutput') return { ...mask, showOutput: control.checked };
+    if (property === 'limitToLayerBounds') return { ...mask, limitToLayerBounds: control.checked };
+    if (property === 'gapClose') return { ...mask, gapClose: Number(control.value) };
+    if (property === 'threshold') return { ...mask, threshold: Number(control.value) / 100 };
+    if (property === 'transparentColor') return this.updateTransparentColorMask(mask, control);
+    return mask;
+  }
+
+  private updateTransparentColorMask(
+    mask: Extract<LayerMask, { type: 'colorize' }>, control: HTMLInputElement,
+  ): LayerMask {
+    const colors = new Set(mask.transparentColors);
+    const color = control.dataset.maskColor ?? '';
+    this.updateTransparentColorSet(colors, color, control.checked);
+    return { ...mask, transparentColors: [...colors] };
+  }
+
+  private updateTransparentColorSet(colors: Set<string>, color: string, checked: boolean): void {
+    if (checked) colors.add(color);
+    else colors.delete(color);
+  }
 
   protected updateFilterMaskControl(layerId: string, maskId: string, index: number, control: HTMLInputElement | HTMLSelectElement): void {
       this.updateMaskField(layerId, maskId, (mask) => {
@@ -728,12 +740,15 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
     }
 
   protected async pickImageSource(): Promise<{ file: File; handle: FileSystemFileHandle | null } | null> {
-      if (typeof window.showOpenFilePicker !== 'function') {
-        const file = await this.pickImageFile();
-        return file ? { file, handle: null } : null;
-      }
+      if (typeof window.showOpenFilePicker !== 'function') return this.pickImageSourceFromInput();
       return this.pickImageSourceFromPicker();
     }
+
+  private async pickImageSourceFromInput(): Promise<{ file: File; handle: null } | null> {
+    const file = await this.pickImageFile();
+    if (!file) return null;
+    return { file, handle: null };
+  }
 
   protected async pickImageSourceFromPicker(): Promise<{ file: File; handle: FileSystemFileHandle } | null> {
       try {

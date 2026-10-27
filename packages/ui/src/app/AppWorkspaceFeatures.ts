@@ -71,7 +71,8 @@ export abstract class AppWorkspaceFeatures extends AppDocumentFeatures {
         const selected = button.dataset.workspace === workspace;
         button.setAttribute('aria-checked', String(selected));
         const check = button.querySelector<HTMLElement>('.menu-check');
-        if (check) check.textContent = selected ? '✓' : '';
+        const checkmark = selected ? '✓' : '';
+        if (check) check.textContent = checkmark;
       });
     }
 
@@ -85,7 +86,8 @@ export abstract class AppWorkspaceFeatures extends AppDocumentFeatures {
         const visible = !panel.hidden;
         button.setAttribute('aria-checked', String(visible));
         const check = button.querySelector<HTMLElement>('.menu-check');
-        if (check) check.textContent = visible ? '✓' : '';
+        const checkmark = visible ? '✓' : '';
+        if (check) check.textContent = checkmark;
       });
     }
 

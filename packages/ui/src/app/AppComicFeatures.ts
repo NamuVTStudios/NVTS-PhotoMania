@@ -418,16 +418,23 @@ export abstract class AppComicFeatures extends AppWorkspaceFeatures {
 
   protected renderComicManager(): void {
       const config = this.comicConfig;
-      const projectLocationDisplay = this.comicProjectDirectoryHandle
-        ? (config.projectLocation || this.comicProjectDirectoryHandle.name)
-        : this.comicParentDirectoryHandle
-          ? `${this.comicParentDirectoryHandle.name}/${safeComicFolderName(config.projectName, 'Mi cómic')} (pendiente de crear)`
-          : (config.projectLocation || 'Elegí una carpeta base para crear el proyecto');
+      const projectLocationDisplay = this.getComicProjectLocationDisplay(config);
       renderComicManagerPanel(this.root, config, this.comicActivePageId, projectLocationDisplay, {
         onSelectPage: (pageId) => { this.comicActivePageId = pageId; this.renderComicManager(); },
         onRenamePage: (page, nextName) => { if (!this.comicProjectManager.renamePage(page.id, nextName)) return; this.persistComicConfig(); this.renderComicManager(); },
       });
     }
+
+  private getComicProjectLocationDisplay(config: typeof this.comicConfig): string {
+    if (this.comicProjectDirectoryHandle) return config.projectLocation || this.comicProjectDirectoryHandle.name;
+    if (this.comicParentDirectoryHandle) return this.getPendingComicProjectLocation(config.projectName);
+    return config.projectLocation || 'Elegí una carpeta base para crear el proyecto';
+  }
+
+  private getPendingComicProjectLocation(projectName: string): string {
+    const folderName = safeComicFolderName(projectName, 'Mi cómic');
+    return `${this.comicParentDirectoryHandle!.name}/${folderName} (pendiente de crear)`;
+  }
 
   protected wireComicManager(): void {
       this.initializeComicManager();

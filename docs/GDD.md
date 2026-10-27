@@ -34,6 +34,8 @@ The new-project selector currently offers 23 presets for social media content, s
 - Brush and eraser, with size and opacity; brush options also include hardness, spacing, and smoothing.
 - Eyedropper, including an option to sample the merged visible result.
 - Line, rectangle, and ellipse drawing on pixel layers.
+- Clone Stamp for copying pixels from an Alt-clicked source point into a paint layer.
+- Comic frame/panel tool that creates a full-page frame or draggable rectangular panels on vector layers.
 - Bucket fill with tolerance, contiguous/non-contiguous behavior, opacity, and optional merged sampling. Large-image safety limits are enforced by the current implementation.
 - Text tool creates an individual text layer. Main controls include font family, style, size, and color. Advanced controls include alignment, line height, letter spacing, stroke, and background.
 - Vector selection supports selecting, moving, and resizing vector objects. A separate editor exposes object properties and supports SVG export.
@@ -125,3 +127,14 @@ The new-project selector currently offers 23 presets for social media content, s
 ## Storyboarding and animation
 
 Dedicated Storyboarding and Animation workspaces are available. Storyboarding provides a panel for organizing shots, descriptions, and durations, with JSON export, and places the animation timeline at the bottom of the right dock. Animation also keeps the timeline at the bottom. Each workspace configuration is maintained in its own TypeScript file. These features are an initial production-planning foundation and are not yet equivalent to a complete animation system such as Krita's animation tools.
+
+
+## Comic panel workflow
+
+- The comic tool supports an outer page frame, rectangular panels, and a split/cut mode that creates either one full-page horizontal or vertical divider or two parallel dividers with configurable spacing. The live preview reflects the selected line count and spacing.
+- Creating a rectangular panel also creates a dedicated paint layer whose `comicClipBounds` metadata limits brush, eraser, clone-stamp, shape, and fill writes to the panel rectangle. The bounds are serialized in `.nvtsphoto` files.
+- The panel border remains editable vector content on the selected vector layer; the dedicated paint layer is selected after creation.
+- Current limitation: panel clipping is rectangular; polygonal and slanted panel boundaries are not yet supported.
+
+
+Comic frame splitting supports freehand curved divider paths, one or two parallel paths, and opens the full-page outer frame border at divider endpoints when a matching frame rectangle exists.

@@ -17,6 +17,14 @@ after(async () => {
   await vite?.close();
 });
 
+function addTileCoverage(coverage, tile, documentWidth) {
+  for (let y = tile.y; y < tile.y + tile.height; y++) addTileCoverageRow(coverage, tile, documentWidth, y);
+}
+
+function addTileCoverageRow(coverage, tile, documentWidth, y) {
+  for (let x = tile.x; x < tile.x + tile.width; x++) coverage[y * documentWidth + x]++;
+}
+
 test('divide el documento en mosaicos sin huecos ni solapamientos', () => {
   const tiles = [];
   forEachFilterTile(5, 3, 2, (tile) => tiles.push(tile));
@@ -25,11 +33,7 @@ test('divide el documento en mosaicos sin huecos ni solapamientos', () => {
     { x: 0, y: 2, width: 2, height: 1 }, { x: 2, y: 2, width: 2, height: 1 }, { x: 4, y: 2, width: 1, height: 1 },
   ]);
   const coverage = new Array(15).fill(0);
-  for (const tile of tiles) {
-    for (let y = tile.y; y < tile.y + tile.height; y++) {
-      for (let x = tile.x; x < tile.x + tile.width; x++) coverage[y * 5 + x]++;
-    }
-  }
+  for (const tile of tiles) addTileCoverage(coverage, tile, 5);
   assert.ok(coverage.every((count) => count === 1));
 });
 

@@ -3600,6 +3600,16 @@ button.primary {
     mask-image: url("./icons/tools/vector-select.svg");
 }
 
+.tool-icon--clone-stamp {
+    -webkit-mask-image: url("./icons/tools/clone-stamp.svg");
+    mask-image: url("./icons/tools/clone-stamp.svg");
+}
+
+.tool-icon--comic-panel {
+    -webkit-mask-image: url("./icons/tools/comic-panel.svg");
+    mask-image: url("./icons/tools/comic-panel.svg");
+}
+
 .tool-icon--zoom-in {
     -webkit-mask-image: url("./icons/tools/zoom-in.svg");
     mask-image: url("./icons/tools/zoom-in.svg");

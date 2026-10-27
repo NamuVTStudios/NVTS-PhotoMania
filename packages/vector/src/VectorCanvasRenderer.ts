@@ -113,26 +113,38 @@ function drawStar(ctx: CanvasRenderingContext2D, shape: VectorShape, _paint: Pai
 function drawSpiral(ctx: CanvasRenderingContext2D, shape: VectorShape, _paint: PaintOptions, finish: PathPainter): void {
   const radius = Math.min(Math.abs(shape.width), Math.abs(shape.height)) / 2;
   ctx.beginPath();
-  for (let index = 0; index <= 360; index++) {
-    const progress = index / 360;
-    const angle = progress * Math.PI * 9;
-    const distance = radius * progress;
-    const x = shape.x + shape.width / 2 + Math.cos(angle) * distance;
-    const y = shape.y + shape.height / 2 + Math.sin(angle) * distance;
-    if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
+  for (let index = 0; index <= 360; index++) drawSpiralPoint(ctx, shape, radius, index);
   finish(false);
+}
+
+function drawSpiralPoint(ctx: CanvasRenderingContext2D, shape: VectorShape, radius: number, index: number): void {
+  const progress = index / 360;
+  const angle = progress * Math.PI * 9;
+  const distance = radius * progress;
+  const x = shape.x + shape.width / 2 + Math.cos(angle) * distance;
+  const y = shape.y + shape.height / 2 + Math.sin(angle) * distance;
+  appendPathPoint(ctx, index, x, y);
+}
+
+function appendPathPoint(ctx: CanvasRenderingContext2D, index: number, x: number, y: number): void {
+  if (index === 0) ctx.moveTo(x, y);
+  else ctx.lineTo(x, y);
 }
 
 function drawPolarPath(ctx: CanvasRenderingContext2D, shape: VectorShape, count: number, getRadius: (index: number) => number, getAngle: (index: number) => number): void {
   ctx.beginPath();
-  for (let index = 0; index < count; index++) {
-    const radius = getRadius(index);
-    const angle = getAngle(index);
-    const x = shape.x + shape.width / 2 + Math.cos(angle) * radius;
-    const y = shape.y + shape.height / 2 + Math.sin(angle) * radius;
-    if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
+  for (let index = 0; index < count; index++) drawPolarPathPoint(ctx, shape, index, getRadius, getAngle);
+}
+
+function drawPolarPathPoint(
+  ctx: CanvasRenderingContext2D, shape: VectorShape, index: number,
+  getRadius: (index: number) => number, getAngle: (index: number) => number,
+): void {
+  const radius = getRadius(index);
+  const angle = getAngle(index);
+  const x = shape.x + shape.width / 2 + Math.cos(angle) * radius;
+  const y = shape.y + shape.height / 2 + Math.sin(angle) * radius;
+  appendPathPoint(ctx, index, x, y);
 }
 
 function drawText(ctx: CanvasRenderingContext2D, shape: VectorShape, paint: PaintOptions): void {

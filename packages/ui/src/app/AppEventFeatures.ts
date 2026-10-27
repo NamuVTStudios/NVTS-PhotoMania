@@ -167,7 +167,8 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
           const selected = button.dataset.workspace === this.workspace;
           button.setAttribute('aria-checked', String(selected));
           const check = button.querySelector<HTMLElement>('.menu-check');
-          if (check) check.textContent = selected ? '✓' : '';
+          const checkmark = selected ? '✓' : '';
+          if (check) check.textContent = checkmark;
         });
       };
       dropdown.querySelectorAll<HTMLButtonElement>('[data-workspace]').forEach((button) => {
@@ -257,7 +258,8 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
         const visible = !entry.panel.hidden;
         entry.button.setAttribute('aria-checked', String(visible));
         const check = entry.button.querySelector<HTMLElement>('.menu-check');
-        if (check) check.textContent = visible ? '✓' : '';
+        const checkmark = visible ? '✓' : '';
+        if (check) check.textContent = checkmark;
       });
       const dock = this.q<HTMLElement>('.right-dock');
       dock.classList.toggle('panels-empty', entries.every((entry) => entry.panel.hidden || !entry.panel.closest('.dock-panel-slot')));
@@ -273,16 +275,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       const workspace = this.q<HTMLElement>('.workspace');
       const everyPanelHidden = entries.every((entry) => entry.panel.hidden);
       const dockWasHidden = dock.classList.contains('panels-hidden') || workspace.classList.contains('panels-hidden');
-      if (dockWasHidden) {
-        dock.classList.remove('panels-hidden');
-        workspace.classList.remove('panels-hidden');
-        this.revealPanelsWhenAllHidden(entries, everyPanelHidden);
-      } else if (everyPanelHidden) {
-        entries.forEach((entry) => { entry.panel.hidden = false; });
-      } else {
-        dock.classList.add('panels-hidden');
-        workspace.classList.add('panels-hidden');
-      }
+      this.applyPanelVisibilityState(entries, dock, workspace, dockWasHidden, everyPanelHidden);
       if (panelsDropdown) panelsDropdown.hidden = true;
       if (viewMenu) this.closeMenu(viewMenu);
       if (panelsMenuButton && panelsDropdown) this.updatePanelVisibilityMenu(panelsDropdown, panelsMenuButton);
@@ -293,6 +286,33 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       }
       this.dockLayout?.refreshVisibility();
     }
+
+  private applyPanelVisibilityState(
+    entries: ReturnType<AppEventFeatures['getPanelVisibilityEntries']>, dock: HTMLElement, workspace: HTMLElement,
+    dockWasHidden: boolean, everyPanelHidden: boolean,
+  ): void {
+    if (dockWasHidden) return this.showPanelsAfterHiddenState(entries, dock, workspace, everyPanelHidden);
+    if (everyPanelHidden) return this.showEveryPanel(entries);
+    this.hideAllPanels(dock, workspace);
+  }
+
+  private showPanelsAfterHiddenState(
+    entries: ReturnType<AppEventFeatures['getPanelVisibilityEntries']>, dock: HTMLElement, workspace: HTMLElement,
+    everyPanelHidden: boolean,
+  ): void {
+    dock.classList.remove('panels-hidden');
+    workspace.classList.remove('panels-hidden');
+    this.revealPanelsWhenAllHidden(entries, everyPanelHidden);
+  }
+
+  private showEveryPanel(entries: ReturnType<AppEventFeatures['getPanelVisibilityEntries']>): void {
+    entries.forEach((entry) => { entry.panel.hidden = false; });
+  }
+
+  private hideAllPanels(dock: HTMLElement, workspace: HTMLElement): void {
+    dock.classList.add('panels-hidden');
+    workspace.classList.add('panels-hidden');
+  }
 
   protected bindToolAndViewControls(): void {
       this.bindToolButtons();
@@ -321,6 +341,8 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       on('#rail-rectangle', () => this.setTool('rectangle'));
       on('#rail-ellipse', () => this.setTool('ellipse'));
       on('#rail-fill', () => this.setTool('fill'));
+      on('#rail-clone-stamp', () => this.setTool('clone-stamp'));
+      on('#rail-comic-panel', () => this.setTool('comic-panel'));
     }
 
   protected bindZoomButtons(): void {
@@ -342,15 +364,16 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
 
   protected bindClosePanelControls(): void {
       this.root.querySelectorAll<HTMLElement>('[data-close]').forEach((element) => {
-        element.addEventListener('click', () => {
-          const target = element.dataset.close;
-          if (!target) return;
-          if (target === 'filters-panel') this.closeFilterDialog();
-          else if (target === 'effects-panel') this.hideRightEditors();
-          else this.q<HTMLElement>('#' + target).hidden = true;
-        });
+        element.addEventListener('click', () => this.closePanelByTarget(element.dataset.close));
       });
     }
+
+  private closePanelByTarget(target: string | undefined): void {
+    if (!target) return;
+    if (target === 'filters-panel') return this.closeFilterDialog();
+    if (target === 'effects-panel') return this.hideRightEditors();
+    this.q<HTMLElement>('#' + target).hidden = true;
+  }
 
   protected bindEditorPanels(): void {
       this.filterPanel = wireFilterPanel(this.root, {
@@ -454,7 +477,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
   protected handleCanvasWheel(event: WheelEvent): void {
       if (event.ctrlKey || event.metaKey) {
         event.preventDefault();
-        this.zoom = Math.max(0.25, Math.min(8, this.zoom * (event.deltaY < 0 ? 1.1 : 1 / 1.1)));
+        this.zoom = this.getWheelZoom(event.deltaY);
         this.applyCanvasView();
         return;
       }
@@ -464,6 +487,11 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       this.panY -= event.deltaY;
       this.applyCanvasView();
     }
+
+  private getWheelZoom(deltaY: number): number {
+    const factor = deltaY < 0 ? 1.1 : 1 / 1.1;
+    return Math.max(0.25, Math.min(8, this.zoom * factor));
+  }
 
   protected bindKeyboardShortcuts(): void {
       window.addEventListener('keydown', (event) => this.handleKeyDown(event));
@@ -506,11 +534,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
 
   protected handleDocumentShortcut(event: KeyboardEvent, mod: boolean, key: string): boolean {
       if (!mod) return false;
-      if (key === 'z') {
-        event.preventDefault();
-        event.shiftKey ? this.doRedo() : this.doUndo();
-        return true;
-      }
+      if (key === 'z') return this.handleUndoRedoShortcut(event);
       if (key === 'y') { event.preventDefault(); this.doRedo(); return true; }
       if (key === 's') { event.preventDefault(); void this.save(event.shiftKey); return true; }
       if (key === 'o') { event.preventDefault(); void this.open(); return true; }
@@ -518,11 +542,18 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       return false;
     }
 
+  private handleUndoRedoShortcut(event: KeyboardEvent): boolean {
+    event.preventDefault();
+    if (event.shiftKey) this.doRedo();
+    else this.doUndo();
+    return true;
+  }
+
   protected handleToolShortcut(key: string, mod: boolean, typing: boolean): void {
       if (mod || typing) return;
       const tools: Record<string, Tool> = {
         b: 'brush', e: 'eraser', i: 'eyedropper', l: 'line', r: 'rectangle',
-        o: 'ellipse', g: 'fill', h: 'hand', t: 'text', v: 'vector-select',
+        o: 'ellipse', g: 'fill', h: 'hand', t: 'text', v: 'vector-select', c: 'clone-stamp', p: 'comic-panel',
       };
       const tool = tools[key];
       if (tool) this.setTool(tool);
@@ -571,7 +602,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       });
       if (!hit) {
         this.vectorDirectSelectedId = null; this.clearToolPreview();
-        this.q<HTMLElement>('#status').textContent = shapes.length ? 'No se encontró un objeto en esa posición.' : 'La capa está vacía. Usá “Editar vectores…” para agregar formas.';
+        this.q<HTMLElement>('#status').textContent = this.getVectorHitMissMessage(shapes.length);
         return;
       }
       const copy = cloneVectorShape(hit);
@@ -582,6 +613,11 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       this.drawVectorSelectionOverlay(copy);
       this.q<HTMLElement>('#status').textContent = `${this.vectorKindLabel(hit.kind)} seleccionado · ${handle ? 'redimensionar' : 'arrastrar para mover'}`;
     }
+
+  private getVectorHitMissMessage(shapeCount: number): string {
+    if (shapeCount > 0) return 'No se encontró un objeto en esa posición.';
+    return 'La capa está vacía. Usá “Editar vectores…” para agregar formas.';
+  }
 
   protected transformVectorShape(original: VectorShape, dx: number, dy: number, mode: 'move' | 'resize'): VectorShape {
       const clone = cloneVectorShape(original);
@@ -674,15 +710,10 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
   protected setTool(t: Tool): void {
       if (this.stroke || this.isPanning) return;
       const layer = this.active();
-      const needsPaintTarget = !['hand', 'eyedropper', 'text', 'vector-select'].includes(t);
-      if (t === 'vector-select' && (!layer || layer.type !== 'vector' || this.ctl.isEffectivelyLocked(layer.id) || !this.ctl.isEffectivelyVisible(layer.id))) {
-        this.reportVectorToolUnavailable();
-        return;
-      }
-      if (needsPaintTarget && (!layer || (layer.type !== 'paint' && layer.type !== 'raster') || this.ctl.isEffectivelyLocked(layer.id) || !this.ctl.isEffectivelyVisible(layer.id))) {
-        this.reportPaintToolUnavailable(layer);
-        return;
-      }
+      const layerType = layer?.type ?? null;
+      const definition = this.toolManager.getDefinition(t);
+      if (!this.toolManager.canUseLayer(t, layerType)) return this.reportUnavailableToolTarget(definition.target, layer);
+      if (this.hasUnavailableToolLayer(definition.target, layer)) return this.reportUnavailableToolTarget(definition.target, layer);
       this.tool = t;
       this.vectorGesture = null; this.vectorDirectSelectedId = null;
       this.renderToolOptions();
@@ -690,6 +721,16 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       this.applyCanvasView();
       this.clearToolPreview();
     }
+
+  private hasUnavailableToolLayer(target: string, layer: LayerNode | undefined): boolean {
+    if (target === 'any' || !layer) return false;
+    return this.ctl.isEffectivelyLocked(layer.id) || !this.ctl.isEffectivelyVisible(layer.id);
+  }
+
+  private reportUnavailableToolTarget(target: string, layer: LayerNode | undefined): void {
+    if (target === 'vector') return this.reportVectorToolUnavailable();
+    this.reportPaintToolUnavailable(layer);
+  }
 
   protected reportVectorToolUnavailable(): void {
       const status = this.root.querySelector<HTMLElement>('#status');
@@ -699,11 +740,15 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
   protected reportPaintToolUnavailable(layer: LayerNode | undefined): void {
       const status = this.root.querySelector<HTMLElement>('#status');
       if (!status) return;
-      status.textContent = !layer ? 'Creá o seleccioná una capa de pintura para usar esta herramienta'
-        : layer.locked || this.ctl.isEffectivelyLocked(layer.id) ? 'La capa está bloqueada'
-        : !this.ctl.isEffectivelyVisible(layer.id) ? 'La capa está oculta'
-        : `${this.layerTypeLabel(layer.type)}: seleccioná una capa de pintura para dibujar`;
+      status.textContent = this.getPaintToolUnavailableMessage(layer);
     }
+
+  private getPaintToolUnavailableMessage(layer: LayerNode | undefined): string {
+    if (!layer) return 'Creá o seleccioná una capa de pintura para usar esta herramienta';
+    if (layer.locked || this.ctl.isEffectivelyLocked(layer.id)) return 'La capa está bloqueada';
+    if (!this.ctl.isEffectivelyVisible(layer.id)) return 'La capa está oculta';
+    return `${this.layerTypeLabel(layer.type)}: seleccioná una capa de pintura para dibujar`;
+  }
 
   protected promptNew(): void {
       const m = /^(\d{2,5})\s*[x×]\s*(\d{2,5})$/.exec(prompt('Tamaño (ancho x alto)', '1280x720') ?? '');

@@ -62,6 +62,21 @@ function minDockHeight(item: PanelItem): number {
   if (item.id === 'storyboard' || item.id === 'timeline') return 180;
   return 120;
 }
+function getDefaultFloatingCoordinate(axis: 'x' | 'y'): number {
+  if (axis === 'x') return 120;
+  return 80;
+}
+
+function getRectCoordinate(rect: DOMRect, workspaceRect: DOMRect, axis: 'x' | 'y'): number {
+  if (axis === 'x') return rect.left - workspaceRect.left;
+  return rect.top - workspaceRect.top;
+}
+
+function getPresetOrderValue(cssOrder: number, id: DockablePanelId): number {
+  if (Number.isFinite(cssOrder)) return cssOrder;
+  return VALID_IDS.indexOf(id);
+}
+
 /** Creates a dock controller only when the application shell has the required layout elements. */
 export function createDockLayoutManager(root: HTMLElement, initialWorkspace: string): DockLayoutController {
   const workspaceElement = root.querySelector<HTMLElement>('.workspace');
@@ -229,10 +244,12 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private initializePanelHeights(): void {
-    for (const item of this.items.values()) {
-      if (item.id === 'timeline') continue;
-      item.slot.style.height = `${item.defaultHeight}px`;
-    }
+    for (const item of this.items.values()) this.initializePanelHeight(item);
+  }
+
+  private initializePanelHeight(item: PanelItem): void {
+    if (item.id === 'timeline') return;
+    item.slot.style.height = `${item.defaultHeight}px`;
   }
 
   private getItem(id: string | undefined): PanelItem | undefined {
@@ -650,12 +667,36 @@ class DockLayoutManagerImpl implements DockLayoutController {
     return {
       visible: !item.panel.hidden,
       floating: item.floating,
-      x: item.floatingWindow ? Number.parseFloat(item.floatingWindow.style.left) || (rect ? rect.left - workspaceRect.left : 120) : 120,
-      y: item.floatingWindow ? Number.parseFloat(item.floatingWindow.style.top) || (rect ? rect.top - workspaceRect.top : 80) : 80,
-      width: item.floatingWindow ? rect?.width ?? 360 : 360,
-      height: item.floatingWindow ? rect?.height ?? Math.max(item.defaultHeight, 180) : Math.max(130, item.slot.getBoundingClientRect().height || item.defaultHeight),
+      x: this.getFloatingCoordinate(item, rect, workspaceRect, 'x'),
+      y: this.getFloatingCoordinate(item, rect, workspaceRect, 'y'),
+      width: this.getFloatingSize(item, rect, 'width'),
+      height: this.getFloatingSize(item, rect, 'height'),
       dockHeight: Math.max(minDockHeight(item), Number.parseFloat(item.slot.style.height) || item.slot.getBoundingClientRect().height || item.defaultHeight),
     };
+  }
+
+  private getFloatingCoordinate(item: PanelItem, rect: DOMRect | undefined, workspaceRect: DOMRect, axis: 'x' | 'y'): number {
+    if (!item.floatingWindow) return getDefaultFloatingCoordinate(axis);
+    const styleValue = axis === 'x' ? item.floatingWindow.style.left : item.floatingWindow.style.top;
+    const parsed = Number.parseFloat(styleValue);
+    if (parsed) return parsed;
+    if (!rect) return getDefaultFloatingCoordinate(axis);
+    return getRectCoordinate(rect, workspaceRect, axis);
+  }
+
+  private getFloatingSize(item: PanelItem, rect: DOMRect | undefined, axis: 'width' | 'height'): number {
+    if (axis === 'width') return this.getFloatingWidth(item, rect);
+    return this.getFloatingHeight(item, rect);
+  }
+
+  private getFloatingWidth(item: PanelItem, rect: DOMRect | undefined): number {
+    if (!item.floatingWindow) return 360;
+    return rect?.width ?? 360;
+  }
+
+  private getFloatingHeight(item: PanelItem, rect: DOMRect | undefined): number {
+    if (item.floatingWindow) return rect?.height ?? Math.max(item.defaultHeight, 180);
+    return Math.max(130, item.slot.getBoundingClientRect().height || item.defaultHeight);
   }
 
   saveCurrentWorkspace(): void {
@@ -698,11 +739,15 @@ class DockLayoutManagerImpl implements DockLayoutController {
   private restorePanelState(item: PanelItem, saved?: PanelSavedState): void {
     item.panel.hidden = saved ? !saved.visible : item.panel.hidden;
     item.slot.style.height = `${clamp(Number(saved?.dockHeight) || item.defaultHeight, minDockHeight(item), 1800)}px`;
-    if (saved?.floating) this.restoreFloatingPanel(item, saved);
-    else if (item.floating) this.dockPanel(item.id);
+    this.restorePanelFloatingMode(item, saved);
     item.panel.hidden = saved ? !saved.visible : item.panel.hidden;
     item.slot.hidden = item.floating || item.panel.hidden;
     if (item.floatingWindow) item.floatingWindow.hidden = item.panel.hidden;
+  }
+
+  private restorePanelFloatingMode(item: PanelItem, saved?: PanelSavedState): void {
+    if (saved?.floating) return this.restoreFloatingPanel(item, saved);
+    if (item.floating) this.dockPanel(item.id);
   }
 
   private restoreFloatingPanel(item: PanelItem, saved: PanelSavedState): void {
@@ -748,11 +793,18 @@ class DockLayoutManagerImpl implements DockLayoutController {
 
   private capturePresetOrder(): Map<DockablePanelId, number> {
     const presetOrder = new Map<DockablePanelId, number>();
-    for (const item of this.items.values()) {
-      const cssOrder = Number.parseInt(item.floating ? item.panel.style.order : item.slot.style.order, 10);
-      presetOrder.set(item.id, Number.isFinite(cssOrder) ? cssOrder : VALID_IDS.indexOf(item.id));
-    }
+    for (const item of this.items.values()) this.capturePresetOrderForItem(presetOrder, item);
     return presetOrder;
+  }
+
+  private capturePresetOrderForItem(presetOrder: Map<DockablePanelId, number>, item: PanelItem): void {
+    const cssOrder = Number.parseInt(this.getPanelCssOrder(item), 10);
+    presetOrder.set(item.id, getPresetOrderValue(cssOrder, item.id));
+  }
+
+  private getPanelCssOrder(item: PanelItem): string {
+    if (item.floating) return item.panel.style.order;
+    return item.slot.style.order;
   }
 
   private applyDefaultDockOrder(): void {

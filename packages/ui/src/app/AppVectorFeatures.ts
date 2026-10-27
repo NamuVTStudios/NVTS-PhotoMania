@@ -37,30 +37,52 @@ export abstract class AppVectorFeatures extends AppLayerPanelFeatures {
     }
 
   protected addVectorShape(kind: VectorShape['kind']): void {
-      if (!this.vectorEditLayerId) return;
-      const x = Math.round(this.ctl.doc.width * 0.25), y = Math.round(this.ctl.doc.height * 0.25);
-      const width = Math.max(24, Math.round(this.ctl.doc.width * 0.25)), height = Math.max(24, Math.round(this.ctl.doc.height * 0.25));
-      let points: VectorShape['points'];
-      if (kind === 'polygon') points = [{ x: x + width / 2, y }, { x: x + width, y: y + height }, { x, y: y + height }];
-      else if (kind === 'polyline' || kind === 'freehand') points = [
-        { x, y: y + height * .75 }, { x: x + width * .22, y: y + height * .12 }, { x: x + width * .45, y: y + height * .82 },
-        { x: x + width * .69, y: y + height * .22 }, { x: x + width, y: y + height * .58 },
-      ];
-      else if (kind === 'bezier') points = [
-        { x, y: y + height, outX: x + width * .25, outY: y },
-        { x: x + width, y, inX: x + width * .75, inY: y + height },
-      ];
-      const shape: VectorShape = {
-        id: crypto.randomUUID(), kind, x, y, width, height, color: '#e03030', fillColor: '#e03030', strokeColor: '#e03030',
-        opacity: 1, strokeWidth: 4, fillEnabled: !['line','polyline','bezier','freehand','spiral'].includes(kind),
-        strokeEnabled: true, strokeDash: 'solid', lineCap: 'round', lineJoin: 'round', cornerRadius: 20,
-        points, starPoints: 5, rotation: 0, text: 'Texto vectorial', fontFamily: 'Arial', fontSize: 64,
-        fontWeight: 'normal', fontStyle: 'normal', textAlign: 'left',
-      };
-      this.vectorDraft.push(shape);
-      this.vectorSelectedId = shape.id;
-      this.renderVectorEditor();
-    }
+    if (!this.vectorEditLayerId) return;
+    const geometry = this.getDefaultVectorGeometry();
+    const shape = this.createDefaultVectorShape(kind, geometry);
+    this.vectorDraft.push(shape);
+    this.vectorSelectedId = shape.id;
+    this.renderVectorEditor();
+  }
+
+  private getDefaultVectorGeometry(): { x: number; y: number; width: number; height: number } {
+    const x = Math.round(this.ctl.doc.width * 0.25);
+    const y = Math.round(this.ctl.doc.height * 0.25);
+    const width = Math.max(24, Math.round(this.ctl.doc.width * 0.25));
+    const height = Math.max(24, Math.round(this.ctl.doc.height * 0.25));
+    return { x, y, width, height };
+  }
+
+  private createDefaultVectorShape(kind: VectorShape['kind'], geometry: { x: number; y: number; width: number; height: number }): VectorShape {
+    const { x, y, width, height } = geometry;
+    return {
+      id: crypto.randomUUID(), kind, x, y, width, height, color: '#e03030', fillColor: '#e03030', strokeColor: '#e03030',
+      opacity: 1, strokeWidth: 4, fillEnabled: !['line','polyline','bezier','freehand','spiral'].includes(kind),
+      strokeEnabled: true, strokeDash: 'solid', lineCap: 'round', lineJoin: 'round', cornerRadius: 20,
+      points: this.createDefaultVectorPoints(kind, geometry), starPoints: 5, rotation: 0, text: 'Texto vectorial',
+      fontFamily: 'Arial', fontSize: 64, fontWeight: 'normal', fontStyle: 'normal', textAlign: 'left',
+    };
+  }
+
+  private createDefaultVectorPoints(kind: VectorShape['kind'], geometry: { x: number; y: number; width: number; height: number }): VectorShape['points'] {
+    const { x, y, width, height } = geometry;
+    if (kind === 'polygon') return [{ x: x + width / 2, y }, { x: x + width, y: y + height }, { x, y: y + height }];
+    if (kind === 'polyline' || kind === 'freehand') return this.createDefaultPolylinePoints(geometry);
+    if (kind === 'bezier') return this.createDefaultBezierPoints(geometry);
+    return undefined;
+  }
+
+  private createDefaultPolylinePoints({ x, y, width, height }: { x: number; y: number; width: number; height: number }): NonNullable<VectorShape['points']> {
+    return [
+      { x, y: y + height * .75 }, { x: x + width * .22, y: y + height * .12 },
+      { x: x + width * .45, y: y + height * .82 }, { x: x + width * .69, y: y + height * .22 },
+      { x: x + width, y: y + height * .58 },
+    ];
+  }
+
+  private createDefaultBezierPoints({ x, y, width, height }: { x: number; y: number; width: number; height: number }): NonNullable<VectorShape['points']> {
+    return [{ x, y: y + height, outX: x + width * .25, outY: y }, { x: x + width, y, inX: x + width * .75, inY: y + height }];
+  }
 
   protected updateVectorShapeFromFields(): void {
       const shape = this.vectorDraft.find((item) => item.id === this.vectorSelectedId);

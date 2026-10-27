@@ -53,6 +53,10 @@ export abstract class AppBase {
   protected activeId = '';
   protected activeMaskId = '';
   protected readonly toolManager = new ToolManager('brush');
+  protected comicToolMode: 'frame' | 'panel' | 'split' = 'frame';
+  protected comicBorderWidth = 5;
+  protected comicSplitLineCount: 1 | 2 = 1;
+  protected comicSplitDistance = 48;
   protected textSettings: TextToolSettings = { fontFamily: 'Arial', fontSize: 64, style: 'normal', color: '#e03030', align: 'left', lineHeight: 1.2, letterSpacing: 0, strokeColor: '#000000', strokeWidth: 0, backgroundColor: 'transparent' };
   protected vectorDirectSelectedId: string | null = null;
   protected vectorGesture: { layerId: string; shapeId: string; mode: 'move' | 'resize'; startPoint: { x: number; y: number }; original: VectorShape; latest: VectorShape; moved: boolean } | null = null;
@@ -485,11 +489,6 @@ export abstract class AppBase {
   protected abstract createFillOperation(point: { x: number; y: number }, node: LayerNode): FillOperation | null;
   protected abstract executeFillOperation(operation: FillOperation): FillResult;
   protected abstract fillMatches(operation: FillOperation, offset: number): boolean;
-  protected abstract fillAllMatchingPixels(operation: FillOperation, result: FillResult): void;
-  protected abstract fillMatchingPixel(operation: FillOperation, result: FillResult, pixel: number): void;
-  protected abstract fillContiguousPixels(operation: FillOperation, result: FillResult): void;
-  protected abstract processNextFillPixel(operation: FillOperation, result: FillResult, stack: Uint32Array, seen: Uint8Array, top: number, width: number, height: number): number;
-  protected abstract pushUnseenFillNeighbors(pixel: number, width: number, height: number, stack: Uint32Array, seen: Uint8Array, top: number): number;
   protected abstract paintFillPixel(operation: FillOperation, result: FillResult, pixel: number): void;
   protected abstract expandFillBounds(result: FillResult, pixel: number, width: number): void;
   protected abstract commitFillResult(node: LayerNode, operation: FillOperation, result: FillResult): void;

@@ -187,20 +187,36 @@ export abstract class AppDocumentFeatures extends AppBase {
     }
 
   protected findGlobalFilterDependencyOnPath(
-      nodes: LayerNode[],
-      layerId: string,
-      inheritedDependency: boolean,
-    ): boolean | null {
-      for (const node of nodes) {
-        const dependency = inheritedDependency || Boolean(node.masks?.some(
-          (mask) => mask.enabled && (mask.type === 'transform' || mask.type === 'colorize'),
-        ));
-        if (node.id === layerId) return dependency;
-        const childDependency = this.findGlobalFilterDependencyOnPath(node.children, layerId, dependency);
-        if (childDependency !== null) return childDependency;
-      }
-      return null;
+    nodes: LayerNode[], layerId: string, inheritedDependency: boolean,
+  ): boolean | null {
+    const pending = this.createDependencySearchStack(nodes, inheritedDependency);
+    let match: boolean | null = null;
+    while (pending.length > 0 && match === null) {
+      const current = pending.pop()!;
+      match = this.inspectDependencyNode(current, layerId);
+      this.pushDependencyChildren(pending, current);
     }
+    return match;
+  }
+
+  private createDependencySearchStack(nodes: LayerNode[], inheritedDependency: boolean): Array<{ node: LayerNode; inherited: boolean }> {
+    return nodes.slice().reverse().map((node) => ({ node, inherited: inheritedDependency }));
+  }
+
+  private inspectDependencyNode(current: { node: LayerNode; inherited: boolean }, layerId: string): boolean | null {
+    const dependency = current.inherited || this.nodeHasGlobalFilterMask(current.node);
+    if (current.node.id !== layerId) return null;
+    return dependency;
+  }
+
+  private pushDependencyChildren(stack: Array<{ node: LayerNode; inherited: boolean }>, current: { node: LayerNode; inherited: boolean }): void {
+    const inherited = current.inherited || this.nodeHasGlobalFilterMask(current.node);
+    for (const child of [...current.node.children].reverse()) stack.push({ node: child, inherited });
+  }
+
+  private nodeHasGlobalFilterMask(node: LayerNode): boolean {
+    return Boolean(node.masks?.some((mask) => mask.enabled && (mask.type === 'transform' || mask.type === 'colorize')));
+  }
 
   protected markFilterTilesDirty(region: PixelRegion): void {
       const { width, height } = this.ctl.doc;
@@ -215,31 +231,50 @@ export abstract class AppDocumentFeatures extends AppBase {
       const firstY = Math.floor(top / tileSize);
       const lastX = Math.floor((right - 1) / tileSize);
       const lastY = Math.floor((bottom - 1) / tileSize);
-      for (let ty = firstY; ty <= lastY; ty++) {
-        for (let tx = firstX; tx <= lastX; tx++) {
-          const x = tx * tileSize;
-          const y = ty * tileSize;
-          const tile: FilterTile = { x, y, width: Math.min(tileSize, width - x), height: Math.min(tileSize, height - y) };
-          this.dirtyFilterTiles.set(`${tx}:${ty}`, tile);
-        }
-      }
+      for (let ty = firstY; ty <= lastY; ty++) this.markFilterTileRowDirty(ty, firstX, lastX, tileSize, width, height);
     }
 
+  private markFilterTileRowDirty(ty: number, firstX: number, lastX: number, tileSize: number, width: number, height: number): void {
+    for (let tx = firstX; tx <= lastX; tx++) this.markFilterTileDirty(tx, ty, tileSize, width, height);
+  }
+
+  private markFilterTileDirty(tx: number, ty: number, tileSize: number, width: number, height: number): void {
+    const x = tx * tileSize;
+    const y = ty * tileSize;
+    const tile: FilterTile = { x, y, width: Math.min(tileSize, width - x), height: Math.min(tileSize, height - y) };
+    this.dirtyFilterTiles.set(`${tx}:${ty}`, tile);
+  }
+
   protected getFilterTilePadding(nodes: LayerNode[] = this.ctl.doc.layers): number {
-      if (nodes === this.ctl.doc.layers && this.cachedFilterTilePadding !== null) return this.cachedFilterTilePadding;
-      let padding = 0;
-      for (const node of nodes) {
-        if (node.type === 'filter') padding = Math.max(padding, getFilterKindTilePadding(node.filterKind ?? 'grayscale'));
-        for (const mask of node.masks ?? []) {
-          if (mask.enabled && mask.type === 'filter') {
-            for (const filter of mask.filters) padding = Math.max(padding, getFilterKindTilePadding(filter.kind));
-          }
-        }
-        if (node.children.length > 0) padding = Math.max(padding, this.getFilterTilePadding(node.children));
-      }
-      if (nodes === this.ctl.doc.layers) this.cachedFilterTilePadding = padding;
-      return padding;
-    }
+    const isRoot = nodes === this.ctl.doc.layers;
+    if (isRoot && this.cachedFilterTilePadding !== null) return this.cachedFilterTilePadding;
+    const padding = nodes.reduce((maximum, node) => Math.max(maximum, this.getNodeFilterTilePadding(node)), 0);
+    if (isRoot) this.cachedFilterTilePadding = padding;
+    return padding;
+  }
+
+  private getNodeFilterTilePadding(node: LayerNode): number {
+    return Math.max(this.getOwnFilterTilePadding(node), this.getMaskFilterTilePadding(node), this.getChildFilterTilePadding(node));
+  }
+
+  private getOwnFilterTilePadding(node: LayerNode): number {
+    if (node.type !== 'filter') return 0;
+    return getFilterKindTilePadding(node.filterKind ?? 'grayscale');
+  }
+
+  private getMaskFilterTilePadding(node: LayerNode): number {
+    return (node.masks ?? []).reduce((maximum, mask) => Math.max(maximum, this.getMaskPadding(mask)), 0);
+  }
+
+  private getMaskPadding(mask: NonNullable<LayerNode['masks']>[number]): number {
+    if (!mask.enabled || mask.type !== 'filter') return 0;
+    return mask.filters.reduce((maximum, filter) => Math.max(maximum, getFilterKindTilePadding(filter.kind)), 0);
+  }
+
+  private getChildFilterTilePadding(node: LayerNode): number {
+    if (node.children.length === 0) return 0;
+    return this.getFilterTilePadding(node.children);
+  }
 
   protected renderFrame(): void {
       this.processPendingBrushDabs();
@@ -278,18 +313,22 @@ export abstract class AppDocumentFeatures extends AppBase {
     }
 
   protected renderDirtyFilterTiles(padding: number): void {
-      const startedAt = performance.now();
-      let rendered = 0;
-      while (this.dirtyFilterTiles.size > 0 && rendered < MAX_FILTER_TILES_PER_FRAME) {
-        const next = this.dirtyFilterTiles.entries().next().value as [string, FilterTile] | undefined;
-        if (!next) return;
-        const [key, tile] = next;
-        this.dirtyFilterTiles.delete(key);
-        this.renderFilterTile(tile, this.filterCanvasPools, padding);
-        rendered++;
-        if (performance.now() - startedAt >= FILTER_RENDER_BUDGET_MS) return;
-      }
-    }
+    const startedAt = performance.now();
+    let rendered = 0;
+    while (this.canRenderNextFilterTile(startedAt, rendered)) rendered = this.renderNextFilterTile(padding, rendered);
+  }
+
+  private canRenderNextFilterTile(startedAt: number, rendered: number): boolean {
+    return this.dirtyFilterTiles.size > 0 && rendered < MAX_FILTER_TILES_PER_FRAME
+      && performance.now() - startedAt < FILTER_RENDER_BUDGET_MS;
+  }
+
+  private renderNextFilterTile(padding: number, rendered: number): number {
+    const [key, tile] = this.dirtyFilterTiles.entries().next().value as [string, FilterTile];
+    this.dirtyFilterTiles.delete(key);
+    this.renderFilterTile(tile, this.filterCanvasPools, padding);
+    return rendered + 1;
+  }
 
   protected renderFilterTile(tile: FilterTile, pools: FilterCanvasPools, padding: number): void {
       const expanded = expandFilterTile(tile, padding, this.ctl.doc.width, this.ctl.doc.height);
@@ -434,15 +473,21 @@ export abstract class AppDocumentFeatures extends AppBase {
 
   protected applyColorizeMasksToTile(node: LayerNode, image: ImageData, tile: FilterTile): void {
       const masks = node.masks?.filter((mask): mask is Extract<LayerMask, { type: 'colorize' }> => mask.enabled && mask.type === 'colorize') ?? [];
-      for (const mask of masks) {
-        const pixels = this.getColorizeOutput(node, mask);
-        if (!pixels) continue;
-        for (let row = 0; row < tile.height; row++) {
-          const start = ((tile.y + row) * this.ctl.doc.width + tile.x) * 4;
-          image.data.set(pixels.subarray(start, start + tile.width * 4), row * tile.width * 4);
-        }
-      }
+      for (const mask of masks) this.applyColorizeMaskToTile(node, mask, image, tile);
     }
+
+  private applyColorizeMaskToTile(
+    node: LayerNode, mask: Extract<LayerMask, { type: 'colorize' }>, image: ImageData, tile: FilterTile,
+  ): void {
+    const pixels = this.getColorizeOutput(node, mask);
+    if (!pixels) return;
+    for (let row = 0; row < tile.height; row++) this.copyColorizeTileRow(pixels, image, tile, row);
+  }
+
+  private copyColorizeTileRow(pixels: Uint8Array, image: ImageData, tile: FilterTile, row: number): void {
+    const start = ((tile.y + row) * this.ctl.doc.width + tile.x) * 4;
+    image.data.set(pixels.subarray(start, start + tile.width * 4), row * tile.width * 4);
+  }
 
   protected getColorizeOutput(node: LayerNode, mask: Extract<LayerMask, { type: 'colorize' }>): Uint8Array | null {
       const cacheKey = `${node.id}:${mask.id}`;
@@ -467,25 +512,36 @@ export abstract class AppDocumentFeatures extends AppBase {
       const canvas = this.createPixelCanvas(width, height, source);
       const context = canvas.getContext('2d')!;
       context.globalAlpha = 0.7;
-      for (const stroke of mask.strokes) {
-        context.strokeStyle = stroke.color;
-        context.fillStyle = stroke.color;
-        context.lineWidth = stroke.radius * 2;
-        context.lineCap = 'round';
-        context.lineJoin = 'round';
-        if (stroke.points.length === 1) {
-          context.beginPath();
-          context.arc(stroke.points[0].x, stroke.points[0].y, stroke.radius, 0, Math.PI * 2);
-          context.fill();
-          continue;
-        }
-        context.beginPath();
-        context.moveTo(stroke.points[0].x, stroke.points[0].y);
-        for (const point of stroke.points.slice(1)) context.lineTo(point.x, point.y);
-        context.stroke();
-      }
+      for (const stroke of mask.strokes) this.drawColorizeStroke(context, stroke);
       return this.readSamplingCanvas(canvas, width, height);
     }
+
+  private drawColorizeStroke(context: CanvasRenderingContext2D, stroke: Extract<LayerMask, { type: 'colorize' }>['strokes'][number]): void {
+    this.configureColorizeStroke(context, stroke);
+    if (stroke.points.length === 1) return this.drawColorizeDot(context, stroke);
+    this.drawColorizePath(context, stroke);
+  }
+
+  private configureColorizeStroke(context: CanvasRenderingContext2D, stroke: Extract<LayerMask, { type: 'colorize' }>['strokes'][number]): void {
+    context.strokeStyle = stroke.color;
+    context.fillStyle = stroke.color;
+    context.lineWidth = stroke.radius * 2;
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+  }
+
+  private drawColorizeDot(context: CanvasRenderingContext2D, stroke: Extract<LayerMask, { type: 'colorize' }>['strokes'][number]): void {
+    context.beginPath();
+    context.arc(stroke.points[0].x, stroke.points[0].y, stroke.radius, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  private drawColorizePath(context: CanvasRenderingContext2D, stroke: Extract<LayerMask, { type: 'colorize' }>['strokes'][number]): void {
+    context.beginPath();
+    context.moveTo(stroke.points[0].x, stroke.points[0].y);
+    for (const point of stroke.points.slice(1)) context.lineTo(point.x, point.y);
+    context.stroke();
+  }
 
   protected applyTransformMasksToTile(node: LayerNode, backing: TiledLayer, tile: FilterTile, rgba: Uint8Array): Uint8Array {
       const masks = node.masks?.filter((mask): mask is Extract<LayerMask, { type: 'transform' }> => mask.enabled && mask.type === 'transform') ?? [];

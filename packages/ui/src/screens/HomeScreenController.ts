@@ -170,7 +170,8 @@ export class HomeScreenController {
       const active = button.dataset.workspace === this.workspaceManager.getCurrent();
       button.setAttribute('aria-checked', String(active));
       const check = button.querySelector<HTMLElement>('.menu-check');
-      if (check) check.textContent = active ? '✓' : '';
+      const checkmark = active ? '✓' : '';
+      if (check) check.textContent = checkmark;
     });
   }
 

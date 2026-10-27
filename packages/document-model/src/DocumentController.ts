@@ -7,7 +7,7 @@ import type { DocumentState, LayerNode, UnpackedDocument } from './types';
 
 export { blendModeToManifest } from '@nvts/wasm-bindings';
 export type LayerPatch = Partial<Pick<LayerNode,
-  'name' | 'visible' | 'locked' | 'opacity' | 'blendMode' | 'fillColor' | 'filterKind' | 'filterStrength' | 'vectorShapes' | 'sourceName' | 'sourceLinkId' | 'sourceLastModified' | 'sourceFileSize' | 'textContent' | 'textX' | 'textY' | 'textFontFamily' | 'textFontSize' | 'textColor' | 'textStyle' | 'textAlign' | 'textLineHeight' | 'textLetterSpacing' | 'textStrokeColor' | 'textStrokeWidth' | 'textBackgroundColor'>>;
+  'name' | 'visible' | 'locked' | 'opacity' | 'blendMode' | 'fillColor' | 'filterKind' | 'filterStrength' | 'vectorShapes' | 'comicClipBounds' | 'sourceName' | 'sourceLinkId' | 'sourceLastModified' | 'sourceFileSize' | 'textContent' | 'textX' | 'textY' | 'textFontFamily' | 'textFontSize' | 'textColor' | 'textStyle' | 'textAlign' | 'textLineHeight' | 'textLetterSpacing' | 'textStrokeColor' | 'textStrokeWidth' | 'textBackgroundColor'>>;
 type HistoryAction = { kind: 'pixels'; label: string } | { kind: 'structure'; label: string; undo: () => void; redo: () => void; memoryBytes: number };
 type LayerSnapshot = { node: LayerNode; parentId: string | null; index: number; pixels: Map<string, Uint8Array>; memoryBytes: number };
 type FileLayerSource = { name: string; linkId?: string; lastModified?: number; fileSize?: number };
@@ -40,10 +40,25 @@ const LAYER_TYPE_DEFINITIONS: Record<LayerType, LayerTypeDefinition> = {
 const clonePatch = (n: LayerNode): LayerPatch => ({
   name: n.name, visible: n.visible, locked: n.locked, opacity: n.opacity, blendMode: n.blendMode,
   fillColor: n.fillColor, filterKind: n.filterKind, filterStrength: n.filterStrength,
-  vectorShapes: cloneVectorShapes(n.vectorShapes), sourceName: n.sourceName, sourceLinkId: n.sourceLinkId, sourceLastModified: n.sourceLastModified, sourceFileSize: n.sourceFileSize,
+  vectorShapes: cloneVectorShapes(n.vectorShapes), comicClipBounds: n.comicClipBounds ? { ...n.comicClipBounds } : undefined, sourceName: n.sourceName, sourceLinkId: n.sourceLinkId, sourceLastModified: n.sourceLastModified, sourceFileSize: n.sourceFileSize,
   textContent: n.textContent, textX: n.textX, textY: n.textY, textFontFamily: n.textFontFamily, textFontSize: n.textFontSize, textColor: n.textColor,
   textStyle: n.textStyle, textAlign: n.textAlign, textLineHeight: n.textLineHeight, textLetterSpacing: n.textLetterSpacing, textStrokeColor: n.textStrokeColor, textStrokeWidth: n.textStrokeWidth, textBackgroundColor: n.textBackgroundColor,
 });
+
+function getLayerPatchLabel(node: LayerNode, before: LayerPatch, patch: LayerPatch): string {
+  if (isRenameOnlyPatch(patch)) return `Renombrar «${before.name}»`;
+  if (changesFilterProperties(patch)) return `Cambiar filtro de «${node.name}»`;
+  if (patch.fillColor !== undefined) return `Cambiar relleno de «${node.name}»`;
+  return `Propiedades de «${node.name}»`;
+}
+
+function isRenameOnlyPatch(patch: LayerPatch): boolean {
+  return patch.name !== undefined && Object.keys(patch).length === 1;
+}
+
+function changesFilterProperties(patch: LayerPatch): boolean {
+  return patch.filterKind !== undefined || patch.filterStrength !== undefined;
+}
 
 export class DocumentController {
   readonly comp: Compositor;
@@ -351,13 +366,18 @@ export class DocumentController {
     }
     if (!this.moveToParentRaw(id, parentId, requestedIndex)) return false;
     if (!this.replaying) this.recordStructure(
-      `Mover «${node.name}» ${newParent ? `al grupo «${newParent.name}»` : 'a la raíz'}`,
+      this.getMoveLayerLabel(node, newParent),
       () => this.moveToParentRaw(id, oldParentId, oldIndex),
       () => this.moveToParentRaw(id, parentId, requestedIndex),
     );
     return true;
   }
 
+
+  private getMoveLayerLabel(node: LayerNode, parent: LayerNode | null | undefined): string {
+    if (!parent) return `Mover «${node.name}» a la raíz`;
+    return `Mover «${node.name}» al grupo «${parent.name}»`;
+  }
 
   private moveWithinParent(
     id: string,
@@ -379,13 +399,7 @@ export class DocumentController {
     this.applyPatchRaw(id, patch);
     const after = clonePatch(node);
     if (!this.replaying && JSON.stringify(before) !== JSON.stringify(after)) {
-      const label = patch.name !== undefined && Object.keys(patch).length === 1
-        ? `Renombrar «${before.name}»`
-        : patch.filterKind !== undefined || patch.filterStrength !== undefined
-          ? `Cambiar filtro de «${node.name}»`
-          : patch.fillColor !== undefined
-            ? `Cambiar relleno de «${node.name}»`
-            : `Propiedades de «${node.name}»`;
+      const label = getLayerPatchLabel(node, before, patch);
       this.recordStructure(label, () => this.applyPatchRaw(id, before), () => this.applyPatchRaw(id, after));
     }
     return true;
@@ -600,9 +614,12 @@ export class DocumentController {
   }
 
   private removePixelActions(stack: HistoryAction[]): void {
-    for (let index = stack.length - 1; index >= 0; index--) {
-      if (stack[index].kind === 'pixels') stack.splice(index, 1);
-    }
+    for (let index = stack.length - 1; index >= 0; index--) this.removePixelActionAtIndex(stack, index);
+  }
+
+  private removePixelActionAtIndex(stack: HistoryAction[], index: number): void {
+    if (stack[index].kind !== 'pixels') return;
+    stack.splice(index, 1);
   }
 
   private clearPixelHistory(): void {
@@ -651,21 +668,32 @@ export class DocumentController {
 
   private trimStructureHistory(): void {
     this.syncPixelHistory();
-    while (this.totalHistoryMemoryBytes() > this.maxHistoryBytes) {
-      const trimUndo = this.undoStack.length > 0;
-      const stack = trimUndo ? this.undoStack : this.redoStack;
-      if (!stack.length) return;
-      const action = trimUndo ? stack[0] : stack[stack.length - 1];
-      if (action.kind === 'pixels' && !this.discardOldestPixelHistory(trimUndo)) continue;
-      if (trimUndo) stack.shift();
-      else stack.pop();
-    }
+    while (this.shouldTrimStructureHistory() && this.trimOldestHistoryAction()) { /* bounded by history budget */ }
     this.syncPixelHistory();
   }
 
-  private cloneNode(n: LayerNode): LayerNode { return { ...n, vectorShapes: cloneVectorShapes(n.vectorShapes), masks: cloneLayerMasks(n.masks), children: n.children.map((c) => this.cloneNode(c)) }; }
+  private shouldTrimStructureHistory(): boolean {
+    return this.totalHistoryMemoryBytes() > this.maxHistoryBytes;
+  }
+
+  private trimOldestHistoryAction(): boolean {
+    const trimUndo = this.undoStack.length > 0;
+    const stack = trimUndo ? this.undoStack : this.redoStack;
+    if (!stack.length) return false;
+    const action = trimUndo ? stack[0] : stack[stack.length - 1];
+    if (action.kind === 'pixels' && !this.discardOldestPixelHistory(trimUndo)) return true;
+    this.removeHistoryStackEnd(stack, trimUndo);
+    return true;
+  }
+
+  private removeHistoryStackEnd(stack: HistoryAction[], fromUndo: boolean): void {
+    if (fromUndo) stack.shift();
+    else stack.pop();
+  }
+
+  private cloneNode(n: LayerNode): LayerNode { return { ...n, vectorShapes: cloneVectorShapes(n.vectorShapes), comicClipBounds: n.comicClipBounds ? { ...n.comicClipBounds } : undefined, masks: cloneLayerMasks(n.masks), children: n.children.map((c) => this.cloneNode(c)) }; }
   private cloneNodeWithNewIds(n: LayerNode): LayerNode {
-    return { ...n, id: crypto.randomUUID(), engineId: 0, vectorShapes: cloneVectorShapes(n.vectorShapes), masks: cloneLayerMasks(n.masks), children: n.children.map((c) => this.cloneNodeWithNewIds(c)) };
+    return { ...n, id: crypto.randomUUID(), engineId: 0, vectorShapes: cloneVectorShapes(n.vectorShapes), comicClipBounds: n.comicClipBounds ? { ...n.comicClipBounds } : undefined, masks: cloneLayerMasks(n.masks), children: n.children.map((c) => this.cloneNodeWithNewIds(c)) };
   }
   private snapshot(node: LayerNode): LayerSnapshot {
     const parent = this.parentOf(node);
@@ -722,7 +750,7 @@ export class DocumentController {
   private insertRestoredNode(src: LayerNode, parent: LayerNode | null, index: number, pixels: Map<string, Uint8Array>): LayerNode {
     // HistoryManager references deleted engineIds, so reuse them when they are available.
     const engineId = this.resolveRestoredEngineId(src.engineId);
-    const node: LayerNode = { ...src, engineId, vectorShapes: cloneVectorShapes(src.vectorShapes), masks: cloneLayerMasks(src.masks), children: [] };
+    const node: LayerNode = { ...src, engineId, vectorShapes: cloneVectorShapes(src.vectorShapes), comicClipBounds: src.comicClipBounds ? { ...src.comicClipBounds } : undefined, masks: cloneLayerMasks(src.masks), children: [] };
     const siblings = parent ? parent.children : this.doc.layers;
     const at = Math.max(0, Math.min(index, siblings.length));
     this.addEngineLayer(node, parent, at, `No se pudo restaurar la capa ${node.name}`);
@@ -774,7 +802,7 @@ export class DocumentController {
     const node = this.add(normalizedType, src.name, parent?.id, -1, {
       visible: src.visible, locked: src.locked, opacity: src.opacity, blendMode: src.blendMode,
       fillColor: src.fillColor, filterKind: src.filterKind, filterStrength: src.filterStrength,
-      vectorShapes: cloneVectorShapes(src.vectorShapes), masks: cloneLayerMasks(src.masks), sourceName: src.sourceName, sourceLinkId: src.sourceLinkId, sourceLastModified: src.sourceLastModified, sourceFileSize: src.sourceFileSize,
+      vectorShapes: cloneVectorShapes(src.vectorShapes), comicClipBounds: src.comicClipBounds ? { ...src.comicClipBounds } : undefined, masks: cloneLayerMasks(src.masks), sourceName: src.sourceName, sourceLinkId: src.sourceLinkId, sourceLastModified: src.sourceLastModified, sourceFileSize: src.sourceFileSize,
       textContent: src.textContent, textX: src.textX, textY: src.textY, textFontFamily: src.textFontFamily, textFontSize: src.textFontSize, textColor: src.textColor, textStyle: src.textStyle, textAlign: src.textAlign, textLineHeight: src.textLineHeight, textLetterSpacing: src.textLetterSpacing, textStrokeColor: src.textStrokeColor, textStrokeWidth: src.textStrokeWidth, textBackgroundColor: src.textBackgroundColor,
     });
     this.nodes.delete(node.id); node.id = src.id; this.nodes.set(node.id, node);

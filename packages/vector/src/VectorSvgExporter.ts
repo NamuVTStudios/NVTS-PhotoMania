@@ -12,21 +12,29 @@ function getShapeTransform(shape: VectorShape): string {
 }
 
 function getShapeStyle(shape: VectorShape, forceNoFill = false): string {
-  const noFillKinds: VectorShape['kind'][] = ['line', 'polyline', 'bezier', 'freehand', 'spiral'];
-  const defaultStrokeKinds: VectorShape['kind'][] = ['line', 'polyline', 'bezier', 'freehand', 'spiral'];
-  const fill = forceNoFill ? 'none'
-    : (shape.fillEnabled ?? !noFillKinds.includes(shape.kind))
-      ? (shape.fillColor ?? shape.color)
-      : 'none';
-  const stroke = (shape.strokeEnabled ?? defaultStrokeKinds.includes(shape.kind)) && shape.strokeWidth > 0
-    ? (shape.strokeColor ?? shape.color)
-    : 'none';
-  const dash = shape.strokeDash === 'dash'
-    ? ` stroke-dasharray="${Math.max(4, shape.strokeWidth * 3)} ${Math.max(3, shape.strokeWidth * 2)}"`
-    : shape.strokeDash === 'dot'
-      ? ` stroke-dasharray="1 ${Math.max(3, shape.strokeWidth * 2)}"`
-      : '';
+  const fill = getShapeFill(shape, forceNoFill);
+  const stroke = getShapeStroke(shape);
+  const dash = getShapeDash(shape);
   return `fill="${escapeSvgText(fill)}" stroke="${escapeSvgText(stroke)}" stroke-width="${shape.strokeWidth}" stroke-linecap="${shape.lineCap ?? 'round'}" stroke-linejoin="${shape.lineJoin ?? 'round'}"${dash} opacity="${shape.opacity}"`;
+}
+
+function getShapeFill(shape: VectorShape, forceNoFill: boolean): string {
+  if (forceNoFill) return 'none';
+  const noFillKinds: VectorShape['kind'][] = ['line', 'polyline', 'bezier', 'freehand', 'spiral'];
+  if (shape.fillEnabled ?? !noFillKinds.includes(shape.kind)) return shape.fillColor ?? shape.color;
+  return 'none';
+}
+
+function getShapeStroke(shape: VectorShape): string {
+  const defaultStrokeKinds: VectorShape['kind'][] = ['line', 'polyline', 'bezier', 'freehand', 'spiral'];
+  if (!(shape.strokeEnabled ?? defaultStrokeKinds.includes(shape.kind)) || shape.strokeWidth <= 0) return 'none';
+  return shape.strokeColor ?? shape.color;
+}
+
+function getShapeDash(shape: VectorShape): string {
+  if (shape.strokeDash === 'dash') return ` stroke-dasharray="${Math.max(4, shape.strokeWidth * 3)} ${Math.max(3, shape.strokeWidth * 2)}"`;
+  if (shape.strokeDash === 'dot') return ` stroke-dasharray="1 ${Math.max(3, shape.strokeWidth * 2)}"`;
+  return '';
 }
 
 function starPoints(shape: VectorShape, centerX: number, centerY: number): string {
@@ -52,15 +60,22 @@ function spiralPath(shape: VectorShape, centerX: number, centerY: number): strin
 function pathData(shape: VectorShape): string {
   const points = shape.points ?? [{ x: shape.x, y: shape.y }, { x: shape.x + shape.width, y: shape.y + shape.height }];
   let path = `M ${points[0].x} ${points[0].y}`;
-  for (let index = 1; index < points.length; index++) {
-    const previous = points[index - 1];
-    const next = points[index];
-    const hasBezierHandles = shape.kind === 'bezier' && (previous.outX !== undefined || next.inX !== undefined);
-    path += hasBezierHandles
-      ? ` C ${previous.outX ?? previous.x} ${previous.outY ?? previous.y} ${next.inX ?? next.x} ${next.inY ?? next.y} ${next.x} ${next.y}`
-      : ` L ${next.x} ${next.y}`;
-  }
-  return shape.kind === 'polygon' ? `${path} Z` : path;
+  for (let index = 1; index < points.length; index++) path += getPathSegment(shape, points[index - 1], points[index]);
+  return closePolygonPath(path, shape.kind);
+}
+
+function getPathSegment(shape: VectorShape, previous: NonNullable<VectorShape['points']>[number], next: NonNullable<VectorShape['points']>[number]): string {
+  if (!hasBezierHandles(shape, previous, next)) return ` L ${next.x} ${next.y}`;
+  return ` C ${previous.outX ?? previous.x} ${previous.outY ?? previous.y} ${next.inX ?? next.x} ${next.inY ?? next.y} ${next.x} ${next.y}`;
+}
+
+function hasBezierHandles(shape: VectorShape, previous: NonNullable<VectorShape['points']>[number], next: NonNullable<VectorShape['points']>[number]): boolean {
+  return shape.kind === 'bezier' && (previous.outX !== undefined || next.inX !== undefined);
+}
+
+function closePolygonPath(path: string, kind: VectorShape['kind']): string {
+  if (kind !== 'polygon') return path;
+  return `${path} Z`;
 }
 
 type SvgContext = { centerX: number; centerY: number; style: string; transform: string };
@@ -74,8 +89,14 @@ function renderText(shape: VectorShape, style: string, transform: string): strin
   const fontSize = shape.fontSize ?? 64;
   const fontFamily = escapeSvgText(shape.fontFamily ?? 'Arial');
   const text = escapeSvgText(shape.text ?? 'Texto vectorial');
-  const anchor = shape.textAlign === 'center' ? 'middle' : shape.textAlign === 'right' ? 'end' : 'start';
+  const anchor = getTextAnchor(shape.textAlign);
   return `<text x="${shape.x}" y="${shape.y + Math.max(1, fontSize)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${shape.fontWeight ?? 'normal'}" font-style="${shape.fontStyle ?? 'normal'}" text-anchor="${anchor}" ${style}${transform}>${text}</text>`;
+}
+
+function getTextAnchor(alignment: VectorShape['textAlign']): string {
+  if (alignment === 'center') return 'middle';
+  if (alignment === 'right') return 'end';
+  return 'start';
 }
 
 const SHAPE_RENDERERS: Record<VectorShape['kind'], ShapeRenderer> = {

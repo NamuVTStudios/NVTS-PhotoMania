@@ -86,6 +86,14 @@ function rewriteManifest(bytes, update) {
   return zipSync(files);
 }
 
+function writePixelGrid(controller, layer, color) {
+  for (let y = 0; y < 2; y++) writePixelGridRow(controller, layer, y, color);
+}
+
+function writePixelGridRow(controller, layer, y, color) {
+  for (let x = 0; x < 4; x++) writePixel(controller, layer, x * 256, y * 256, color);
+}
+
 test('pixel undo and redo restore the exact RGBA value', () => {
   const controller = createController();
   const layer = controller.addRaster('Píxeles');
@@ -117,11 +125,7 @@ test('the pixel budget remains enforced when undo moves new tiles to redo', () =
   const layer = controller.addRaster('Lienzo grande');
   controller.clearHistory();
 
-  recordPixelAction(controller, layer, () => {
-    for (let y = 0; y < 2; y++) {
-      for (let x = 0; x < 4; x++) writePixel(controller, layer, x * 256, y * 256, [5, 6, 7, 255]);
-    }
-  }, 'Trazo grande');
+  recordPixelAction(controller, layer, () => writePixelGrid(controller, layer, [5, 6, 7, 255]), 'Trazo grande');
 
   assert.equal(controller.undo(), 'pixels');
   assert.ok(controller.history.memoryBytes() <= 1024 * 1024);
@@ -135,11 +139,7 @@ test('a single pixel action larger than the cap is removed and not shown as undo
   assert.equal(controller.layerPixels(layer).loadFromRGBA(new Uint8Array(1024 * 512 * 4).fill(255)), true);
   controller.clearHistory();
 
-  recordPixelAction(controller, layer, () => {
-    for (let y = 0; y < 2; y++) {
-      for (let x = 0; x < 4; x++) writePixel(controller, layer, x * 256, y * 256, [8, 9, 10, 255]);
-    }
-  }, 'Acción grande');
+  recordPixelAction(controller, layer, () => writePixelGrid(controller, layer, [8, 9, 10, 255]), 'Acción grande');
 
   assert.equal(controller.canUndo, false);
   assert.equal(controller.historyEntries.length, 0);

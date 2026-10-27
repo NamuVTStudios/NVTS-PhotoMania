@@ -27,6 +27,11 @@ export function wireAnimationTimelinePanel(root: HTMLElement): void {
   new AnimationTimelineController(root, elements).mount();
 }
 
+function getRulerFrameLabel(frame: number): string {
+  if (frame % 4 === 1) return String(frame);
+  return '·';
+}
+
 function getTimelineElements(root: HTMLElement): TimelineElements | null {
   const grid = root.querySelector<HTMLElement>('#timeline-grid');
   const current = root.querySelector<HTMLInputElement>('#timeline-current');
@@ -85,7 +90,7 @@ class AnimationTimelineController extends Panel {
     ruler.append(document.createElement('span'));
     for (let frame = 1; frame <= 48; frame++) {
       const cell = document.createElement('span');
-      cell.textContent = frame % 4 === 1 ? String(frame) : '·';
+      cell.textContent = getRulerFrameLabel(frame);
       ruler.append(cell);
     }
     this.elements.grid.append(ruler);

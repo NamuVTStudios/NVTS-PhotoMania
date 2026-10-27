@@ -83,14 +83,24 @@ function createLayerName(layer: LayerNode, callbacks: LayersPanelCallbacks): HTM
   const name = document.createElement('span');
   name.className = 'layer-name';
   name.textContent = layer.name;
-  name.title = layer.type === 'file'
-    ? `${layer.sourceName ?? layer.name} · ${layer.sourceLinkId ? 'vínculo externo configurado' : 'imagen incrustada sin vínculo externo'}`
-    : 'Doble clic para renombrar o editar esta capa';
+  name.title = getLayerNameTooltip(layer);
   name.ondblclick = (event) => {
     event.stopPropagation();
     callbacks.onRenameOrEdit(layer);
   };
   return name;
+}
+
+function getLayerNameTooltip(layer: LayerNode): string {
+  if (layer.type !== 'file') return 'Doble clic para renombrar o editar esta capa';
+  const sourceName = layer.sourceName ?? layer.name;
+  const linkStatus = getFileLayerLinkStatus(layer.sourceLinkId);
+  return `${sourceName} · ${linkStatus}`;
+}
+
+function getFileLayerLinkStatus(linkId: string | undefined): string {
+  if (linkId) return 'vínculo externo configurado';
+  return 'imagen incrustada sin vínculo externo';
 }
 
 function createLayerEffectsButton(layer: LayerNode, callbacks: LayersPanelCallbacks): HTMLButtonElement {
@@ -204,14 +214,7 @@ function renderLayerEntry(
 ): number {
   container.append(createLayerRow(layer, activeLayerId, depth, callbacks));
   let renderedCount = 1;
-  if (layer.masks?.length) {
-    const masks = document.createElement('div');
-    masks.className = 'layer-mask-children';
-    masks.dataset.parentLayerId = layer.id;
-    for (const mask of layer.masks) masks.append(createLayerMaskRow(layer, mask, activeMaskId, depth, callbacks));
-    renderedCount += layer.masks.length;
-    container.append(masks);
-  }
+  renderedCount += appendLayerMaskRows(container, layer, activeMaskId, depth, callbacks);
   if (!isExpandableGroup(layer)) return renderedCount;
   const children = document.createElement('div');
   children.className = 'layer-children';
@@ -219,6 +222,18 @@ function renderLayerEntry(
   const childCount = renderLayerTree(children, layer.children, activeLayerId, activeMaskId, depth + 1, callbacks);
   container.append(children);
   return childCount + renderedCount;
+}
+
+function appendLayerMaskRows(
+  container: HTMLElement, layer: LayerNode, activeMaskId: string, depth: number, callbacks: LayersPanelCallbacks,
+): number {
+  if (!layer.masks?.length) return 0;
+  const masks = document.createElement('div');
+  masks.className = 'layer-mask-children';
+  masks.dataset.parentLayerId = layer.id;
+  for (const mask of layer.masks) masks.append(createLayerMaskRow(layer, mask, activeMaskId, depth, callbacks));
+  container.append(masks);
+  return layer.masks.length;
 }
 
 function isExpandableGroup(layer: LayerNode): boolean {

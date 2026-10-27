@@ -104,6 +104,8 @@ export type VectorShape = {
   textAlign?: 'left' | 'center' | 'right';
 };
 
+export interface ComicClipBounds { x: number; y: number; width: number; height: number }
+
 export interface LayerManifest {
   id: string;
   type: LayerType;
@@ -121,6 +123,8 @@ export interface LayerManifest {
   filterStrength?: number; // [0..1]
   /** Metadatos de objetos vectoriales; la previsualización actual también se rasteriza. */
   vectorShapes?: VectorShape[];
+  /** Límites de dibujo para una capa de viñeta de cómic. */
+  comicClipBounds?: ComicClipBounds;
   /** Datos editables de una capa de texto; pixelData es su previsualización rasterizada. */
   textContent?: string;
   textX?: number;

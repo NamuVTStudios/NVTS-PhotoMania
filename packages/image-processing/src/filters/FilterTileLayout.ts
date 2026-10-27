@@ -17,11 +17,15 @@ export function forEachFilterTile(
   tileSize: number,
   visit: (tile: FilterTile) => void,
 ): void {
-  for (let y = 0; y < height; y += tileSize) {
-    for (let x = 0; x < width; x += tileSize) {
-      visit({ x, y, width: Math.min(tileSize, width - x), height: Math.min(tileSize, height - y) });
-    }
-  }
+  for (let y = 0; y < height; y += tileSize) visitFilterTileRow(width, height, y, tileSize, visit);
+}
+
+function visitFilterTileRow(width: number, height: number, y: number, tileSize: number, visit: (tile: FilterTile) => void): void {
+  for (let x = 0; x < width; x += tileSize) visit(createFilterTile(x, y, tileSize, width, height));
+}
+
+function createFilterTile(x: number, y: number, tileSize: number, width: number, height: number): FilterTile {
+  return { x, y, width: Math.min(tileSize, width - x), height: Math.min(tileSize, height - y) };
 }
 
 export function expandFilterTile(

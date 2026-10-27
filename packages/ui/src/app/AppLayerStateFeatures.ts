@@ -81,14 +81,17 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       const filter = this.root.querySelector<HTMLButtonElement>('#l-filter-options');
       const vector = this.root.querySelector<HTMLButtonElement>('#l-vector-add');
       const text = this.root.querySelector<HTMLButtonElement>('#l-text-edit');
-      if (fill) {
-        fill.hidden = layer?.type !== 'fill';
-        fill.textContent = layer?.type === 'fill' ? `Color ${layer.fillColor ?? '#ffffff'}…` : fill.textContent;
-      }
+      if (fill) this.updateFillLayerButton(fill, layer);
       if (filter) filter.hidden = layer?.type !== 'filter';
       if (vector) vector.hidden = layer?.type !== 'vector';
       if (text) text.hidden = layer?.type !== 'text';
     }
+
+  private updateFillLayerButton(button: HTMLButtonElement, layer: LayerNode | undefined): void {
+    button.hidden = layer?.type !== 'fill';
+    if (layer?.type !== 'fill') return;
+    button.textContent = `Color ${layer.fillColor ?? '#ffffff'}…`;
+  }
 
   protected syncTextLayerSettings(layer: LayerNode): void {
       if (layer.type !== 'text') return;
@@ -127,13 +130,16 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
     }
 
   protected syncToolAvailability(layer: LayerNode | undefined): void {
-      const canPaint = !!layer
-        && (layer.type === 'paint' || layer.type === 'raster')
-        && !this.ctl.isEffectivelyLocked(layer.id)
-        && this.ctl.isEffectivelyVisible(layer.id);
-      this.setToolButtonsDisabled(['#rail-brush', '#rail-eraser', '#rail-line', '#rail-rectangle', '#rail-ellipse', '#rail-fill'], !canPaint);
+      const canUseActiveLayer = (tool: Tool): boolean => {
+        if (!layer || !this.toolManager.canUseLayer(tool, layer.type)) return false;
+        return this.ctl.isEffectivelyVisible(layer.id) && !this.ctl.isEffectivelyLocked(layer.id);
+      };
+      const canPaint = canUseActiveLayer('brush');
+      const canUseVector = canUseActiveLayer('comic-panel');
+      this.setToolButtonsDisabled(['#rail-brush', '#rail-eraser', '#rail-line', '#rail-rectangle', '#rail-ellipse', '#rail-fill', '#rail-clone-stamp'], !canPaint);
       this.setToolButtonsDisabled(['#advanced-brightness-down', '#advanced-brightness-up'], !canPaint);
       this.setToolButtonsDisabled(['#rail-eyedropper', '#rail-hand'], false);
+      this.setToolButtonsDisabled(['#rail-vector-select', '#rail-comic-panel'], !canUseVector);
       const swatch = this.root.querySelector<HTMLElement>('#foreground-swatch');
       if (swatch) swatch.style.background = this.foregroundHex();
     }
@@ -173,6 +179,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
         brush: 'Pincel', eraser: 'Borrador', eyedropper: 'Cuentagotas', line: 'Línea',
         rectangle: 'Rectángulo', ellipse: 'Elipse', fill: 'Relleno', hand: 'Mover lienzo',
         text: 'Texto', 'vector-select': 'Selección vectorial',
+        'clone-stamp': 'Tampón de clonar', 'comic-panel': 'Marco y viñetas',
       };
       this.q<HTMLElement>('#tool-current-label').textContent = labels[this.tool];
     }
@@ -183,27 +190,65 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
     }
 
   protected createToolOptionsMarkup(): string {
-      const colorField = `<label class="tool-setting">Color <input id="tool-color" type="color" value="${this.foregroundHex()}" /></label>`;
-      const sizeLabel = this.tool === 'line' || this.tool === 'rectangle' || this.tool === 'ellipse' ? 'Grosor' : 'Tamaño';
-      const sizeField = `<label class="tool-setting">${sizeLabel} <input id="tool-size" type="range" min="1" max="256" value="${this.brush.size}" /><output id="tool-size-value">${this.brush.size}px</output></label>`;
-      const opacityField = `<label class="tool-setting">Opacidad <input id="tool-opacity" type="range" min="1" max="100" value="${this.brush.opacity}" /><output id="tool-opacity-value">${this.brush.opacity}%</output></label>`;
-      const fontOptions = ['Arial','Inter','Georgia','Times New Roman','Verdana','Tahoma','Trebuchet MS','Courier New','monospace','serif','sans-serif']
-        .map((name) => `<option value="${name}" ${this.textSettings.fontFamily === name ? 'selected' : ''}>${name}</option>`)
-        .join('');
-      if (this.tool === 'brush') return `${colorField}${sizeField}${opacityField}`;
-      if (this.tool === 'eraser') return `${sizeField}${opacityField}`;
-      if (this.tool === 'line') return `${colorField}${sizeField}${opacityField}`;
-      if (this.tool === 'rectangle' || this.tool === 'ellipse') {
-        return `${colorField}${sizeField}${opacityField}<label class="tool-setting tool-check"><input id="tool-shape-fill" type="checkbox" ${this.brush.shapeFill ? 'checked' : ''}/> Rellenar figura</label>`;
-      }
-      if (this.tool === 'fill') {
-        return `${colorField}<label class="tool-setting">Tolerancia <input id="tool-tolerance" type="range" min="0" max="255" value="${this.brush.tolerance}"/><output id="tool-tolerance-value">${this.brush.tolerance}</output></label><label class="tool-setting">Opacidad <input id="tool-opacity" type="range" min="1" max="100" value="${this.brush.opacity}"/><output id="tool-opacity-value">${this.brush.opacity}%</output></label>`;
-      }
-      if (this.tool === 'text') return this.createTextToolMarkup(fontOptions);
-      if (this.tool === 'eyedropper') return '<span class="tool-help">Hacé clic en el lienzo para tomar un color.</span>';
-      if (this.tool === 'vector-select') return '<span class="tool-help">Seleccioná un objeto vectorial; arrastralo para moverlo o usá el control inferior derecho para cambiar su tamaño.</span>';
-      return '<span class="tool-help">Arrastrá el lienzo para desplazarte. Usá − / + o la rueda con Ctrl para cambiar el zoom.</span>';
-    }
+    const fields = this.createCommonToolFields();
+    const fontOptions = this.createFontOptions();
+    return this.createToolSpecificOptions(fields, fontOptions);
+  }
+
+  private createCommonToolFields(): { color: string; size: string; opacity: string } {
+    const color = `<label class="tool-setting">Color <input id="tool-color" type="color" value="${this.foregroundHex()}" /></label>`;
+    const sizeLabel = this.tool === 'line' || this.tool === 'rectangle' || this.tool === 'ellipse' ? 'Grosor' : 'Tamaño';
+    const size = `<label class="tool-setting">${sizeLabel} <input id="tool-size" type="range" min="1" max="256" value="${this.brush.size}" /><output id="tool-size-value">${this.brush.size}px</output></label>`;
+    const opacity = `<label class="tool-setting">Opacidad <input id="tool-opacity" type="range" min="1" max="100" value="${this.brush.opacity}" /><output id="tool-opacity-value">${this.brush.opacity}%</output></label>`;
+    return { color, size, opacity };
+  }
+
+  private createFontOptions(): string {
+    return ['Arial','Inter','Georgia','Times New Roman','Verdana','Tahoma','Trebuchet MS','Courier New','monospace','serif','sans-serif']
+      .map((name) => this.createFontOption(name)).join('');
+  }
+
+  private createFontOption(name: string): string {
+    const selected = this.textSettings.fontFamily === name ? 'selected' : '';
+    return `<option value="${name}" ${selected}>${name}</option>`;
+  }
+
+  private createToolSpecificOptions(fields: { color: string; size: string; opacity: string }, fontOptions: string): string {
+    if (this.tool === 'brush') return `${fields.color}${fields.size}${fields.opacity}`;
+    if (this.tool === 'clone-stamp') return this.createCloneStampToolMarkup(fields);
+    if (this.tool === 'comic-panel') return this.createComicToolMarkup();
+    if (this.tool === 'eraser') return `${fields.size}${fields.opacity}`;
+    if (this.tool === 'line') return `${fields.color}${fields.size}${fields.opacity}`;
+    if (this.tool === 'rectangle' || this.tool === 'ellipse') return this.createShapeToolMarkup(fields);
+    if (this.tool === 'fill') return this.createFillToolMarkup(fields.color);
+    if (this.tool === 'text') return this.createTextToolMarkup(fontOptions);
+    if (this.tool === 'eyedropper') return '<span class="tool-help">Hacé clic en el lienzo para tomar un color.</span>';
+    if (this.tool === 'vector-select') return '<span class="tool-help">Seleccioná un objeto vectorial; arrastralo para moverlo o usá el control inferior derecho para cambiar su tamaño.</span>';
+    return '<span class="tool-help">Arrastrá el lienzo para desplazarte. Usá − / + o la rueda con Ctrl para cambiar el zoom.</span>';
+  }
+
+  private createCloneStampToolMarkup(fields: { size: string; opacity: string }): string {
+    return `${fields.size}${fields.opacity}<span class="tool-help">Alt + clic para definir el origen; después arrastrá para copiar píxeles desde ese punto.</span>`;
+  }
+
+  private createComicToolMarkup(): string {
+    const frameSelected = this.comicToolMode === 'frame' ? 'selected' : '';
+    const panelSelected = this.comicToolMode === 'panel' ? 'selected' : '';
+    const splitSelected = this.comicToolMode === 'split' ? 'selected' : '';
+    const splitHidden = this.comicToolMode !== 'split' ? 'hidden' : '';
+    const singleSelected = this.comicSplitLineCount === 1 ? 'selected' : '';
+    const doubleSelected = this.comicSplitLineCount === 2 ? 'selected' : '';
+    return `<label class="tool-setting">Tipo <select id="comic-tool-mode"><option value="frame" ${frameSelected}>Marco exterior</option><option value="panel" ${panelSelected}>Viñeta rectangular</option><option value="split" ${splitSelected}>Cortar / dividir marco</option></select></label><label class="tool-setting">Grosor del borde <input id="comic-border-width" type="range" min=1 max=20 value="${this.comicBorderWidth}"/><output id="comic-border-value">${this.comicBorderWidth}px</output></label><div class="comic-split-options" ${splitHidden}><label class="tool-setting">Líneas de corte <select id="comic-split-line-count"><option value="1" ${singleSelected}>1 línea</option><option value="2" ${doubleSelected}>2 líneas paralelas</option></select></label><label class="tool-setting">Distancia <input id="comic-split-distance" type="range" min="4" max="240" step="1" value="${this.comicSplitDistance}"/><output id="comic-split-distance-value">${this.comicSplitDistance}px</output></label></div><span class="tool-help">Viñeta rectangular: arrastrá para crear un panel y su capa de dibujo recortada. Cortar/dividir: dibujá un trazo libre desde un borde del marco hasta otro; podés crear una o dos divisiones paralelas. Si el marco exterior ocupa toda la página, sus bordes se abren en los puntos de unión. El dibujo de las capas de viñeta queda limitado a sus bordes.</span>`;
+  }
+
+  private createShapeToolMarkup(fields: { color: string; size: string; opacity: string }): string {
+    const checked = this.brush.shapeFill ? 'checked' : '';
+    return `${fields.color}${fields.size}${fields.opacity}<label class="tool-setting tool-check"><input id="tool-shape-fill" type="checkbox" ${checked}/> Rellenar figura</label>`;
+  }
+
+  private createFillToolMarkup(color: string): string {
+    return `${color}<label class="tool-setting">Tolerancia <input id="tool-tolerance" type="range" min="0" max="255" value="${this.brush.tolerance}"/><output id="tool-tolerance-value">${this.brush.tolerance}</output></label><label class="tool-setting">Opacidad <input id="tool-opacity" type="range" min="1" max="100" value="${this.brush.opacity}"/><output id="tool-opacity-value">${this.brush.opacity}%</output></label>`;
+  }
 
   protected createTextToolMarkup(fontOptions: string): string {
       const settings = this.textSettings;
@@ -219,6 +264,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       this.bindBrushToolControls(host);
       this.bindFillToolControls(host);
       this.bindTextToolControls(host);
+      this.bindComicToolControls(host);
     }
 
   protected bindBrushToolControls(host: HTMLElement): void {
@@ -244,6 +290,37 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
         this.brush.tolerance = Number(tolerance.value);
         this.updateToolOutput(host, '#tool-tolerance-value', tolerance.value);
       };
+    }
+
+  protected bindComicToolControls(host: HTMLElement): void {
+      const mode = host.querySelector<HTMLSelectElement>('#comic-tool-mode');
+      if (mode) mode.onchange = () => {
+        this.comicToolMode = mode.value === 'panel' || mode.value === 'split' ? mode.value : 'frame';
+        this.syncComicSplitControls(host);
+      };
+      const lineCount = host.querySelector<HTMLSelectElement>('#comic-split-line-count');
+      if (lineCount) lineCount.onchange = () => {
+        this.comicSplitLineCount = lineCount.value === '2' ? 2 : 1;
+        this.syncComicSplitControls(host);
+      };
+      const distance = host.querySelector<HTMLInputElement>('#comic-split-distance');
+      if (distance) distance.oninput = () => {
+        this.comicSplitDistance = Math.max(4, Math.min(240, Number(distance.value) || 48));
+        this.updateToolOutput(host, '#comic-split-distance-value', `${this.comicSplitDistance}px`);
+      };
+      this.syncComicSplitControls(host);
+      const width = host.querySelector<HTMLInputElement>('#comic-border-width');
+      if (width) width.oninput = () => {
+        this.comicBorderWidth = Math.max(1, Math.min(20, Number(width.value) || 5));
+        this.updateToolOutput(host, '#comic-border-value', `${this.comicBorderWidth}px`);
+      };
+    }
+
+  protected syncComicSplitControls(host: HTMLElement): void {
+      const options = host.querySelector<HTMLElement>('.comic-split-options');
+      options?.toggleAttribute('hidden', this.comicToolMode !== 'split');
+      const distance = host.querySelector<HTMLInputElement>('#comic-split-distance');
+      if (distance) distance.disabled = this.comicSplitLineCount !== 2;
     }
 
   protected bindTextToolControls(host: HTMLElement): void {
@@ -286,6 +363,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
         hand: '#rail-hand', brush: '#rail-brush', eraser: '#rail-eraser', line: '#rail-line',
         rectangle: '#rail-rectangle', ellipse: '#rail-ellipse', fill: '#rail-fill',
         eyedropper: '#rail-eyedropper', text: '#rail-text', 'vector-select': '#rail-vector-select',
+        'clone-stamp': '#rail-clone-stamp', 'comic-panel': '#rail-comic-panel',
       };
       Object.values(toolButtons).forEach((selector) => this.root.querySelector<HTMLElement>(selector)?.classList.remove('selected'));
       this.root.querySelector<HTMLElement>(toolButtons[this.tool])?.classList.add('selected');
@@ -295,7 +373,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       const cursors: Record<Tool, string> = {
         hand: 'grab', eyedropper: 'copy', text: 'text', 'vector-select': 'default',
         brush: 'crosshair', eraser: 'crosshair', line: 'crosshair', rectangle: 'crosshair',
-        ellipse: 'crosshair', fill: 'crosshair',
+        ellipse: 'crosshair', fill: 'crosshair', 'clone-stamp': 'crosshair', 'comic-panel': 'crosshair',
       };
       this.canvas.style.cursor = cursors[this.tool];
     }
@@ -382,10 +460,16 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
     ): void {
       const background = settings.backgroundColor;
       if (!background || background === 'transparent') return;
-      const rectX = settings.align === 'left' ? x : settings.align === 'center' ? x - layout.maxWidth / 2 : x - layout.maxWidth;
+      const rectX = this.getTextBackgroundX(x, settings.align, layout.maxWidth);
       ctx.fillStyle = background;
       ctx.fillRect(rectX - 6, y - 4, layout.maxWidth + 12, layout.totalHeight + 8);
     }
+
+  private getTextBackgroundX(x: number, align: TextToolSettings['align'], width: number): number {
+    if (align === 'left') return x;
+    if (align === 'center') return x - width / 2;
+    return x - width;
+  }
 
   protected drawTextLines(
       ctx: CanvasRenderingContext2D,
@@ -477,9 +561,21 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       this.canvas.dataset.renderScale = renderScale;
       if (scaleChanged && this.ctl) this.renderer.render();
       const label = this.root.querySelector<HTMLElement>('#zoom-value');
-      if (label) label.textContent = Math.abs(this.zoom - 1) < 0.005 ? 'Ajustar' : `${Math.round(this.zoom * 100)}%`;
-      this.canvas.style.cursor = this.isPanning ? 'grabbing' : this.tool === 'hand' ? 'grab' : this.tool === 'eyedropper' ? 'copy' : 'crosshair';
+      if (label) label.textContent = this.getZoomLabel();
+      this.canvas.style.cursor = this.getCanvasCursor();
     }
+
+  private getZoomLabel(): string {
+    if (Math.abs(this.zoom - 1) < 0.005) return 'Ajustar';
+    return `${Math.round(this.zoom * 100)}%`;
+  }
+
+  private getCanvasCursor(): string {
+    if (this.isPanning) return 'grabbing';
+    if (this.tool === 'hand') return 'grab';
+    if (this.tool === 'eyedropper') return 'copy';
+    return 'crosshair';
+  }
 
   protected updatePreviewCanvasSize(): void {
       const preview = this.root.querySelector<HTMLCanvasElement>('#tool-preview');

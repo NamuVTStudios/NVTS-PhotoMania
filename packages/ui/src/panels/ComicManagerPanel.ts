@@ -157,11 +157,16 @@ function updateComicPageControls(root: HTMLElement, config: ComicConfig, activeP
   const selectedIndex = config.pages.findIndex((page) => page.id === activePageId);
   const hasSelection = selectedIndex >= 0;
   const count = root.querySelector<HTMLElement>('#comic-page-count');
-  if (count) count.textContent = `${config.pages.length} ${config.pages.length === 1 ? 'página' : 'páginas'}`;
+  if (count) count.textContent = getComicPageCountLabel(config.pages.length);
   ['comic-duplicate-page', 'comic-page-up', 'comic-page-down', 'comic-delete-page', 'comic-create-canvas', 'comic-page-open-file']
     .forEach((id) => setComicButtonDisabled(root, id, !hasSelection));
   setComicButtonDisabled(root, 'comic-page-up', !hasSelection || selectedIndex <= 0);
   setComicButtonDisabled(root, 'comic-page-down', !hasSelection || selectedIndex >= config.pages.length - 1);
+}
+
+function getComicPageCountLabel(count: number): string {
+  const unit = count === 1 ? 'página' : 'páginas';
+  return `${count} ${unit}`;
 }
 
 function updateComicPreset(root: HTMLElement, config: ComicConfig): void {

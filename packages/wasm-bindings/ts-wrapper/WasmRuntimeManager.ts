@@ -19,24 +19,35 @@ export class WasmRuntimeManager {
   }
 
   getEngine(wasmBaseUrl = '/wasm/'): Promise<EngineClient> {
-    if (this.clientPromise) {
-      if (this.initializedWith !== wasmBaseUrl) {
-        throw new Error(
-          `El runtime Wasm ya se inicializó con "${this.initializedWith}" y no puede reutilizarse con "${wasmBaseUrl}" en el mismo contexto.`,
-        );
-      }
-      return this.clientPromise;
-    }
+    if (!this.clientPromise) return this.initializeEngine(wasmBaseUrl);
+    return this.reuseInitializedEngine(wasmBaseUrl);
+  }
 
+  private reuseInitializedEngine(wasmBaseUrl: string): Promise<EngineClient> {
+    if (this.initializedWith !== wasmBaseUrl) throw this.createBaseUrlMismatchError(wasmBaseUrl);
+    return this.clientPromise!;
+  }
+
+  private createBaseUrlMismatchError(wasmBaseUrl: string): Error {
+    return new Error(
+      `El runtime Wasm ya se inicializó con "${this.initializedWith}" y no puede reutilizarse con "${wasmBaseUrl}" en el mismo contexto.`,
+    );
+  }
+
+  private initializeEngine(wasmBaseUrl: string): Promise<EngineClient> {
     this.initializedWith = wasmBaseUrl;
     const pendingClient = EngineClient.create(wasmBaseUrl).catch((error: unknown) => {
-      if (this.clientPromise === pendingClient) {
-        this.clientPromise = null;
-        this.initializedWith = null;
-      }
+      this.resetFailedInitialization(pendingClient);
       throw error;
     });
     this.clientPromise = pendingClient;
     return pendingClient;
   }
+
+  private resetFailedInitialization(pendingClient: Promise<EngineClient>): void {
+    if (this.clientPromise !== pendingClient) return;
+    this.clientPromise = null;
+    this.initializedWith = null;
+  }
 }
+
