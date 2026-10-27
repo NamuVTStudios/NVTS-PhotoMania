@@ -11,7 +11,7 @@ let renderFilteredImage;
 
 before(async () => {
   vite = await createViteTestServer();
-  ({ applyCustomFilter, blendImageData, getCssFilter, isCustomFilter, renderFilteredImage } = await vite.ssrLoadModule('/packages/ui/src/panels/FilterProcessor.ts'));
+  ({ applyCustomFilter, blendImageData, getCssFilter, isCustomFilter, renderFilteredImage } = await vite.ssrLoadModule('/packages/image-processing/src/filters/FilterProcessor.ts'));
 });
 
 after(async () => {

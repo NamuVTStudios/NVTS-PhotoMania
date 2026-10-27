@@ -1,5 +1,6 @@
 import type { BlendMode, LayerType } from '@nvts/shared';
-import { readStoredPlugins, writeStoredPlugins, type StoredPlugin } from './PluginStorage';
+import { readStoredPlugins, writeStoredPlugins, type StoredPlugin } from '../persistence/PluginStorage';
+import { Panel } from './Panel';
 
 // Panel template and markup. Behavior is wired by the application controller.
 
@@ -28,10 +29,11 @@ type PluginModuleShape = { name?: string; version?: string; activate?: PluginAct
 
 /** Small entry point; lifecycle, installation, activation and rendering live in the controller. */
 export function wirePlugins(root: HTMLElement, getContext: () => Partial<PluginApi> = () => ({})): void {
+  if (!root.querySelector('#plugins-overlay')) return;
   new PluginPanelController(root, getContext).mount();
 }
 
-class PluginPanelController {
+class PluginPanelController extends Panel {
   private overlay: HTMLElement | null = null;
   private list: HTMLElement | null = null;
   private status: HTMLElement | null = null;
@@ -39,7 +41,9 @@ class PluginPanelController {
   private actionsHost: HTMLElement | null = null;
   private readonly actionGroups = new Map<string, PluginAction[]>();
 
-  constructor(private readonly root: HTMLElement, private readonly getContext: () => Partial<PluginApi>) {}
+  constructor(root: HTMLElement, private readonly getContext: () => Partial<PluginApi>) {
+    super(root, '#plugins-overlay');
+  }
 
   mount(): void {
     this.cacheElements();
@@ -114,12 +118,12 @@ class PluginPanelController {
 
   private openManager(): void {
     this.renderPluginList();
-    if (this.overlay) this.overlay.hidden = false;
+    this.show();
     this.root.querySelector<HTMLButtonElement>('#plugins-close')?.focus();
   }
 
   private closeManager(): void {
-    if (this.overlay) this.overlay.hidden = true;
+    this.hide();
   }
 
   private async activateStoredPlugins(): Promise<void> {

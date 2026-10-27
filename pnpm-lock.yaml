@@ -204,6 +204,12 @@ importers:
         specifier: workspace:*
         version: link:../wasm-bindings
 
+  packages/image-processing:
+    dependencies:
+      '@nvts/shared':
+        specifier: workspace:*
+        version: link:../shared
+
   packages/renderer: {}
 
   packages/shared: {}
@@ -227,6 +233,9 @@ importers:
       '@nvts/document-model':
         specifier: workspace:*
         version: link:../document-model
+      '@nvts/image-processing':
+        specifier: workspace:*
+        version: link:../image-processing
       '@nvts/renderer':
         specifier: workspace:*
         version: link:../renderer
@@ -239,9 +248,18 @@ importers:
       '@nvts/templates':
         specifier: workspace:*
         version: link:../templates
+      '@nvts/vector':
+        specifier: workspace:*
+        version: link:../vector
       '@nvts/wasm-bindings':
         specifier: workspace:*
         version: link:../wasm-bindings
+
+  packages/vector:
+    dependencies:
+      '@nvts/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/wasm-bindings: {}
 

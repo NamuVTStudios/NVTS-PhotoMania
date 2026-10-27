@@ -1,3 +1,5 @@
+import { Panel } from './Panel';
+
 /** Línea de tiempo de animación: pistas y fotogramas clave básicos. */
 export const ANIMATION_TIMELINE_PANEL_TEMPLATE = `
 <section id="animation-timeline-panel" class="dock-panel animation-timeline-panel" hidden aria-label="Línea de tiempo de animación">
@@ -35,12 +37,14 @@ function getTimelineElements(root: HTMLElement): TimelineElements | null {
   return { grid, current, fps, status, play };
 }
 
-class AnimationTimelineController {
+class AnimationTimelineController extends Panel {
   private readonly storageKey = 'nvts-photomania-timeline-v1';
   private tracks: TimelineTrack[] = [];
   private playing = false;
 
-  constructor(private readonly root: HTMLElement, private readonly elements: TimelineElements) {}
+  constructor(root: HTMLElement, private readonly elements: TimelineElements) {
+    super(root, '#animation-timeline-panel');
+  }
 
   mount(): void {
     this.loadTracks();

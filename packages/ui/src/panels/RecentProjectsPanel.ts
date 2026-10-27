@@ -5,22 +5,24 @@ import {
   type RecentProjectInfo,
 } from '@nvts/storage';
 import { readPreferences } from './PreferencesPanel';
+import { Panel } from './Panel';
 
 type LaunchProject = (name: string, width: number, height: number, file?: File) => Promise<void>;
 type RecentContextMenu = { container: HTMLDivElement; removeButton: HTMLButtonElement };
 
 /** Owns recent-project storage, rendering, and the list's contextual actions. */
-export class RecentProjectsPanel {
+export class RecentProjectsPanel extends Panel {
   private items: RecentProjectInfo[] = [];
   private removeItemId: string | null = null;
   private contextMenu: RecentContextMenu;
 
   constructor(
-    private readonly root: HTMLElement,
+    root: HTMLElement,
     private readonly launchProject: LaunchProject,
     private readonly reportError: (error: unknown) => void,
     private readonly openPreferences: () => void,
   ) {
+    super(root, 'section[data-home-view="recent"]');
     this.contextMenu = this.createContextMenu();
   }
 
@@ -40,6 +42,7 @@ export class RecentProjectsPanel {
   }
 
   show(): void {
+    super.show();
     this.render();
   }
 

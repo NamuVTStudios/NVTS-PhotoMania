@@ -9,7 +9,7 @@ let findTopRasterLayer;
 
 before(async () => {
   vite = await createViteTestServer();
-  ({ containsEnabledMask, containsLayerType, findTopRasterLayer } = await vite.ssrLoadModule('/packages/ui/src/LayerTreeQueries.ts'));
+  ({ containsEnabledMask, containsLayerType, findTopRasterLayer } = await vite.ssrLoadModule('/packages/document-model/src/LayerTreeQueries.ts'));
 });
 
 after(async () => {

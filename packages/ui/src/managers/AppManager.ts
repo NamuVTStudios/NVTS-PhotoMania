@@ -1,5 +1,5 @@
 import { initializePreferences } from '../panels/PreferencesPanel';
-import { HomeScreenController } from '../HomeScreenController';
+import { HomeScreenController } from '../screens/HomeScreenController';
 
 export type LaunchProject = (
   root: HTMLElement,

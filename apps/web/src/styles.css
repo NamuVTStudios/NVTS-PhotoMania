@@ -649,7 +649,6 @@ button.primary {
     white-space: nowrap;
 }
 
-.layer-mask-create,
 .layer-mask-entry header {
     display: flex;
     align-items: center;
@@ -657,7 +656,6 @@ button.primary {
     padding: 4px 8px
 }
 
-.layer-mask-create button,
 .layer-mask-entry button {
     font-size: 10px;
     padding: 4px 6px
@@ -2263,11 +2261,28 @@ button.primary {
     border-color: color-mix(in srgb, var(--accent) 36%, transparent);
 }
 
+.layer-create-menu__separator {
+    height: 1px;
+    margin: 5px 4px;
+    background: var(--line);
+}
+
+.layer-create-menu__heading {
+    padding: 4px 9px 3px;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+}
+
 .layer-create-menu {
     position: absolute;
     right: 8px;
     bottom: 48px;
     width: 220px;
+    max-height: min(70vh, 520px);
+    overflow-y: auto;
     z-index: 120;
     padding: 6px;
     background: var(--panel);

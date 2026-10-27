@@ -1,3 +1,5 @@
+import { Panel } from './Panel';
+
 /** Panel de guion gráfico: organiza tomas y notas por plano. */
 export const STORYBOARD_PANEL_TEMPLATE = `
 <section id="storyboard-panel" class="dock-panel storyboard-panel" hidden aria-label="Guion gráfico">
@@ -29,11 +31,13 @@ function getStoryboardElements(root: HTMLElement): StoryboardElements | null {
   return { list, add };
 }
 
-class StoryboardPanelController {
+class StoryboardPanelController extends Panel {
   private readonly storageKey = 'nvts-photomania-storyboard-v1';
   private shots: StoryboardShot[] = [];
 
-  constructor(private readonly root: HTMLElement, private readonly elements: StoryboardElements) {}
+  constructor(root: HTMLElement, private readonly elements: StoryboardElements) {
+    super(root, '#storyboard-panel');
+  }
 
   mount(): void {
     this.loadShots();

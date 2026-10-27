@@ -10,7 +10,7 @@ const originalStorageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'l
 
 before(async () => {
   vite = await createViteTestServer();
-  ({ readStoredPlugins, writeStoredPlugins } = await vite.ssrLoadModule('/packages/ui/src/panels/PluginStorage.ts'));
+  ({ readStoredPlugins, writeStoredPlugins } = await vite.ssrLoadModule('/packages/ui/src/persistence/PluginStorage.ts'));
 });
 
 after(async () => {

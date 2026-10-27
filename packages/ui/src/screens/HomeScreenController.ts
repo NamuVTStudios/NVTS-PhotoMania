@@ -1,9 +1,9 @@
 import { TEMPLATES } from '@nvts/templates';
-import { PREFERENCES_PANEL_TEMPLATE, wirePreferences } from './panels/PreferencesPanel';
-import { PLUGINS_PANEL_TEMPLATE, wirePlugins } from './panels/PluginsPanel';
-import { RecentProjectsPanel } from './panels/RecentProjectsPanel';
-import { HOME_TEMPLATE } from './ShellTemplates';
-import { WorkspaceManager } from './managers/WorkspaceManager';
+import { PREFERENCES_PANEL_TEMPLATE, wirePreferences } from '../panels/PreferencesPanel';
+import { PLUGINS_PANEL_TEMPLATE, wirePlugins } from '../panels/PluginsPanel';
+import { RecentProjectsPanel } from '../panels/RecentProjectsPanel';
+import { HOME_TEMPLATE } from '../components/ShellTemplates';
+import { WorkspaceManager } from '../managers/WorkspaceManager';
 
 type HomeSection = 'new' | 'open' | 'recent';
 type LaunchProject = (name: string, width: number, height: number, file?: File) => Promise<void>;

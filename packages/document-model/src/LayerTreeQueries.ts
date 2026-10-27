@@ -1,5 +1,5 @@
 import { isPixelLayerType, type LayerMask } from '@nvts/shared';
-import type { LayerNode } from '@nvts/document-model';
+import type { LayerNode } from './types';
 
 type MaskType = LayerMask['type'];
 

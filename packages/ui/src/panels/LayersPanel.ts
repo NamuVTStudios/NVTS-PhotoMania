@@ -7,7 +7,7 @@ export const LAYERS_PANEL_TEMPLATE = `
     <section class="dock-panel layers-panel"><header><strong>Capas</strong><div class="panel-spacer"></div><select id="dock-blend" aria-label="Modo de fusión"><option value="normal">Normal</option><option value="multiply">Multiplicar</option><option value="screen">Trama</option><option value="overlay">Superponer</option></select></header>
       <div class="layer-props"><label>Opacidad <input id="layer-opacity" type="number" min="0" max="100" value="100"/>%</label><button id="l-fill-color" type="button" hidden>Color de relleno…</button><button id="l-filter-options" type="button" hidden>Configurar filtro…</button><button id="l-vector-add" type="button" hidden>Editar vectores…</button><button id="l-text-edit" type="button" hidden>Editar texto…</button></div>
       <div id="layers"></div><div class="layer-empty" id="layer-empty"><span class="tool-icon tool-icon--layers" aria-hidden="true"></span><strong>Capas</strong><span>Seleccioná una capa o creá una nueva.</span></div>
-      <details class="layer-mask-manager"><summary>Máscara seleccionada</summary><div class="layer-mask-create"><button type="button" data-create-mask="transform">+ Transformación</button><button type="button" data-create-mask="colorize">+ Colorización</button><button type="button" data-create-mask="filter">+ Filtro</button></div><div id="layer-mask-list"></div></details>
+      <details class="layer-mask-manager"><summary>Máscaras de capa</summary><div id="layer-mask-list"></div></details>
       <div id="layer-create-menu" class="layer-create-menu" role="menu" aria-label="Crear capa" hidden>
         <button type="button" role="menuitem" data-layer-type="paint"><span class="tool-icon tool-icon--paint-layer" aria-hidden="true"></span><span>Capa de pintura</span></button>
         <button type="button" role="menuitem" data-layer-type="filter"><span class="tool-icon tool-icon--filter-layer" aria-hidden="true"></span><span>Capa de filtro</span></button>
@@ -16,6 +16,11 @@ export const LAYERS_PANEL_TEMPLATE = `
         <button type="button" role="menuitem" data-layer-type="vector"><span class="tool-icon tool-icon--vector-layer" aria-hidden="true"></span><span>Capa vectorial</span></button>
         <button type="button" role="menuitem" data-layer-type="text"><span class="tool-icon tool-icon--text-layer" aria-hidden="true"></span><span>Capa de texto</span></button>
         <button type="button" role="menuitem" data-layer-type="group"><span class="tool-icon tool-icon--group-layer" aria-hidden="true"></span><span>Grupo</span></button>
+        <div class="layer-create-menu__separator" role="separator"></div>
+        <div class="layer-create-menu__heading">Máscaras de capa</div>
+        <button type="button" role="menuitem" data-mask-type="transform"><span class="tool-icon tool-icon--vector-select" aria-hidden="true"></span><span>Máscara de transformación</span></button>
+        <button type="button" role="menuitem" data-mask-type="colorize"><span class="tool-icon tool-icon--fill-layer" aria-hidden="true"></span><span>Máscara de colorización</span></button>
+        <button type="button" role="menuitem" data-mask-type="filter"><span class="tool-icon tool-icon--filter-layer" aria-hidden="true"></span><span>Máscara de filtro</span></button>
       </div>
       <footer>
         <div class="layer-action-row" aria-label="Acciones de capa">
@@ -93,8 +98,10 @@ function createLayerEffectsButton(layer: LayerNode, callbacks: LayersPanelCallba
   button.className = 'layer-effects-hit';
   button.type = 'button';
   button.textContent = 'fx';
-  button.title = 'Estilos de capa';
-  button.onclick = (event) => {
+  button.title = 'Doble clic izquierdo para abrir estilos de capa';
+  button.ondblclick = (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
     event.stopPropagation();
     callbacks.onOpenEffects(layer);
   };
@@ -133,6 +140,13 @@ function createLayerRow(layer: LayerNode, activeLayerId: string, depth: number, 
     createLayerLockButton(layer, callbacks),
   );
   row.onclick = () => callbacks.onSelect(layer);
+  row.ondblclick = (event) => {
+    if (event.button !== 0) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest('button, input, select, textarea, .layer-name')) return;
+    callbacks.onOpenEffects(layer);
+  };
   row.oncontextmenu = (event) => {
     event.preventDefault();
     callbacks.onContextMenu(layer, event.clientX, event.clientY);
@@ -249,6 +263,7 @@ export function renderLayersPanel(
 
 export interface LayersPanelActions {
   createLayer(type: LayerType): void;
+  createMask(type: LayerMask['type']): void;
   deleteActiveLayer(): void;
   duplicateActiveLayer(): void;
   moveActiveLayer(delta: number): void;
@@ -279,14 +294,28 @@ function bindLayerCreationMenu(root: HTMLElement, actions: LayersPanelActions): 
   root.querySelectorAll<HTMLButtonElement>('#layer-create-menu [data-layer-type]').forEach((button) => {
     button.addEventListener('click', () => createLayerFromMenu(root, button, actions));
   });
+  root.querySelectorAll<HTMLButtonElement>('#layer-create-menu [data-mask-type]').forEach((button) => {
+    button.addEventListener('click', () => createMaskFromMenu(root, button, actions));
+  });
 }
 
 function createLayerFromMenu(root: HTMLElement, button: HTMLButtonElement, actions: LayersPanelActions): void {
+  closeLayerCreationMenu(root);
+  const type = button.dataset.layerType as LayerType | undefined;
+  if (type) actions.createLayer(type);
+}
+
+function createMaskFromMenu(root: HTMLElement, button: HTMLButtonElement, actions: LayersPanelActions): void {
+  closeLayerCreationMenu(root);
+  const type = button.dataset.maskType as LayerMask['type'] | undefined;
+  if (type) actions.createMask(type);
+}
+
+function closeLayerCreationMenu(root: HTMLElement): void {
   const menu = root.querySelector<HTMLElement>('#layer-create-menu');
   const add = root.querySelector<HTMLButtonElement>('#l-add');
   if (menu) menu.hidden = true;
   add?.setAttribute('aria-expanded', 'false');
-  actions.createLayer(button.dataset.layerType as LayerType);
 }
 
 function bindLayerActionButtons(root: HTMLElement, actions: LayersPanelActions): void {

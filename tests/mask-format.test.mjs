@@ -13,7 +13,7 @@ let colorizePixels;
 before(async () => {
   vite = await createViteTestServer();
   ({ packNvtsPhoto, unpackNvtsPhoto } = await vite.ssrLoadModule('/packages/storage/src/NvtsPhotoIO.ts'));
-  ({ colorizePixels } = await vite.ssrLoadModule('/packages/ui/src/panels/ColorizeProcessor.ts'));
+  ({ colorizePixels } = await vite.ssrLoadModule('/packages/image-processing/src/colorize/ColorizeProcessor.ts'));
 });
 
 after(async () => { await vite?.close(); });

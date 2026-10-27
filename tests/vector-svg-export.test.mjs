@@ -7,7 +7,7 @@ let exportVectorShapeToSvg;
 
 before(async () => {
   vite = await createViteTestServer();
-  ({ exportVectorShapeToSvg } = await vite.ssrLoadModule('/packages/ui/src/VectorSvgExporter.ts'));
+  ({ exportVectorShapeToSvg } = await vite.ssrLoadModule('/packages/vector/src/VectorSvgExporter.ts'));
 });
 
 after(async () => {

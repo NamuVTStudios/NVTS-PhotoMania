@@ -6,8 +6,8 @@ import {
   type PanelSavedState,
   type PersistedDockLayout,
   type WorkspaceSavedState,
-} from './DockLayoutStorage';
-export type { DockablePanelId } from './DockLayoutStorage';
+} from '../persistence/DockLayoutStorage';
+export type { DockablePanelId } from '../persistence/DockLayoutStorage';
 
 const PANEL_DEFINITIONS: Array<{ id: DockablePanelId; selector: string; title: string; defaultHeight: number }> = [
   { id: 'advanced', selector: '.advanced-tool-panel', title: 'Opciones avanzadas de herramienta', defaultHeight: 210 },
@@ -41,6 +41,15 @@ export interface DockLayoutController {
   applyWorkspace(workspace: string): void;
   refreshVisibility(): void;
   save(): void;
+}
+
+/** Keeps non-dock editor overlays attached when the dock slot list is rebuilt. */
+export function preserveEditorPanels(
+  dock: Pick<HTMLElement, 'querySelectorAll'>,
+  dockSlots: HTMLElement[],
+): HTMLElement[] {
+  const editorPanels = [...dock.querySelectorAll<HTMLElement>(':scope > .editor-panel')];
+  return [...dockSlots, ...editorPanels];
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -570,10 +579,12 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private createDockChildren(sorted: PanelItem[]): HTMLElement[] {
-    return sorted.map((item) => {
+    const dockSlots = sorted.map((item) => {
       item.slot.hidden = item.panel.hidden || item.floating;
       return item.slot;
     });
+    // Rebuilding the dock must not detach overlays managed by App.
+    return preserveEditorPanels(this.dock, dockSlots);
   }
 
   private rebuildBottomDock(): void {

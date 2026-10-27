@@ -9,7 +9,7 @@ const originalStorageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'l
 
 before(async () => {
   vite = await createViteTestServer();
-  ({ readDockLayout, writeDockLayout } = await vite.ssrLoadModule('/packages/ui/src/panels/DockLayoutStorage.ts'));
+  ({ readDockLayout, writeDockLayout } = await vite.ssrLoadModule('/packages/ui/src/persistence/DockLayoutStorage.ts'));
 });
 
 after(async () => {

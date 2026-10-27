@@ -1,3 +1,5 @@
+import type { ComicConfig, ComicPageEntry } from '../features/comics/types';
+
 // Panel template. Event behavior lives in its panel renderer/controller.
 
 export const COMIC_MANAGER_PANEL_TEMPLATE = `
@@ -50,38 +52,6 @@ export const COMIC_MANAGER_PANEL_TEMPLATE = `
       <footer class="comic-manager-footer"><button id="comic-config-import" type="button">Importar comicConfig.json…</button><button id="comic-config-export" class="primary" type="button">Guardar comicConfig.json</button><input id="comic-config-file" type="file" accept=".json,application/json" hidden /></footer>
     </section>
 `;
-
-export interface ComicPageEntry {
-  id: string;
-  number: number;
-  name: string;
-  fileName: string;
-  width: number;
-  height: number;
-  notes: string;
-}
-
-export interface ComicConfig {
-  format: 'nvts-comic-config';
-  version: 1;
-  projectName: string;
-  projectDirectoryName: string;
-  projectLocation: string;
-  pagesDirectoryName: string;
-  exportDirectoryName: string;
-  title: string;
-  author: string;
-  readingDirection: 'ltr' | 'rtl';
-  pageWidth: number;
-  pageHeight: number;
-  dpi: number;
-  bleedMm: number;
-  marginMm: number;
-  gutterMm: number;
-  facingPages: boolean;
-  pages: ComicPageEntry[];
-  updatedAt: number;
-}
 
 export interface ComicManagerPanelCallbacks {
   onSelectPage(pageId: string): void;

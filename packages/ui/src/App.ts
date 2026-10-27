@@ -4,7 +4,8 @@
 
 import { WasmRuntimeManager, type EngineClient, type TiledLayer } from '@nvts/wasm-bindings';
 import { createRenderer, type RendererBackend } from '@nvts/renderer';
-import { DocumentController, StrokeSession, refresh, runEdit, type EngineCtx, type LayerNode, } from '@nvts/document-model';
+import { applyBrushStamp, blendImageData, colorizePixels, createFilterCanvasPools, expandFilterTile, forEachFilterTile, readFilterTilePixels, renderFilteredImage, type FilterCanvasPools, type FilterTile, type StampOperation } from '@nvts/image-processing';
+import { containsEnabledMask, containsLayerType, findTopRasterLayer, DocumentController, StrokeSession, refresh, runEdit, type EngineCtx, type LayerNode } from '@nvts/document-model';
 import { cloneVectorShape, cloneVectorShapes, FILTER_KINDS, getLayerMaskLabel, isPixelLayerType, type BlendMode, type ColorizeStroke, type FilterKind, type LayerMask, type LayerType, type VectorShape, type TextLayerStyle, type TextLayerAlign } from '@nvts/shared';
 import { ADVANCED_TOOL_OPTIONS_PANEL_TEMPLATE, renderAdvancedToolOptionsPanel } from './panels/AdvancedToolOptionsPanel';
 import { AppManager } from './managers/AppManager';
@@ -16,23 +17,19 @@ import { WorkspaceManager } from './managers/WorkspaceManager';
 import { HISTORY_PANEL_TEMPLATE, renderHistoryPanel } from './panels/HistoryPanel';
 import { LAYERS_PANEL_TEMPLATE, renderLayersPanel, wireLayersPanel } from './panels/LayersPanel';
 import { renderLayerMaskEditor } from './panels/LayerMaskEditor';
-import { colorizePixels } from './panels/ColorizeProcessor';
-import { COMIC_MANAGER_PANEL_TEMPLATE, renderComicManagerPanel, type ComicConfig, type ComicPageEntry } from './panels/ComicManagerPanel';
+import { COMIC_MANAGER_PANEL_TEMPLATE, renderComicManagerPanel } from './panels/ComicManagerPanel';
+import type { ComicConfig, ComicPageEntry } from './features/comics/types';
 import { STORYBOARD_PANEL_TEMPLATE } from './panels/StoryboardPanel';
 import { ANIMATION_TIMELINE_PANEL_TEMPLATE } from './panels/AnimationTimelinePanel';
-import { LAYER_EFFECTS_PANEL_TEMPLATE, wireLayerEffectsPanel } from './panels/LayerEffectsPanel';
-import { FILTER_PANEL_TEMPLATE, wireFilterPanel } from './panels/FilterPanel';
-import { blendImageData, renderFilteredImage } from './panels/FilterProcessor';
+import { LAYER_EFFECTS_PANEL_TEMPLATE, wireLayerEffectsPanel, type LayerEffectsPanelController } from './panels/LayerEffectsPanel';
+import { FILTER_PANEL_TEMPLATE, wireFilterPanel, type FilterPanelController } from './panels/FilterPanel';
+import { FILTER_LABELS } from './panels/FilterCatalog';
 import { VECTOR_EDITOR_PANEL_TEMPLATE, wireVectorEditorPanel, renderVectorEditorPanel } from './panels/VectorEditorPanel';
 import { PLUGINS_PANEL_TEMPLATE, wirePlugins, type PluginApi } from './panels/PluginsPanel';
 import { PREFERENCES_PANEL_TEMPLATE, readPreferences, wirePreferences, type AppPreferences } from './panels/PreferencesPanel';
-import { LOGO_URL, MAIN_MENU } from './ShellTemplates';
-import { exportVectorShapeToSvg } from './VectorSvgExporter';
-import { renderVectorShape } from './VectorCanvasRenderer';
-import { containsEnabledMask, containsLayerType, findTopRasterLayer } from './LayerTreeQueries';
-import { createFilterCanvasPools, expandFilterTile, forEachFilterTile, readFilterTilePixels, type FilterCanvasPools, type FilterTile } from './FilterTileLayout';
-import { applyBrushStamp, type StampOperation } from './BrushStampProcessor';
-import { createDockLayoutManager, type DockLayoutController } from './panels/DockLayoutManager';
+import { LOGO_URL, MAIN_MENU } from './components/ShellTemplates';
+import { exportVectorShapeToSvg, renderVectorShape } from '@nvts/vector';
+import { createDockLayoutManager, type DockLayoutController } from './managers/DockLayoutManager';
 import { openFromDisk, packNvtsPhoto, saveToDisk, unpackNvtsPhoto, rememberRecentProject, supportsFileSystemAccess, rememberLinkedFile, getLinkedFile } from '@nvts/storage';
 import type { WorkspaceDefinition, WorkspaceId } from './workspaces';
 
@@ -311,6 +308,8 @@ export class App {
   private filterMaskEditId: string | null = null;
   private filterMaskFilterIndex = 0;
   private previousEditorDockWidth: string | null = null;
+  private filterPanel: FilterPanelController | null = null;
+  private layerEffectsPanel: LayerEffectsPanelController | null = null;
   private vectorEditLayerId: string | null = null;
   private vectorDraft: VectorShape[] = [];
   private vectorSelectedId: string | null = null;
@@ -2112,20 +2111,24 @@ export class App {
     manager.addEventListener('change', (event) => this.handleMaskChange(event));
   }
 
+  private addMaskToActiveLayer(type: LayerMask['type']): void {
+    const layer = this.active();
+    if (!layer) {
+      this.q<HTMLElement>('#status').textContent = 'Seleccioná una capa antes de añadir una máscara.';
+      return;
+    }
+    const mask = this.ctl.addMask(layer.id, type);
+    if (!mask) return;
+    this.activeMaskId = mask.id;
+    this.q<HTMLDetailsElement>('.layer-mask-manager').open = true;
+    this.finishMaskEdit(`Se añadió máscara de ${getLayerMaskLabel(mask.type)}.`);
+    if (mask.type === 'filter') this.openFilterMaskEditor(layer, mask.id);
+  }
+
   private handleMaskClick(event: Event): void {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button');
     const layer = this.active();
     if (!button || !layer) return;
-    const createType = button.dataset.createMask as LayerMask['type'] | undefined;
-    if (createType) {
-      const mask = this.ctl.addMask(layer.id, createType);
-      if (mask) {
-        this.activeMaskId = mask.id;
-        this.q<HTMLDetailsElement>('.layer-mask-manager').open = true;
-        this.finishMaskEdit(`Se añadió máscara de ${getLayerMaskLabel(mask.type)}.`);
-      }
-      return;
-    }
     const deleteMask = button.dataset.deleteMask;
     if (deleteMask && this.ctl.removeMask(layer.id, deleteMask)) {
       this.activeMaskId = '';
@@ -2256,7 +2259,6 @@ export class App {
         this.activeId = layer.id;
         this.activeMaskId = '';
         this.syncUI();
-        this.openLayerEffectsEditor(layer);
       },
       onSelectMask: (layer, mask) => {
         this.activeId = layer.id;
@@ -2538,40 +2540,25 @@ export class App {
     this.activeId = layer.id;
     this.activeMaskId = '';
     this.syncUI();
-    this.populateEffectsLayerSelector(layer.id);
+    this.layerEffectsPanel?.configureLayers(this.ctl.doc.layers, layer.id);
     this.showRightEditor('effects-panel');
-  }
-
-  private populateEffectsLayerSelector(selectedLayerId: string): void {
-    const selector = this.q<HTMLSelectElement>('#effects-layer-select');
-    selector.replaceChildren();
-    this.appendEffectsLayerOptions(selector, this.ctl.doc.layers, selectedLayerId, '');
-  }
-
-  private appendEffectsLayerOptions(selector: HTMLSelectElement, layers: LayerNode[], selectedLayerId: string, prefix: string): void {
-    for (const layer of layers) {
-      const option = Object.assign(document.createElement('option'), {
-        value: layer.id,
-        textContent: `${prefix}${layer.name}`,
-        selected: layer.id === selectedLayerId,
-      });
-      selector.append(option);
-      this.appendEffectsLayerOptions(selector, layer.children, selectedLayerId, `${prefix}↳ `);
-    }
   }
 
   private showRightEditor(panelId: 'effects-panel' | 'filters-panel'): void {
     this.expandRightDockForEditor();
+    this.filterPanel?.hide();
+    this.layerEffectsPanel?.hide();
+    if (panelId === 'filters-panel') this.filterPanel?.show();
+    if (panelId === 'effects-panel') this.layerEffectsPanel?.show();
     this.setRightEditorVisibility(true);
-    const panels: Array<'effects-panel' | 'filters-panel'> = ['effects-panel', 'filters-panel'];
-    for (const id of panels) this.q<HTMLElement>(`#${id}`).hidden = id !== panelId;
   }
 
   private hideRightEditors(): void {
-    this.q<HTMLElement>('#effects-panel').hidden = true;
-    this.q<HTMLElement>('#filters-panel').hidden = true;
+    this.layerEffectsPanel?.hide();
+    this.filterPanel?.hide();
     this.setRightEditorVisibility(false);
     this.restoreRightDockWidth();
+    this.dockLayout?.refreshVisibility();
   }
 
   private setRightEditorVisibility(visible: boolean): void {
@@ -2616,18 +2603,21 @@ export class App {
   }
 
   private openFilterEditor(layer: LayerNode): void {
-    if (this.ctl.isEffectivelyLocked(layer.id)) { alert('La capa o su grupo está bloqueado.'); return; }
-    this.activeId = layer.id; this.filterEditLayerId = layer.id;
+    if (this.ctl.isEffectivelyLocked(layer.id)) {
+      alert('La capa o su grupo está bloqueado.');
+      return;
+    }
+    this.activeId = layer.id;
+    this.filterEditLayerId = layer.id;
     this.filterMaskEditLayerId = null;
     this.filterMaskEditId = null;
-    this.q<HTMLElement>('#filters-layer-name').textContent = layer.name;
-    const kind = layer.filterKind ?? 'grayscale';
-    this.q('#filters-panel').querySelectorAll<HTMLButtonElement>('[data-filter]').forEach((button) => button.classList.toggle('active', button.dataset.filter === kind));
-    this.q<HTMLElement>('#filter-title').textContent = this.filterLabel(kind);
-    this.q<HTMLInputElement>('#filter-radius').value = String(Math.round((layer.filterStrength ?? 1) * 100));
-    this.q<HTMLElement>('#filter-radius-value').textContent = `${Math.round((layer.filterStrength ?? 1) * 100)}%`;
-    this.q<HTMLElement>('#filter-hint').textContent = 'Este ajuste es no destructivo y afecta a las capas inferiores. Podés cambiarlo más tarde.';
-    this.q<HTMLElement>('#filter-mode-hint').textContent = 'Capa de filtro editable';
+    this.prepareFilterEditor(
+      layer.name,
+      layer.filterKind ?? 'grayscale',
+      layer.filterStrength ?? 1,
+      'Este ajuste es no destructivo y afecta a las capas inferiores. Podés cambiarlo más tarde.',
+      'Capa de filtro editable',
+    );
     this.showRightEditor('filters-panel');
   }
 
@@ -2639,44 +2629,22 @@ export class App {
     this.filterMaskEditId = mask.id;
     this.filterMaskFilterIndex = 0;
     const filter = mask.filters[this.filterMaskFilterIndex];
-    const kind = filter?.kind ?? 'grayscale';
-    const strength = filter?.strength ?? 1;
-    this.prepareFilterEditor(layer.name, kind, strength, 'La máscara conserva el efecto en la capa y permite editarlo cuando quieras.', 'Máscara de filtro no destructiva');
+    this.prepareFilterEditor(
+      layer.name,
+      filter?.kind ?? 'grayscale',
+      filter?.strength ?? 1,
+      'La máscara conserva el efecto en la capa y permite editarlo cuando quieras.',
+      'Máscara de filtro no destructiva',
+    );
     this.showRightEditor('filters-panel');
   }
 
   private prepareFilterEditor(layerName: string, kind: FilterKind, strength: number, hint: string, mode: string): void {
-    this.q<HTMLElement>('#filters-layer-name').textContent = layerName;
-    this.q('#filters-panel').querySelectorAll<HTMLButtonElement>('[data-filter]').forEach((button) => button.classList.toggle('active', button.dataset.filter === kind));
-    this.q<HTMLElement>('#filter-title').textContent = this.filterLabel(kind);
-    const value = Math.round(strength * 100);
-    this.q<HTMLInputElement>('#filter-radius').value = String(value);
-    this.q<HTMLElement>('#filter-radius-value').textContent = `${value}%`;
-    this.q<HTMLElement>('#filter-hint').textContent = hint;
-    this.q<HTMLElement>('#filter-mode-hint').textContent = mode;
+    this.filterPanel?.configure({ layerName, kind, strength, hint, mode });
   }
 
   private filterLabel(kind: FilterKind): string {
-    const labels: Record<FilterKind, string> = {
-      grayscale: 'Escala de grises',
-      invert: 'Invertir colores',
-      sepia: 'Sepia',
-      blur: 'Desenfoque gaussiano',
-      brightness: 'Brillo',
-      contrast: 'Contraste',
-      saturation: 'Saturación',
-      'hue-rotate': 'Rotación de tono',
-      posterize: 'Posterizar',
-      threshold: 'Umbral blanco y negro',
-      pixelate: 'Pixelar / mosaico',
-      solarize: 'Solarizar',
-      noise: 'Grano / ruido',
-      vignette: 'Viñeta',
-      duotone: 'Duotono',
-      sharpen: 'Enfocar',
-      'edge-detect': 'Bordes / contorno',
-    };
-    return labels[kind];
+    return FILTER_LABELS[kind];
   }
 
   private openDestructiveFilterPanel(): void {
@@ -2731,11 +2699,9 @@ export class App {
 
   private getActiveFilterSelection(): { layer: LayerNode; kind: FilterKind; strength: number } | null {
     const layer = this.active();
-    const activeButton = this.q('#filters-panel').querySelector<HTMLButtonElement>('[data-filter].active');
-    if (!layer || !activeButton) return null;
-    const kind = activeButton.dataset.filter as FilterKind;
-    const strength = Math.max(0.01, Math.min(1, Number(this.q<HTMLInputElement>('#filter-radius').value) / 100));
-    return { layer, kind, strength };
+    const selection = this.filterPanel?.getSelection();
+    if (!layer || !selection) return null;
+    return { layer, ...selection };
   }
 
   private updateExistingFilterLayer(layer: LayerNode, kind: FilterKind, strength: number): boolean {
@@ -2798,12 +2764,10 @@ export class App {
   }
 
   private closeFilterDialog(): void {
-    this.q<HTMLElement>('#filters-panel').hidden = true;
-    this.setRightEditorVisibility(false);
     this.filterEditLayerId = null;
     this.filterMaskEditLayerId = null;
     this.filterMaskEditId = null;
-    this.restoreRightDockWidth();
+    this.hideRightEditors();
   }
 
   private async createLayerOfType(type: LayerType): Promise<void> {
@@ -3276,6 +3240,7 @@ export class App {
     wirePlugins(this.root, () => this.createPluginApiContext());
     wireLayersPanel(this.root, {
       createLayer: (type) => { void this.createLayerOfType(type); },
+      createMask: (type) => this.addMaskToActiveLayer(type),
       deleteActiveLayer: () => this.deleteActiveLayer(),
       duplicateActiveLayer: () => this.duplicateActiveLayer(),
       moveActiveLayer: (delta) => this.moveActive(delta),
@@ -3547,10 +3512,14 @@ export class App {
   private bindToolButtons(): void {
     const on = (id: string, fn: () => void) => { this.q(id).onclick = fn; };
     on('#menu-filter', () => this.openDestructiveFilterPanel());
-    on('#menu-layer', () => {
+    const layerMenuButton = this.q<HTMLButtonElement>('#menu-layer');
+    layerMenuButton.title = 'Doble clic izquierdo para abrir estilos de capa';
+    layerMenuButton.onclick = () => undefined;
+    layerMenuButton.ondblclick = (event) => {
+      if (event.button !== 0) return;
       const layer = this.active();
       if (layer) this.openLayerEffectsEditor(layer);
-    });
+    };
     on('#rail-hand', () => this.setTool('hand'));
     on('#rail-brush', () => this.setTool('brush'));
     on('#rail-eraser', () => this.setTool('eraser'));
@@ -3593,14 +3562,14 @@ export class App {
   }
 
   private bindEditorPanels(): void {
-    wireFilterPanel(this.root, {
+    this.filterPanel = wireFilterPanel(this.root, {
       labelForFilter: (kind) => this.filterLabel(kind),
       applyFilter: () => this.applyFilterDialog(),
     });
-    wireLayerEffectsPanel(this.root, (layerId) => {
+    this.layerEffectsPanel = wireLayerEffectsPanel(this.root, (layerId) => {
       const layer = this.ctl.find(layerId);
       if (layer) this.openLayerEffectsEditor(layer);
-    });
+    }, () => this.hideRightEditors());
     wireVectorEditorPanel(this.root, {
       addShape: (kind) => this.addVectorShape(kind),
       deleteShape: () => this.deleteSelectedVectorShape(),

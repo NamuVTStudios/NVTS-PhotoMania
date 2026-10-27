@@ -31,6 +31,12 @@ export default defineConfig({
       '@nvts/shared': fileURLToPath(
         new URL('../../packages/shared/src/index.ts', import.meta.url)
       ),
+      '@nvts/image-processing': fileURLToPath(
+        new URL('../../packages/image-processing/src/index.ts', import.meta.url)
+      ),
+      '@nvts/vector': fileURLToPath(
+        new URL('../../packages/vector/src/index.ts', import.meta.url)
+      ),
       '@nvts/storage': fileURLToPath(
         new URL('../../packages/storage/src/index.ts', import.meta.url)
       ),

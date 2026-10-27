@@ -11,6 +11,8 @@
     "@nvts/shared": "workspace:*",
     "@nvts/storage": "workspace:*",
     "@nvts/templates": "workspace:*",
-    "@nvts/wasm-bindings": "workspace:*"
+    "@nvts/wasm-bindings": "workspace:*",
+    "@nvts/image-processing": "workspace:*",
+    "@nvts/vector": "workspace:*"
   }
 }

@@ -1,0 +1,11 @@
+{
+  "name": "@nvts/image-processing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@nvts/shared": "workspace:*"
+  }
+}

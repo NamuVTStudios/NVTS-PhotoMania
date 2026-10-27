@@ -1,4 +1,4 @@
-import type { ComicConfig, ComicPageEntry } from '../panels/ComicManagerPanel';
+import type { ComicConfig, ComicPageEntry } from '../features/comics/types';
 
 type ComicConfigProvider = () => ComicConfig;
 

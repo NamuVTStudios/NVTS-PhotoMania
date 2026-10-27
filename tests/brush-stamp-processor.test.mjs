@@ -7,7 +7,7 @@ let applyBrushStamp;
 
 before(async () => {
   vite = await createViteTestServer();
-  ({ applyBrushStamp } = await vite.ssrLoadModule('/packages/ui/src/BrushStampProcessor.ts'));
+  ({ applyBrushStamp } = await vite.ssrLoadModule('/packages/image-processing/src/brush/BrushStampProcessor.ts'));
 });
 
 after(async () => {

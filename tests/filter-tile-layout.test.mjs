@@ -10,7 +10,7 @@ let readFilterTilePixels;
 
 before(async () => {
   vite = await createViteTestServer();
-  ({ createFilterCanvasPools, expandFilterTile, forEachFilterTile, readFilterTilePixels } = await vite.ssrLoadModule('/packages/ui/src/FilterTileLayout.ts'));
+  ({ createFilterCanvasPools, expandFilterTile, forEachFilterTile, readFilterTilePixels } = await vite.ssrLoadModule('/packages/image-processing/src/filters/FilterTileLayout.ts'));
 });
 
 after(async () => {
