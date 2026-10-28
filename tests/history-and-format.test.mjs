@@ -94,6 +94,89 @@ function writePixelGridRow(controller, layer, y, color) {
   for (let x = 0; x < 4; x++) writePixel(controller, layer, x * 256, y * 256, color);
 }
 
+test('non-destructive layer style edits are undoable without changing source pixels', () => {
+  const controller = createController();
+  const layer = controller.addRaster('Capa con estilos');
+  writePixel(controller, layer, 3, 4, [80, 100, 120, 255]);
+  const sourceBefore = readPixel(controller, layer, 3, 4);
+  controller.clearHistory();
+  const styles = {
+    stroke: { enabled: true, color: '#e03030', size: 7, opacity: 0.8 },
+    outerGlow: { enabled: false, color: '#fff2a8', size: 12, opacity: 0.75 },
+    dropShadow: { enabled: true, color: '#000000', size: 8, distance: 6, angle: 45, opacity: 0.55 },
+    bevelEmboss: { enabled: false, size: 4, depth: 5, angle: 45, altitude: 45, highlightColor: '#ffffff', shadowColor: '#000000', opacity: 0.7 },
+  };
+  controller.setProps(layer.id, { layerStyles: styles });
+  styles.stroke.size = 25;
+  assert.equal(controller.find(layer.id).layerStyles.stroke.size, 7);
+  assert.deepEqual(readPixel(controller, layer, 3, 4), sourceBefore);
+  assert.equal(controller.undo(), 'structure');
+  assert.equal(controller.find(layer.id).layerStyles, undefined);
+  assert.deepEqual(readPixel(controller, layer, 3, 4), sourceBefore);
+  assert.equal(controller.redo(), 'structure');
+  assert.equal(controller.find(layer.id).layerStyles.stroke.size, 7);
+  assert.deepEqual(readPixel(controller, layer, 3, 4), sourceBefore);
+});
+
+test('applying layer appearance creates a style mask and is one undoable action', () => {
+  const controller = createController();
+  const layer = controller.addRaster('Máscara de estilos');
+  controller.clearHistory();
+  const styles = {
+    stroke: { enabled: true, color: '#ff3300', size: 6, opacity: 0.9 },
+    outerGlow: { enabled: false, color: '#fff2a8', size: 12, opacity: 0.75 },
+    dropShadow: { enabled: false, color: '#000000', size: 8, distance: 6, angle: 45, opacity: 0.55 },
+    bevelEmboss: { enabled: false, size: 4, depth: 5, angle: 45, altitude: 45, highlightColor: '#ffffff', shadowColor: '#000000', opacity: 0.7 },
+  };
+  assert.equal(controller.setLayerAppearance(layer.id, { opacity: 0.75, blendMode: 'multiply', layerStyles: styles }), true);
+  const applied = controller.find(layer.id);
+  const styleMask = applied.masks.find((mask) => mask.type === 'styles');
+  assert.ok(styleMask);
+  assert.equal(styleMask.enabled, true);
+  assert.deepEqual(styleMask.styles, styles);
+  assert.equal(applied.layerStyles, undefined);
+  assert.equal(applied.opacity, 0.75);
+  assert.equal(applied.blendMode, 'multiply');
+  assert.equal(controller.historyEntries.length, 1);
+
+  assert.equal(controller.undo(), 'structure');
+  assert.equal(controller.find(layer.id).masks.some((mask) => mask.type === 'styles'), false);
+  assert.equal(controller.find(layer.id).opacity, 1);
+  assert.equal(controller.find(layer.id).blendMode, 'normal');
+  assert.equal(controller.redo(), 'structure');
+  assert.deepEqual(controller.find(layer.id).masks.find((mask) => mask.type === 'styles').styles, styles);
+  assert.equal(controller.find(layer.id).opacity, 0.75);
+});
+
+test('layer styles survive the complete native-file and controller restoration path', () => {
+  const source = createController(8, 8);
+  const layer = source.addRaster('Estilos persistentes');
+  const styles = {
+    stroke: { enabled: true, color: '#e03030', size: 6, opacity: 0.85 },
+    outerGlow: { enabled: true, color: '#fff2a8', size: 12, opacity: 0.7 },
+    dropShadow: { enabled: true, color: '#000000', size: 8, distance: 9, angle: 35, opacity: 0.5 },
+    bevelEmboss: { enabled: true, size: 4, depth: 6, angle: 45, altitude: 50, highlightColor: '#ffffff', shadowColor: '#000000', opacity: 0.6 },
+  };
+  source.setProps(layer.id, { layerStyles: styles });
+  const archive = packNvtsPhoto(source.doc, (candidate) => source.readPixels(candidate));
+  const restored = DocumentController.fromUnpacked(engine, unpackNvtsPhoto(archive));
+  controllers.push(restored);
+  assert.deepEqual(restored.find(layer.id)?.layerStyles, styles);
+});
+
+test('property changes publish a properties event and listeners can unsubscribe', () => {
+  const controller = createController();
+  const layer = controller.addRaster('Observer');
+  const events = [];
+  const unsubscribe = controller.subscribe((event) => events.push(event));
+  controller.setProps(layer.id, { opacity: 0.5 });
+  assert.equal(events.at(-1)?.kind, 'properties');
+  unsubscribe();
+  const eventCount = events.length;
+  controller.setProps(layer.id, { opacity: 0.75 });
+  assert.equal(events.length, eventCount);
+});
+
 test('pixel undo and redo restore the exact RGBA value', () => {
   const controller = createController();
   const layer = controller.addRaster('Píxeles');

@@ -5,7 +5,7 @@
   "packageManager": "pnpm@12.9.1",
   "scripts": {
     "build:wasm": "cd packages/engine && bash build.sh && cd ../.. && node tools/copy-wasm.mjs",
-    "dev": "pnpm --filter @nvts/web dev",
+    "dev": "cd apps/web && vite",
     "build": "pnpm --filter @nvts/web build",
     "preview": "pnpm --filter @nvts/web preview",
     "typecheck": "tsc -p tsconfig.json",

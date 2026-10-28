@@ -9,4 +9,5 @@ export const comicEuTemplate: TemplateDef = {
   height: 2970,
   icon: '▤',
   preview: 'portrait',
+  printProfile: { finishedWidthMm: 210, finishedHeightMm: 297, bleedMm: 3, safeMarginMm: 12, innerMarginMm: 15, outerMarginMm: 15, topMarginMm: 14.5, bottomMarginMm: 14.5, readingDirection: 'ltr', colorMode: 'cmyk-convert' },
 };

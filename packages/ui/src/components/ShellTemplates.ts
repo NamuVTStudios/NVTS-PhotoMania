@@ -31,7 +31,27 @@ export const MAIN_MENU = `<nav class="menus" aria-label="Menú principal">
         <button id="b-preferences" class="menu-item" role="menuitem" type="button">${menuLabel('preferences', 'Preferencias…')}<kbd></kbd></button>
       </div>
     </div>
-    <button id="menu-image">${uiIcon('image')}<span>Imagen</span></button><button id="menu-layer">${uiIcon('layer')}<span>Capa</span></button><button id="menu-select">${uiIcon('select')}<span>Seleccionar</span></button><button id="menu-filter">${uiIcon('filter')}<span>Filtro</span></button>
+    <button id="menu-image">${uiIcon('image')}<span>Imagen</span></button>
+    <div class="menu-wrap">
+      <button id="menu-layer" aria-haspopup="menu" aria-expanded="false" aria-controls="layer-menu-dropdown">${uiIcon('layer')}<span>Capa</span></button>
+      <div id="layer-menu-dropdown" class="file-menu-dropdown" role="menu" aria-label="Capa" hidden>
+        <button class="menu-item" role="menuitem" data-layer-action="new-paint" type="button">${menuLabel('new-project', 'Nueva capa de pintura')}</button>
+        <button class="menu-item" role="menuitem" data-layer-action="duplicate" type="button">${menuLabel('duplicate', 'Duplicar capa…')}</button>
+        <button class="menu-item" role="menuitem" data-layer-action="rename" type="button">${menuLabel('edit', 'Cambiar nombre de capa…')}</button>
+        <div class="menu-divider" role="separator"></div>
+        <button class="menu-item" role="menuitem" data-layer-action="move-up" type="button">${menuLabel('move-up', 'Subir capa')}</button>
+        <button class="menu-item" role="menuitem" data-layer-action="move-down" type="button">${menuLabel('move-down', 'Bajar capa')}</button>
+        <button class="menu-item" role="menuitem" data-layer-action="visibility" type="button">${menuLabel('view', 'Mostrar / ocultar capa')}</button>
+        <button class="menu-item" role="menuitem" data-layer-action="lock" type="button">${menuLabel('lock', 'Bloquear / desbloquear capa')}</button>
+        <div class="menu-divider" role="separator"></div>
+        <button class="menu-item" role="menuitem" data-layer-action="effects" type="button">${menuLabel('effects', 'Estilos de capa…')}</button>
+        <button class="menu-item" role="menuitem" data-layer-action="opacity" type="button">${menuLabel('opacity', 'Opacidad…')}</button>
+        <button class="menu-item" role="menuitem" data-layer-action="blend" type="button">${menuLabel('layer', 'Modo de fusión…')}</button>
+        <div class="menu-divider" role="separator"></div>
+        <button class="menu-item danger" role="menuitem" data-layer-action="delete" type="button">${menuLabel('delete', 'Eliminar capa')}</button>
+      </div>
+    </div>
+    <button id="menu-select">${uiIcon('select')}<span>Seleccionar</span></button><button id="menu-filter">${uiIcon('filter')}<span>Filtro</span></button>
     <div class="menu-wrap view-menu-wrap">
       <button id="menu-view" aria-haspopup="menu" aria-expanded="false" aria-controls="view-menu-dropdown">${uiIcon('view')}<span>Ver</span></button>
       <div id="view-menu-dropdown" class="file-menu-dropdown" role="menu" aria-label="Ver" hidden>

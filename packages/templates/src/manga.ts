@@ -9,4 +9,5 @@ export const mangaTemplate: TemplateDef = {
   height: 2400,
   icon: '▤',
   preview: 'portrait',
+  printProfile: { finishedWidthMm: 128, finishedHeightMm: 182, bleedMm: 3, safeMarginMm: 5, innerMarginMm: 10, outerMarginMm: 5, topMarginMm: 5, bottomMarginMm: 5, readingDirection: 'rtl', colorMode: 'grayscale' },
 };

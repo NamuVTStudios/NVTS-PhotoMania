@@ -5,7 +5,7 @@ import { isPixelLayerType, type TextLayerStyle } from '@nvts/shared';
 import { renderAdvancedToolOptionsPanel } from '../panels/AdvancedToolOptionsPanel';
 import { renderHistoryPanel } from '../panels/HistoryPanel';
 import { readPreferences } from '../panels/PreferencesPanel';
-import { packNvtsPhoto, rememberRecentProject } from '@nvts/storage';
+import { documentFormats, rememberRecentProject } from '@nvts/storage';
 import type { Tool, TextToolSettings } from './AppBase';
 
 export abstract class AppLayerStateFeatures extends AppComicFeatures {
@@ -52,7 +52,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
         const current = this.ctl;
         if (!readPreferences().rememberRecentProjects) return;
         try {
-          const bytes = packNvtsPhoto(current.doc, (layer) => current.readPixels(layer));
+          const bytes = documentFormats.findWriter('.nvtsphoto').encode(current.doc, (layer) => current.readPixels(layer));
           void rememberRecentProject(current.doc, bytes).catch((error) => console.warn('No se pudo actualizar el proyecto reciente:', error));
         } catch (error) {
           console.warn('No se pudo preparar la copia reciente:', error);
@@ -136,7 +136,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       };
       const canPaint = canUseActiveLayer('brush');
       const canUseVector = canUseActiveLayer('comic-panel');
-      this.setToolButtonsDisabled(['#rail-brush', '#rail-eraser', '#rail-line', '#rail-rectangle', '#rail-ellipse', '#rail-fill', '#rail-clone-stamp'], !canPaint);
+      this.setToolButtonsDisabled(['#rail-brush', '#rail-eraser', '#rail-line', '#rail-rectangle', '#rail-ellipse', '#rail-fill', '#rail-clone-stamp', '#rail-gradient', '#rail-smudge', '#rail-liquify'], !canPaint);
       this.setToolButtonsDisabled(['#advanced-brightness-down', '#advanced-brightness-up'], !canPaint);
       this.setToolButtonsDisabled(['#rail-eyedropper', '#rail-hand'], false);
       this.setToolButtonsDisabled(['#rail-vector-select', '#rail-comic-panel'], !canUseVector);
@@ -179,7 +179,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
         brush: 'Pincel', eraser: 'Borrador', eyedropper: 'Cuentagotas', line: 'Línea',
         rectangle: 'Rectángulo', ellipse: 'Elipse', fill: 'Relleno', hand: 'Mover lienzo',
         text: 'Texto', 'vector-select': 'Selección vectorial',
-        'clone-stamp': 'Tampón de clonar', 'comic-panel': 'Marco y viñetas',
+        'clone-stamp': 'Tampón de clonar', 'comic-panel': 'Marco y viñetas', gradient: 'Degradado', smudge: 'Dedo', liquify: 'Licuar',
       };
       this.q<HTMLElement>('#tool-current-label').textContent = labels[this.tool];
     }
@@ -215,6 +215,9 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
 
   private createToolSpecificOptions(fields: { color: string; size: string; opacity: string }, fontOptions: string): string {
     if (this.tool === 'brush') return `${fields.color}${fields.size}${fields.opacity}`;
+    if (this.tool === 'gradient') return `${fields.color}<span class="tool-help">Arrastrá para aplicar un degradado lineal desde el color frontal hacia transparente.</span>`;
+    if (this.tool === 'smudge') return `${fields.size}${fields.opacity}<span class="tool-help">Arrastrá para mezclar los colores existentes.</span>`;
+    if (this.tool === 'liquify') return `${fields.size}<span class="tool-help">Arrastrá para empujar los píxeles dentro del radio del pincel.</span>`;
     if (this.tool === 'clone-stamp') return this.createCloneStampToolMarkup(fields);
     if (this.tool === 'comic-panel') return this.createComicToolMarkup();
     if (this.tool === 'eraser') return `${fields.size}${fields.opacity}`;
@@ -363,7 +366,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
         hand: '#rail-hand', brush: '#rail-brush', eraser: '#rail-eraser', line: '#rail-line',
         rectangle: '#rail-rectangle', ellipse: '#rail-ellipse', fill: '#rail-fill',
         eyedropper: '#rail-eyedropper', text: '#rail-text', 'vector-select': '#rail-vector-select',
-        'clone-stamp': '#rail-clone-stamp', 'comic-panel': '#rail-comic-panel',
+        'clone-stamp': '#rail-clone-stamp', 'comic-panel': '#rail-comic-panel', gradient: '#rail-gradient', smudge: '#rail-smudge', liquify: '#rail-liquify',
       };
       Object.values(toolButtons).forEach((selector) => this.root.querySelector<HTMLElement>(selector)?.classList.remove('selected'));
       this.root.querySelector<HTMLElement>(toolButtons[this.tool])?.classList.add('selected');
@@ -373,7 +376,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       const cursors: Record<Tool, string> = {
         hand: 'grab', eyedropper: 'copy', text: 'text', 'vector-select': 'default',
         brush: 'crosshair', eraser: 'crosshair', line: 'crosshair', rectangle: 'crosshair',
-        ellipse: 'crosshair', fill: 'crosshair', 'clone-stamp': 'crosshair', 'comic-panel': 'crosshair',
+        ellipse: 'crosshair', fill: 'crosshair', 'clone-stamp': 'crosshair', 'comic-panel': 'crosshair', gradient: 'crosshair', smudge: 'crosshair', liquify: 'crosshair',
       };
       this.canvas.style.cursor = cursors[this.tool];
     }

@@ -1,11 +1,11 @@
 // Document lifecycle, rendering and filter composition.
 import { AppBase } from './AppBase';
 import { type TiledLayer } from '@nvts/wasm-bindings';
-import { blendImageData, colorizePixels, expandFilterTile, forEachFilterTile, readFilterTilePixels, renderFilteredImage, type FilterCanvasPools, type FilterTile } from '@nvts/image-processing';
+import { applyLayerStyles, getLayerStylePadding, hasEnabledLayerStyles, blendImageData, colorizePixels, expandFilterTile, forEachFilterTile, readFilterTilePixels, renderFilteredImage, type FilterCanvasPools, type FilterTile } from '@nvts/image-processing';
 import { containsEnabledMask, containsLayerType, findTopRasterLayer, DocumentController, refresh, type EngineCtx, type LayerNode } from '@nvts/document-model';
-import { isPixelLayerType, type FilterKind, type LayerMask } from '@nvts/shared';
+import { getRenderableLayerStyles, isPixelLayerType, type FilterKind, type LayerMask } from '@nvts/shared';
 import { readPreferences } from '../panels/PreferencesPanel';
-import { packNvtsPhoto, unpackNvtsPhoto, rememberRecentProject } from '@nvts/storage';
+import { documentFormats, rememberRecentProject } from '@nvts/storage';
 import type { PixelRegion } from './AppBase';
 import { documentNameFromFile, CANVAS_BLEND_OPERATIONS } from './AppUtilities';
 
@@ -32,7 +32,7 @@ export abstract class AppDocumentFeatures extends AppBase {
 
   protected async openNativeProjectFile(file: File, fallbackName: string): Promise<void> {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const unpacked = unpackNvtsPhoto(bytes);
+      const unpacked = documentFormats.findReader(bytes, file.name).decode(bytes);
       unpacked.doc.name = documentNameFromFile(file.name) || fallbackName;
       this.setDocument(this.documentLifecycle.fromUnpacked(this.engine.module, unpacked));
       await this.refreshLinkedFileLayers(false);
@@ -41,7 +41,7 @@ export abstract class AppDocumentFeatures extends AppBase {
 
   protected async rememberOpenedProject(): Promise<void> {
       if (!readPreferences().rememberRecentProjects) return;
-      const bytes = packNvtsPhoto(this.ctl.doc, (layer) => this.ctl.readPixels(layer));
+      const bytes = documentFormats.findWriter('.nvtsphoto').encode(this.ctl.doc, (layer) => this.ctl.readPixels(layer));
       await rememberRecentProject(this.ctl.doc, bytes).catch((error) => {
         console.warn('No se pudo guardar la copia reciente:', error);
       });
@@ -63,12 +63,20 @@ export abstract class AppDocumentFeatures extends AppBase {
     }
 
   protected setDocument(ctl: DocumentController): void {
+      this.documentUnsubscribe?.();
       this.ctl = this.documentLifecycle.replace(this.ctl, ctl);
+      this.documentUnsubscribe = this.ctl.subscribe((event) => this.onDocumentChanged(event.label));
       this.activeId = this.topRaster()?.id ?? '';
       this.prepareRendererForDocument(ctl.doc.width, ctl.doc.height);
       this.clearRendererForDocument(ctl.doc.width, ctl.doc.height);
       this.ctx = this.createEngineContext(ctl);
       this.refreshAfterDocumentReplacement();
+    }
+
+  protected onDocumentChanged(_label: string): void {
+      this.syncUI();
+      this.updateHistoryUI();
+      this.scheduleRefresh();
     }
 
   protected prepareRendererForDocument(width: number, height: number): void {
@@ -174,7 +182,8 @@ export abstract class AppDocumentFeatures extends AppBase {
       this.cachedHasNonDestructiveEffects = containsLayerType(layers, 'filter')
         || containsEnabledMask(layers, 'filter')
         || containsEnabledMask(layers, 'transform')
-        || containsEnabledMask(layers, 'colorize');
+        || containsEnabledMask(layers, 'colorize')
+        || this.containsEnabledLayerStyles(layers);
       return this.cachedHasNonDestructiveEffects;
     }
 
@@ -218,6 +227,15 @@ export abstract class AppDocumentFeatures extends AppBase {
     return Boolean(node.masks?.some((mask) => mask.enabled && (mask.type === 'transform' || mask.type === 'colorize')));
   }
 
+  private containsEnabledLayerStyles(nodes: LayerNode[]): boolean {
+    const pending = [...nodes];
+    while (pending.length > 0 && !hasEnabledLayerStyles(getRenderableLayerStyles(pending[pending.length - 1]))) {
+      const node = pending.pop()!;
+      pending.push(...node.children);
+    }
+    return pending.length > 0;
+  }
+
   protected markFilterTilesDirty(region: PixelRegion): void {
       const { width, height } = this.ctl.doc;
       const tileSize = this.engine.module.TILE_SIZE || 256;
@@ -254,7 +272,7 @@ export abstract class AppDocumentFeatures extends AppBase {
   }
 
   private getNodeFilterTilePadding(node: LayerNode): number {
-    return Math.max(this.getOwnFilterTilePadding(node), this.getMaskFilterTilePadding(node), this.getChildFilterTilePadding(node));
+    return Math.max(this.getOwnFilterTilePadding(node), this.getMaskFilterTilePadding(node), this.getLayerStyleTilePadding(node), this.getChildFilterTilePadding(node));
   }
 
   private getOwnFilterTilePadding(node: LayerNode): number {
@@ -269,6 +287,10 @@ export abstract class AppDocumentFeatures extends AppBase {
   private getMaskPadding(mask: NonNullable<LayerNode['masks']>[number]): number {
     if (!mask.enabled || mask.type !== 'filter') return 0;
     return mask.filters.reduce((maximum, filter) => Math.max(maximum, getFilterKindTilePadding(filter.kind)), 0);
+  }
+
+  private getLayerStyleTilePadding(node: LayerNode): number {
+    return getLayerStylePadding(getRenderableLayerStyles(node));
   }
 
   private getChildFilterTilePadding(node: LayerNode): number {
@@ -438,6 +460,7 @@ export abstract class AppDocumentFeatures extends AppBase {
       pools: FilterCanvasPools,
     ): void {
       const groupCanvas = this.composeFilterLayers(node.children, depth + 1, tile, pools);
+      applyLayerStyles(groupCanvas, getRenderableLayerStyles(node));
       targetCtx.save();
       targetCtx.globalAlpha = node.opacity;
       targetCtx.globalCompositeOperation = this.canvasBlend(node.blendMode);
@@ -464,6 +487,7 @@ export abstract class AppDocumentFeatures extends AppBase {
       this.applyColorizeMasksToTile(node, image, tile);
       this.applyFilterMasksToTile(node, image, tile, depth, pools);
       layerCtx.putImageData(image, 0, 0);
+      applyLayerStyles(layerCanvas, getRenderableLayerStyles(node));
       targetCtx.save();
       targetCtx.globalAlpha = node.opacity;
       targetCtx.globalCompositeOperation = this.canvasBlend(node.blendMode);

@@ -188,6 +188,7 @@ function createLayerMaskRow(layer: LayerNode, mask: LayerMask, activeMaskId: str
 function getLayerMaskIcon(mask: LayerMask): string {
   if (mask.type === 'transform') return 'vector-select';
   if (mask.type === 'colorize') return 'fill-layer';
+  if (mask.type === 'styles') return 'style-mask';
   return 'filter-layer';
 }
 

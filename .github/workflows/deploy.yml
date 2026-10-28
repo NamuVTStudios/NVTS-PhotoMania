@@ -43,6 +43,9 @@ jobs:
       - name: Verificar tipos TypeScript
         run: pnpm typecheck
 
+      - name: Ejecutar pruebas de regresión (secuenciales)
+        run: pnpm test
+
       - name: Compilar aplicación frontend (Vite)
         run: pnpm --filter @nvts/web build
 

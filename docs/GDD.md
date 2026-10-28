@@ -19,7 +19,7 @@ The current repository is an active prototype. This document distinguishes imple
 
 ### Document templates
 
-The new-project selector currently offers 23 presets for social media content, screen/video sizes, A4 print, US and European comics, manga/manhwa, animation, and UV/2D textures. Their definitions live in the shared `@nvts/templates` package rather than inside the UI, allowing future NVTS programs to reuse the same presets. The current presets define default canvas dimensions and selector metadata; they do not yet encode complete print profiles, animation timelines, UV layouts, or application-specific setup procedures.
+The new-project selector currently offers 36 presets for social media content, screen/video sizes, A4 print, US and European comics, manga/manhwa, animation, and UV/2D textures. Their definitions live in the shared `@nvts/templates` package rather than inside the UI, allowing future NVTS programs to reuse the same presets. Print presets can carry editable page dimensions, bleed, safe-area, margins, reading direction and color-workflow metadata. Comic guide and symmetry overlays are visual aids and do not enter exported artwork.
 
 ### Document and layers
 
@@ -73,6 +73,69 @@ The new-project selector currently offers 23 presets for social media content, s
 - Plugins can register menu actions, show status messages, inspect document/layer metadata, create certain layer types, rename layers, and set supported properties.
 - Plugin API remains preliminary (`0.1.0`) and is not sandboxed.
 
+
+## Version 1.0 product scope
+
+This section records the user-visible scope and acceptance expectations for Version 1.0. It is product documentation, not an issue tracker: implementation tasks, subtasks, priorities, assignees, status, estimates, and release tracking are managed in Jira. Jira is the source of truth for actionable work and completion status; do not duplicate Jira ticket lists here.
+
+### Layer management
+
+The Layer menu and Layers panel should provide a consistent way to manage the active document's layers.
+
+Product requirements:
+
+- Create a paint layer, duplicate a selected layer, rename a layer, and delete a layer.
+- Reorder layers and change parent/group placement where supported by the current layer model.
+- Toggle visibility and lock state.
+- Safely handle missing selections or references to a layer that no longer exists.
+- Keep the Layer menu, Layers panel, document state, and history controls synchronized after an operation.
+
+Acceptance expectations: an operation affects the intended layer; invalid selection states do not crash the editor; supported mutations are reflected in the UI; and operations covered by document history can be undone and redone.
+
+### Layer appearance controls
+
+Users can adjust layer opacity and the supported blend modes: Normal, Multiply, Screen, and Overlay.
+
+Acceptance expectations: opacity spans 0–100%; controls reflect the selected layer's actual values; the composite updates after a change; and supported edits retain their values across save/reopen and undo/redo.
+
+### Non-destructive Layer Styles
+
+The Version 1.0 Layer Styles MVP comprises Stroke, Outer Glow, Drop Shadow, and Bevel/Emboss. Color Overlay and Gradient Overlay are outside this scope unless added through a separate product-scope decision.
+
+Acceptance expectations:
+
+- Applying layer styles creates or updates a persistent `Máscara de estilos` on the layer; the mask can be enabled or disabled and reopened for editing.
+- Each included effect can be enabled or disabled and exposes its supported parameters.
+- Effect previews/compositing do not overwrite the layer's source pixel buffer.
+- Effects apply to the supported layer alpha without changing unrelated layer data.
+- Applying style edits is one coherent document mutation and follows the editor's undo/redo behavior.
+- The renderer accounts for effect expansion around tile edges.
+- Layer types that cannot meaningfully render an effect have a defined, safe behavior.
+
+Filters stored in a `Máscara de filtro` can be selected for editing in the shared Filters window. Applying changes updates the selected filter entry in the mask, keeps the operation non-destructive, and preserves other filters in the same mask.
+
+The current Bevel/Emboss implementation is an approximation based on alpha-derived gradients; product documentation must not imply exact parity with Photoshop or other mature graphics applications.
+
+### Native project persistence and compatibility
+
+Layer style parameters are part of the native `.nvtsphoto` document state.
+
+Acceptance expectations: style metadata is written alongside its layer and restored when reopening a document all the way into the live document controller; older documents without style metadata continue to open with safe defaults; malformed or incomplete optional style metadata is normalized or defaulted where safe; and nested style data is copied without shared mutable references between duplicated layers or history snapshots. Recent-project snapshots and all native file open/save entry points use the registered format adapter rather than bypassing the common format interface.
+
+### Version 1.0 release expectations
+
+A Version 1.0 release should not be considered ready until the supported workflows have been verified together in the production browser build.
+
+- A clean dependency installation, type checking, required WebAssembly build, tests, and production build pass in CI.
+- Regression coverage exercises layer operations, layer appearance, non-destructive effects, history, and native project save/reopen.
+- GitHub Pages starts at its configured base path without a blank screen or uncaught runtime errors.
+- A user can create or open a document, make edits, save it, reload the application, and reopen the saved project.
+- Test-server processes are cleaned up reliably and do not leave WebSocket port conflicts.
+
+### Version 1.0 scope boundaries
+
+Cloud synchronization, real Google Drive/Dropbox integrations, collaboration, AI features, PSD import/export, advanced vector boolean operations, and PDF/CBZ comic export are not part of the current Version 1.0 scope. These require separate product decisions and should not be treated as implicit acceptance requirements.
+
 ## Design principles
 
 1. **Browser-first workflow:** use a browser runtime and browser APIs instead of requiring a native application install.
@@ -99,6 +162,7 @@ The new-project selector currently offers 23 presets for social media content, s
 - Comic Manager is a project/page organizer, not a multipage document engine. It does not currently create PDF/CBZ packages or final print/digital exports.
 - Plugins are not isolated in a security sandbox and the API is not yet stable.
 - There is no cloud sync, collaboration, AI gateway, paid-plan/credits system, RAW workflow, PSD support, or color-managed 16/32-bit pipeline in this prototype.
+- The Layer Effects panel exposes opacity/blend mode plus editable Stroke, Outer Glow, Drop Shadow, and Bevel/Emboss controls. Rendering and `.nvtsphoto` metadata support are implemented but still require full browser/CI verification; Color Overlay and Gradient Overlay are not included in this slice.
 
 ## Suggested roadmap
 
@@ -138,3 +202,21 @@ Dedicated Storyboarding and Animation workspaces are available. Storyboarding pr
 
 
 Comic frame splitting creates straight dividers from the gesture start/end points, supports one or two parallel lines with adjustable spacing, and opens the full-page outer frame border where the dividers meet it when a matching frame rectangle exists.
+
+## Architecture outcomes: reversible edits, document notifications, and backend adapters
+
+The editor should provide consistent reversible editing, keep panels synchronized with document state, and allow supported file formats and rendering backends to be replaced or extended without coupling the UI to implementation details.
+
+### Acceptance criteria
+
+- Document structural edits participate in the same undo/redo ordering as pixel edits.
+- UI panels can subscribe to document changes without the document model depending on UI components.
+- The editor opens and saves `.nvtsphoto` through a common format-adapter contract.
+- Renderer selection uses a shared backend contract and sequential fallback between supported WebGPU/WebGL2 providers.
+- Existing projects continue to open, and the normal edit/save/render workflows remain functional.
+
+Implementation note: these architecture changes are integrated incrementally; complete regression and browser verification remains required before release sign-off.
+
+## Development tracking
+
+Jira owns the Version 1.0 implementation backlog, subtasks, priorities, assignment, status, and completion evidence. This GDD owns product intent, scope boundaries, user-visible behavior, and acceptance expectations. When scope changes, update this document; when implementation work or its status changes, update Jira. Do not maintain a second ticket list in this file.

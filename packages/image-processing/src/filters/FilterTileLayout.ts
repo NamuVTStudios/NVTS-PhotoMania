@@ -49,3 +49,5 @@ export function readFilterTilePixels(
   const image = context.getImageData(tile.x - expanded.x, tile.y - expanded.y, tile.width, tile.height);
   return new Uint8Array(image.data.buffer, image.data.byteOffset, image.data.byteLength);
 }
+
+

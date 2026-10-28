@@ -18,3 +18,6 @@ export { Panel } from './panels/Panel';
 export { FilterPanelController } from './panels/FilterPanel';
 export { LayerEffectsPanelController } from './panels/LayerEffectsPanel';
 export { FILTER_GROUPS, FILTER_LABELS, renderFilterGroups } from './panels/FilterCatalog';
+
+export { DEFAULT_COMIC_GUIDE_OPTIONS, ComicGuideOverlayController, createPrintCanvasSize, drawComicGuideOverlay } from './features/comics/ComicGuideOverlay';
+export type { ComicGuideOptions } from './features/comics/ComicGuideOverlay';

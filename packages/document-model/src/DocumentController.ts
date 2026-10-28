@@ -2,13 +2,15 @@
 // Las capas filter se representan como nodos transparentes en Wasm y se componen de forma no destructiva en UI.
 import type { NvtsEngineModule, Compositor, HistoryManager, TiledLayer } from '@nvts/wasm-bindings';
 import { blendModeFromManifest } from '@nvts/wasm-bindings';
-import { cloneLayerMasks, cloneVectorShapes, createLayerMask, getLayerMaskLabel, isPixelLayerType, type FilterKind, type LayerMask, type LayerType, type VectorShape } from '@nvts/shared';
+import { cloneLayerMasks, cloneLayerStyles, normalizeLayerStyles, cloneVectorShapes, createLayerMask, getLayerMaskLabel, isPixelLayerType, type FilterKind, type LayerMask, type LayerStyles, type LayerType, type VectorShape } from '@nvts/shared';
 import type { DocumentState, LayerNode, UnpackedDocument } from './types';
+import { CallbackDocumentCommand, type DocumentCommand } from './commands/DocumentCommand';
+import type { DocumentChangeEvent, DocumentChangeListener, DocumentChangeKind } from './DocumentEvents';
 
 export { blendModeToManifest } from '@nvts/wasm-bindings';
 export type LayerPatch = Partial<Pick<LayerNode,
-  'name' | 'visible' | 'locked' | 'opacity' | 'blendMode' | 'fillColor' | 'filterKind' | 'filterStrength' | 'vectorShapes' | 'comicClipBounds' | 'sourceName' | 'sourceLinkId' | 'sourceLastModified' | 'sourceFileSize' | 'textContent' | 'textX' | 'textY' | 'textFontFamily' | 'textFontSize' | 'textColor' | 'textStyle' | 'textAlign' | 'textLineHeight' | 'textLetterSpacing' | 'textStrokeColor' | 'textStrokeWidth' | 'textBackgroundColor'>>;
-type HistoryAction = { kind: 'pixels'; label: string } | { kind: 'structure'; label: string; undo: () => void; redo: () => void; memoryBytes: number };
+  'name' | 'visible' | 'locked' | 'opacity' | 'blendMode' | 'layerStyles' | 'fillColor' | 'filterKind' | 'filterStrength' | 'vectorShapes' | 'comicClipBounds' | 'sourceName' | 'sourceLinkId' | 'sourceLastModified' | 'sourceFileSize' | 'textContent' | 'textX' | 'textY' | 'textFontFamily' | 'textFontSize' | 'textColor' | 'textStyle' | 'textAlign' | 'textLineHeight' | 'textLetterSpacing' | 'textStrokeColor' | 'textStrokeWidth' | 'textBackgroundColor'>>;
+type HistoryAction = { kind: 'pixels'; label: string } | { kind: 'structure'; command: DocumentCommand };
 type LayerSnapshot = { node: LayerNode; parentId: string | null; index: number; pixels: Map<string, Uint8Array>; memoryBytes: number };
 type FileLayerSource = { name: string; linkId?: string; lastModified?: number; fileSize?: number };
 type LayerTypeDefinition = {
@@ -39,6 +41,7 @@ const LAYER_TYPE_DEFINITIONS: Record<LayerType, LayerTypeDefinition> = {
 
 const clonePatch = (n: LayerNode): LayerPatch => ({
   name: n.name, visible: n.visible, locked: n.locked, opacity: n.opacity, blendMode: n.blendMode,
+  layerStyles: n.layerStyles ? cloneLayerStyles(n.layerStyles) : undefined,
   fillColor: n.fillColor, filterKind: n.filterKind, filterStrength: n.filterStrength,
   vectorShapes: cloneVectorShapes(n.vectorShapes), comicClipBounds: n.comicClipBounds ? { ...n.comicClipBounds } : undefined, sourceName: n.sourceName, sourceLinkId: n.sourceLinkId, sourceLastModified: n.sourceLastModified, sourceFileSize: n.sourceFileSize,
   textContent: n.textContent, textX: n.textX, textY: n.textY, textFontFamily: n.textFontFamily, textFontSize: n.textFontSize, textColor: n.textColor,
@@ -47,6 +50,7 @@ const clonePatch = (n: LayerNode): LayerPatch => ({
 
 function getLayerPatchLabel(node: LayerNode, before: LayerPatch, patch: LayerPatch): string {
   if (isRenameOnlyPatch(patch)) return `Renombrar «${before.name}»`;
+  if (patch.layerStyles !== undefined) return `Estilos de «${node.name}»`;
   if (changesFilterProperties(patch)) return `Cambiar filtro de «${node.name}»`;
   if (patch.fillColor !== undefined) return `Cambiar relleno de «${node.name}»`;
   return `Propiedades de «${node.name}»`;
@@ -60,6 +64,14 @@ function changesFilterProperties(patch: LayerPatch): boolean {
   return patch.filterKind !== undefined || patch.filterStrength !== undefined;
 }
 
+
+type LayerAppearanceSnapshot = {
+  opacity: number;
+  blendMode: LayerNode['blendMode'];
+  layerStyles: LayerStyles | undefined;
+  masks: LayerMask[];
+};
+
 export class DocumentController {
   readonly comp: Compositor;
   readonly history: HistoryManager;
@@ -69,6 +81,8 @@ export class DocumentController {
   private redoStack: HistoryAction[] = [];
   private replaying = false;
   private readonly maxHistoryBytes: number;
+  private readonly changeListeners = new Set<DocumentChangeListener>();
+  private revision = 0;
 
   private constructor(readonly mod: NvtsEngineModule, readonly doc: DocumentState, historyMB: number) {
     this.comp = new mod.Compositor(doc.width, doc.height);
@@ -89,6 +103,18 @@ export class DocumentController {
   }
 
   find(id: string): LayerNode | undefined { return this.nodes.get(id); }
+
+  /** Subscribe to document changes without coupling the model to UI components. */
+  subscribe(listener: DocumentChangeListener): () => void {
+    this.changeListeners.add(listener);
+    return () => this.changeListeners.delete(listener);
+  }
+
+  private publishChange(kind: DocumentChangeKind, label: string): void {
+    this.revision += 1;
+    const event: DocumentChangeEvent = { kind, label, documentId: this.doc.id, revision: this.revision };
+    for (const listener of this.changeListeners) this.notifyListener(listener, event);
+  }
   isEffectivelyLocked(id: string): boolean {
     let node = this.nodes.get(id);
     let locked = false;
@@ -117,6 +143,11 @@ export class DocumentController {
     const { width, height } = this.doc;
     const out = new Uint8Array(width * height * 4);
     return l.readRectToJS(0, 0, width, height, out) ? out : null;
+  }
+
+  private notifyListener(listener: DocumentChangeListener, event: DocumentChangeEvent): void {
+    try { listener(event); }
+    catch (error) { console.error('Document change observer failed.', error); }
   }
 
   /** Copia píxeles de una región, útil para componer por tiles. */
@@ -400,9 +431,63 @@ export class DocumentController {
     const after = clonePatch(node);
     if (!this.replaying && JSON.stringify(before) !== JSON.stringify(after)) {
       const label = getLayerPatchLabel(node, before, patch);
-      this.recordStructure(label, () => this.applyPatchRaw(id, before), () => this.applyPatchRaw(id, after));
+      this.recordStructure(label, () => this.applyPatchRaw(id, before), () => this.applyPatchRaw(id, after), this.metadataBytes({ before, after }) + 128, 'properties');
     }
     return true;
+  }
+
+  setLayerAppearance(
+    id: string,
+    appearance: { opacity: number; blendMode: LayerNode['blendMode']; layerStyles: LayerStyles },
+  ): boolean {
+    const node = this.nodes.get(id);
+    if (!node) return false;
+    const before = this.captureLayerAppearance(node);
+    const after = this.createNextLayerAppearance(node, appearance);
+    if (JSON.stringify(before) === JSON.stringify(after)) return true;
+    this.applyLayerAppearanceRaw(id, after);
+    this.recordStructure(
+      `Aplicar apariencia a «${node.name}»`,
+      () => this.applyLayerAppearanceRaw(id, before),
+      () => this.applyLayerAppearanceRaw(id, after),
+      this.metadataBytes({ before, after }) + 128,
+      'properties',
+    );
+    return true;
+  }
+
+  private captureLayerAppearance(node: LayerNode): LayerAppearanceSnapshot {
+    return {
+      opacity: node.opacity,
+      blendMode: node.blendMode,
+      layerStyles: node.layerStyles ? cloneLayerStyles(node.layerStyles) : undefined,
+      masks: cloneLayerMasks(node.masks),
+    };
+  }
+
+  private createNextLayerAppearance(
+    node: LayerNode,
+    appearance: { opacity: number; blendMode: LayerNode['blendMode']; layerStyles: LayerStyles },
+  ): LayerAppearanceSnapshot {
+    const current = this.captureLayerAppearance(node);
+    if (node.type === 'filter') return { ...current, opacity: appearance.opacity, blendMode: appearance.blendMode };
+    const styles = normalizeLayerStyles(appearance.layerStyles) ?? cloneLayerStyles(appearance.layerStyles);
+    const existing = current.masks.find((mask) => mask.type === 'styles');
+    const styleMask: LayerMask = existing?.type === 'styles'
+      ? { ...existing, enabled: true, styles: cloneLayerStyles(styles) }
+      : { id: crypto.randomUUID(), type: 'styles', enabled: true, styles: cloneLayerStyles(styles) };
+    const masks = existing
+      ? current.masks.filter((mask) => mask.type !== 'styles' || mask.id === existing.id).map((mask) => mask.id === existing.id ? styleMask : mask)
+      : [...current.masks, styleMask];
+    return { opacity: appearance.opacity, blendMode: appearance.blendMode, layerStyles: undefined, masks };
+  }
+
+  private applyLayerAppearanceRaw(id: string, snapshot: LayerAppearanceSnapshot): void {
+    const node = this.nodes.get(id);
+    if (!node) return;
+    this.applyPatchRaw(id, { opacity: snapshot.opacity, blendMode: snapshot.blendMode, layerStyles: snapshot.layerStyles });
+    node.masks = cloneLayerMasks(snapshot.masks);
+    this.comp.invalidateAll();
   }
 
   addMask(id: string, type: LayerMask['type']): LayerMask | null {
@@ -497,7 +582,7 @@ export class DocumentController {
   get redoLabel(): string { this.syncPixelHistory(); return this.redoStack.at(-1)?.label ?? ''; }
   get historyEntries(): Array<{ label: string; current: boolean }> {
     this.syncPixelHistory();
-    return [...this.undoStack].reverse().map((a, i) => ({ label: a.label, current: i === 0 }));
+    return [...this.undoStack].reverse().map((action, i) => ({ label: action.kind === 'pixels' ? action.label : action.command.label, current: i === 0 }));
   }
   get historyMemoryBytes(): number {
     this.syncPixelHistory();
@@ -507,6 +592,7 @@ export class DocumentController {
     if (this.replaying) return;
     this.redoStack = [];
     this.undoStack.push({ kind: 'pixels', label });
+    this.publishChange('pixels', label);
     this.syncPixelHistory();
     this.trimStructureHistory();
   }
@@ -523,6 +609,7 @@ export class DocumentController {
     if (outcome === 'skip') return this.undoNextAction();
     if (outcome === null) return null;
     this.redoStack.push(action);
+    this.publishChange(action.kind === 'pixels' ? 'pixels' : 'history', action.kind === 'pixels' ? action.label : action.command.label);
     this.syncPixelHistory();
     return action.kind;
   }
@@ -540,7 +627,7 @@ export class DocumentController {
 
   private runStructuralUndo(action: Extract<HistoryAction, { kind: 'structure' }>): void {
     this.replaying = true;
-    try { action.undo(); } finally { this.replaying = false; }
+    try { action.command.undo(); } finally { this.replaying = false; }
     this.comp.invalidateAll();
   }
 
@@ -556,6 +643,7 @@ export class DocumentController {
     if (outcome === 'skip') return this.redoNextAction();
     if (outcome === null) return null;
     this.undoStack.push(action);
+    this.publishChange(action.kind === 'pixels' ? 'pixels' : 'history', action.kind === 'pixels' ? action.label : action.command.label);
     this.syncPixelHistory();
     return action.kind;
   }
@@ -573,21 +661,29 @@ export class DocumentController {
 
   private runStructuralRedo(action: Extract<HistoryAction, { kind: 'structure' }>): void {
     this.replaying = true;
-    try { action.redo(); } finally { this.replaying = false; }
+    try { action.command.redo(); } finally { this.replaying = false; }
     this.comp.invalidateAll();
   }
   clearHistory(): void { this.history.clear(); this.undoStack = []; this.redoStack = []; }
-  dispose(): void { this.history.delete(); this.comp.delete(); this.nodes.clear(); }
+  dispose(): void { this.history.delete(); this.comp.delete(); this.nodes.clear(); this.changeListeners.clear(); }
 
   // ── Internos ──
   private typeLabel(type: LayerType): string {
     return LAYER_TYPE_DEFINITIONS[type].historyLabel;
   }
-  private recordStructure(label: string, undo: () => void, redo: () => void, memoryBytes = this.metadataBytes(label) + 128): void {
+  private recordStructure(
+    label: string,
+    undo: () => void,
+    redo: () => void,
+    memoryBytes = this.metadataBytes(label) + 128,
+    changeKind: DocumentChangeKind = 'structure',
+  ): void {
     if (this.replaying) return;
     this.discardPixelRedo();
     this.redoStack = [];
-    this.undoStack.push({ kind: 'structure', label, undo, redo, memoryBytes: Math.max(0, memoryBytes) });
+    const command = new CallbackDocumentCommand(label, undo, redo, Math.max(0, memoryBytes));
+    this.undoStack.push({ kind: 'structure', command });
+    this.publishChange(changeKind, label);
     this.trimStructureHistory();
     this.syncPixelHistory();
   }
@@ -659,7 +755,7 @@ export class DocumentController {
 
   private countStructureHistoryBytes(): number {
     return [...this.undoStack, ...this.redoStack]
-      .reduce((total, action) => total + (action.kind === 'structure' ? action.memoryBytes : 0), 0);
+      .reduce((total, action) => total + (action.kind === 'structure' ? action.command.memoryBytes : 0), 0);
   }
 
   private totalHistoryMemoryBytes(): number {
@@ -691,9 +787,9 @@ export class DocumentController {
     else stack.pop();
   }
 
-  private cloneNode(n: LayerNode): LayerNode { return { ...n, vectorShapes: cloneVectorShapes(n.vectorShapes), comicClipBounds: n.comicClipBounds ? { ...n.comicClipBounds } : undefined, masks: cloneLayerMasks(n.masks), children: n.children.map((c) => this.cloneNode(c)) }; }
+  private cloneNode(n: LayerNode): LayerNode { return { ...n, vectorShapes: cloneVectorShapes(n.vectorShapes), layerStyles: n.layerStyles ? cloneLayerStyles(n.layerStyles) : undefined, comicClipBounds: n.comicClipBounds ? { ...n.comicClipBounds } : undefined, masks: cloneLayerMasks(n.masks), children: n.children.map((c) => this.cloneNode(c)) }; }
   private cloneNodeWithNewIds(n: LayerNode): LayerNode {
-    return { ...n, id: crypto.randomUUID(), engineId: 0, vectorShapes: cloneVectorShapes(n.vectorShapes), comicClipBounds: n.comicClipBounds ? { ...n.comicClipBounds } : undefined, masks: cloneLayerMasks(n.masks), children: n.children.map((c) => this.cloneNodeWithNewIds(c)) };
+    return { ...n, id: crypto.randomUUID(), engineId: 0, vectorShapes: cloneVectorShapes(n.vectorShapes), layerStyles: n.layerStyles ? cloneLayerStyles(n.layerStyles) : undefined, comicClipBounds: n.comicClipBounds ? { ...n.comicClipBounds } : undefined, masks: cloneLayerMasks(n.masks), children: n.children.map((c) => this.cloneNodeWithNewIds(c)) };
   }
   private snapshot(node: LayerNode): LayerSnapshot {
     const parent = this.parentOf(node);
@@ -708,6 +804,7 @@ export class DocumentController {
     const fillChanged = n.type === 'fill' && patch.fillColor !== undefined && patch.fillColor !== n.fillColor;
     Object.assign(n, patch);
     if (patch.vectorShapes) n.vectorShapes = cloneVectorShapes(patch.vectorShapes);
+    if (patch.layerStyles) n.layerStyles = normalizeLayerStyles(patch.layerStyles) ?? cloneLayerStyles(patch.layerStyles);
     this.pushProps(n);
     if (fillChanged) this.fillLayerPixelsRaw(n, n.fillColor ?? '#ffffff');
   }
@@ -801,6 +898,7 @@ export class DocumentController {
     const normalizedType: LayerType = src.type === 'raster' ? 'paint' : src.type;
     const node = this.add(normalizedType, src.name, parent?.id, -1, {
       visible: src.visible, locked: src.locked, opacity: src.opacity, blendMode: src.blendMode,
+      layerStyles: src.layerStyles ? cloneLayerStyles(src.layerStyles) : undefined,
       fillColor: src.fillColor, filterKind: src.filterKind, filterStrength: src.filterStrength,
       vectorShapes: cloneVectorShapes(src.vectorShapes), comicClipBounds: src.comicClipBounds ? { ...src.comicClipBounds } : undefined, masks: cloneLayerMasks(src.masks), sourceName: src.sourceName, sourceLinkId: src.sourceLinkId, sourceLastModified: src.sourceLastModified, sourceFileSize: src.sourceFileSize,
       textContent: src.textContent, textX: src.textX, textY: src.textY, textFontFamily: src.textFontFamily, textFontSize: src.textFontSize, textColor: src.textColor, textStyle: src.textStyle, textAlign: src.textAlign, textLineHeight: src.textLineHeight, textLetterSpacing: src.textLetterSpacing, textStrokeColor: src.textStrokeColor, textStrokeWidth: src.textStrokeWidth, textBackgroundColor: src.textBackgroundColor,

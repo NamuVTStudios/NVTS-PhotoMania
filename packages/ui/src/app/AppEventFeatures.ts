@@ -8,6 +8,7 @@ import { wireFilterPanel } from '../panels/FilterPanel';
 import { wireVectorEditorPanel } from '../panels/VectorEditorPanel';
 import { wirePlugins, type PluginApi } from '../panels/PluginsPanel';
 import { createDockLayoutManager } from '../managers/DockLayoutManager';
+import { ComicGuideOverlayController } from '../features/comics/ComicGuideOverlay';
 import type { WorkspaceId } from '../workspaces';
 import type { Tool, MenuEntry, PanelVisibilityEntry } from './AppBase';
 
@@ -24,6 +25,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       this.bindFileToolbar();
       this.bindMaskControls();
       this.bindCanvasEvents();
+      this.bindComicGuideOverlay();
       this.bindKeyboardShortcuts();
     }
 
@@ -121,6 +123,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       return [
         { button: this.q<HTMLButtonElement>('#menu-file'), dropdown: this.q<HTMLElement>('#file-menu-dropdown') },
         { button: this.q<HTMLButtonElement>('#menu-edit'), dropdown: this.q<HTMLElement>('#edit-menu-dropdown') },
+        { button: this.q<HTMLButtonElement>('#menu-layer'), dropdown: this.q<HTMLElement>('#layer-menu-dropdown') },
         { button: this.q<HTMLButtonElement>('#menu-view'), dropdown: this.q<HTMLElement>('#view-menu-dropdown') },
         { button: this.q<HTMLButtonElement>('#menu-workspace'), dropdown: this.q<HTMLElement>('#workspace-menu-dropdown') },
       ];
@@ -160,7 +163,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
     }
 
   protected bindWorkspaceSelector(): void {
-      const workspaceMenu = this.getMenuEntries()[3];
+      const workspaceMenu = this.getMenuEntries()[4];
       const dropdown = workspaceMenu.dropdown;
       const refresh = () => {
         dropdown.querySelectorAll<HTMLButtonElement>('[data-workspace]').forEach((button) => {
@@ -197,7 +200,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
     }
 
   protected bindPanelVisibilityMenu(): void {
-      const viewMenu = this.getMenuEntries()[2];
+      const viewMenu = this.getMenuEntries()[3];
       const panelsDropdown = this.q<HTMLElement>('#panels-menu-dropdown');
       const panelsMenuButton = this.q<HTMLButtonElement>('#menu-panels');
       this.bindPanelDropdownEvents(viewMenu, panelsDropdown, panelsMenuButton);
@@ -323,14 +326,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
   protected bindToolButtons(): void {
       const on = (id: string, fn: () => void) => { this.q(id).onclick = fn; };
       on('#menu-filter', () => this.openDestructiveFilterPanel());
-      const layerMenuButton = this.q<HTMLButtonElement>('#menu-layer');
-      layerMenuButton.title = 'Doble clic izquierdo para abrir estilos de capa';
-      layerMenuButton.onclick = () => undefined;
-      layerMenuButton.ondblclick = (event) => {
-        if (event.button !== 0) return;
-        const layer = this.active();
-        if (layer) this.openLayerEffectsEditor(layer);
-      };
+      this.bindLayerMenuActions();
       on('#rail-hand', () => this.setTool('hand'));
       on('#rail-brush', () => this.setTool('brush'));
       on('#rail-eraser', () => this.setTool('eraser'));
@@ -342,7 +338,48 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       on('#rail-ellipse', () => this.setTool('ellipse'));
       on('#rail-fill', () => this.setTool('fill'));
       on('#rail-clone-stamp', () => this.setTool('clone-stamp'));
+      on('#rail-gradient', () => this.setTool('gradient'));
+      on('#rail-smudge', () => this.setTool('smudge'));
+      on('#rail-liquify', () => this.setTool('liquify'));
       on('#rail-comic-panel', () => this.setTool('comic-panel'));
+    }
+
+  protected bindLayerMenuActions(): void {
+      const dropdown = this.q<HTMLElement>('#layer-menu-dropdown');
+      dropdown.querySelectorAll<HTMLButtonElement>('[data-layer-action]').forEach((button) => {
+        button.addEventListener('click', () => this.runLayerMenuAction(button.dataset.layerAction ?? ''));
+      });
+    }
+
+  protected runLayerMenuAction(action: string): void {
+      const layer = this.active();
+      if (action === 'new-paint') { void this.createLayerOfType('paint'); return; }
+      if (!layer) { this.reportLayerDeletionBlockReason('Seleccioná una capa primero.'); return; }
+      if (action === 'duplicate') { this.duplicateActiveLayer(); return; }
+      if (action === 'rename') { this.renameLayer(layer); return; }
+      if (action === 'move-up') { this.moveActive(1); return; }
+      if (action === 'move-down') { this.moveActive(-1); return; }
+      if (action === 'delete') { this.deleteActiveLayer(); return; }
+      if (action === 'effects') { this.openLayerEffectsEditor(layer); return; }
+      if (action === 'visibility') { this.ctl.setProps(layer.id, { visible: !layer.visible }); this.refreshAfterLayerPropertyChange(); return; }
+      if (action === 'lock') { this.ctl.setProps(layer.id, { locked: !layer.locked }); this.refreshAfterLayerPropertyChange(); return; }
+      if (action === 'opacity') { this.promptLayerOpacity(layer.opacity); return; }
+      if (action === 'blend') { this.promptLayerBlendMode(layer.blendMode); }
+    }
+
+  protected promptLayerOpacity(currentOpacity: number): void {
+      const entered = prompt('Opacidad de la capa (0–100)', String(Math.round(currentOpacity * 100)));
+      if (entered === null) return;
+      const opacity = Number(entered);
+      if (!Number.isFinite(opacity) || opacity < 0 || opacity > 100) { alert('La opacidad debe estar entre 0 y 100.'); return; }
+      this.setActiveLayerOpacity(opacity / 100);
+    }
+
+  protected promptLayerBlendMode(currentMode: LayerNode['blendMode']): void {
+      const modes: LayerNode['blendMode'][] = ['normal', 'multiply', 'screen', 'overlay'];
+      const entered = prompt(`Modo de fusión (${modes.join(', ')})`, currentMode);
+      if (!entered || !modes.includes(entered as LayerNode['blendMode'])) return;
+      this.setActiveLayerBlendMode(entered as LayerNode['blendMode']);
     }
 
   protected bindZoomButtons(): void {
@@ -375,6 +412,16 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
     this.q<HTMLElement>('#' + target).hidden = true;
   }
 
+  protected applyLayerStyleSettings(): void {
+    const layer = this.active();
+    const style = this.layerEffectsPanel?.getStyle();
+    if (!layer || !style) return;
+    this.ctl.setLayerAppearance(layer.id, style);
+    this.activeMaskId = layer.masks?.find((mask) => mask.type === 'styles')?.id ?? '';
+    this.refreshAfterLayerPropertyChange();
+    this.hideRightEditors();
+  }
+
   protected bindEditorPanels(): void {
       this.filterPanel = wireFilterPanel(this.root, {
         labelForFilter: (kind) => this.filterLabel(kind),
@@ -383,7 +430,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       this.layerEffectsPanel = wireLayerEffectsPanel(this.root, (layerId) => {
         const layer = this.ctl.find(layerId);
         if (layer) this.openLayerEffectsEditor(layer);
-      }, () => this.hideRightEditors());
+      }, () => this.applyLayerStyleSettings());
       wireVectorEditorPanel(this.root, {
         addShape: (kind) => this.addVectorShape(kind),
         deleteShape: () => this.deleteSelectedVectorShape(),
@@ -455,6 +502,12 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       const link = Object.assign(document.createElement('a'), { href: url, download: `${safeName}.${extension}` });
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+  protected bindComicGuideOverlay(): void {
+      const canvas = this.root.querySelector<HTMLCanvasElement>('#canvas');
+      if (!canvas || !this.root.querySelector('#toggle-comic-guides')) return;
+      new ComicGuideOverlayController(this.root, canvas);
     }
 
   protected bindCanvasEvents(): void {
@@ -553,7 +606,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       if (mod || typing) return;
       const tools: Record<string, Tool> = {
         b: 'brush', e: 'eraser', i: 'eyedropper', l: 'line', r: 'rectangle',
-        o: 'ellipse', g: 'fill', h: 'hand', t: 'text', v: 'vector-select', c: 'clone-stamp', p: 'comic-panel',
+        o: 'ellipse', g: 'fill', h: 'hand', t: 'text', v: 'vector-select', c: 'clone-stamp', p: 'comic-panel', d: 'gradient', j: 'smudge', k: 'liquify',
       };
       const tool = tools[key];
       if (tool) this.setTool(tool);

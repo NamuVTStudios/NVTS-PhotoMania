@@ -37,6 +37,7 @@ export type StrokeLayerPixels = ReturnType<DocumentController['layerPixels']>;
 
 export abstract class AppBase {
   protected ctl!: DocumentController;
+  protected documentUnsubscribe: (() => void) | null = null;
   protected ctx!: EngineCtx;
   protected fileHandle: FileSystemFileHandle | null = null;
   protected readonly workspaceManager = new WorkspaceManager();
@@ -331,7 +332,7 @@ export abstract class AppBase {
   protected abstract restoreRightDockWidth(): void;
   protected abstract changeFillColor(layer: LayerNode): void;
   protected abstract openFilterEditor(layer: LayerNode): void;
-  protected abstract openFilterMaskEditor(layer: LayerNode, maskId: string): void;
+  protected abstract openFilterMaskEditor(layer: LayerNode, maskId: string, filterIndex?: number): void;
   protected abstract prepareFilterEditor(layerName: string, kind: FilterKind, strength: number, hint: string, mode: string): void;
   protected abstract filterLabel(kind: FilterKind): string;
   protected abstract openDestructiveFilterPanel(): void;

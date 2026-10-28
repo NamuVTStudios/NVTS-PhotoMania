@@ -4,6 +4,7 @@ const LAYER_MASK_LABELS: Record<LayerMask['type'], string> = {
   transform: 'transformación',
   colorize: 'colorización',
   filter: 'filtro',
+  styles: 'estilos',
 };
 
 export function getLayerMaskLabel(type: LayerMask['type']): string {

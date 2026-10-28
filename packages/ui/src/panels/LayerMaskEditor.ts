@@ -17,6 +17,7 @@ const MASK_RENDERERS: MaskRendererMap = {
   transform: (section, mask) => appendTransformControls(section, mask),
   colorize: (section, mask) => appendColorizeControls(section, mask),
   filter: (section, mask, options) => appendFilterControls(section, mask, options),
+  styles: (section, mask) => appendStyleMaskControls(section, mask),
 };
 
 export function renderLayerMaskEditor(container: HTMLElement, mask: LayerMask | undefined, options: MaskEditorOptions): void {
@@ -114,10 +115,13 @@ function appendFilterControls(section: HTMLElement, mask: Extract<LayerMask, { t
     }
     section.append(fieldLabel('Filtro', select));
     appendNumber(section, mask.id, `filter.${index}`, 'Intensidad', Math.round(filter.strength * 100), 0, 100, index);
+    const edit = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Editar en ventana de filtros' });
+    edit.dataset.editMaskFilter = mask.id;
+    edit.dataset.filterIndex = String(index);
     const remove = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Quitar filtro' });
     remove.dataset.removeMaskFilter = mask.id;
     remove.dataset.filterIndex = String(index);
-    section.append(remove);
+    section.append(edit, remove);
   });
   const add = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Añadir filtro' });
   add.dataset.addMaskFilter = mask.id;
@@ -146,4 +150,13 @@ function fieldLabel(label: string, control: HTMLElement): HTMLLabelElement {
   const element = document.createElement('label');
   element.append(document.createTextNode(`${label} `), control);
   return element;
+}
+
+function appendStyleMaskControls(section: HTMLElement, mask: Extract<LayerMask, { type: 'styles' }>): void {
+  const note = document.createElement('p');
+  note.className = 'hint';
+  note.textContent = 'Esta máscara guarda los estilos de capa editables sin modificar los píxeles originales.';
+  const edit = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Editar estilos de capa' });
+  edit.dataset.editStyleMask = mask.id;
+  section.append(note, edit);
 }

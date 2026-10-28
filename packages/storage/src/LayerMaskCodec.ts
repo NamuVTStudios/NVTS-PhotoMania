@@ -1,4 +1,4 @@
-import { isFilterKind, type LayerMask } from '@nvts/shared';
+import { isFilterKind, normalizeLayerStyles, type LayerMask } from '@nvts/shared';
 
 export function parseLayerMasks(value: unknown, layerName: string): LayerMask[] {
   if (value === undefined) return [];
@@ -13,6 +13,7 @@ function parseLayerMask(value: unknown, layerName: string): LayerMask {
   if (mask.type === 'transform') return parseTransformMask(mask, layerName);
   if (mask.type === 'colorize') return parseColorizeMask(mask, layerName);
   if (mask.type === 'filter') return parseFilterMask(mask, layerName);
+  if (mask.type === 'styles') return parseStylesMask(mask, layerName);
   throw new Error(`Tipo de máscara no soportado en "${layerName}"`);
 }
 
@@ -41,6 +42,14 @@ function parseFilterMask(mask: Partial<LayerMask>, layerName: string): Extract<L
     throw new Error(`Filtros de máscara inválidos en "${layerName}"`);
   }
   return { ...filterMask, type: 'filter', id: mask.id!, enabled: mask.enabled! } as Extract<LayerMask, { type: 'filter' }>;
+}
+
+
+function parseStylesMask(mask: Partial<LayerMask>, layerName: string): Extract<LayerMask, { type: 'styles' }> {
+  const stylesMask = mask as Partial<Extract<LayerMask, { type: 'styles' }>>;
+  const styles = normalizeLayerStyles(stylesMask.styles);
+  if (!styles) throw new Error(`Estilos de máscara inválidos en "${layerName}"`);
+  return { id: mask.id!, type: 'styles', enabled: mask.enabled!, styles };
 }
 
 function isValidColorizeStroke(value: unknown): boolean {

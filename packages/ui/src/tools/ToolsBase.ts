@@ -2,7 +2,8 @@ import type { LayerType } from '@nvts/shared';
 
 export type ToolId =
   | 'brush' | 'eraser' | 'eyedropper' | 'line' | 'rectangle' | 'ellipse'
-  | 'fill' | 'hand' | 'text' | 'vector-select' | 'clone-stamp' | 'comic-panel';
+  | 'fill' | 'hand' | 'text' | 'vector-select' | 'clone-stamp' | 'comic-panel'
+  | 'gradient' | 'smudge' | 'liquify';
 
 export type ToolTarget = 'any' | 'raster' | 'vector';
 

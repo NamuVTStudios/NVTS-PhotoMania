@@ -35,6 +35,16 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button');
       const layer = this.active();
       if (!button || !layer) return;
+      const editFilterMask = button.dataset.editMaskFilter;
+      if (editFilterMask) {
+        this.openFilterMaskEditor(layer, editFilterMask, Number(button.dataset.filterIndex));
+        return;
+      }
+      const editStyleMask = button.dataset.editStyleMask;
+      if (editStyleMask) {
+        this.openLayerEffectsEditor(layer);
+        return;
+      }
       const deleteMask = button.dataset.deleteMask;
       if (deleteMask && this.ctl.removeMask(layer.id, deleteMask)) {
         this.activeMaskId = '';
@@ -60,9 +70,14 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
         return;
       }
       const addFilterMask = button.dataset.addMaskFilter;
-      if (addFilterMask) this.updateMaskField(layer.id, addFilterMask, (mask) => mask.type === 'filter'
+      if (!addFilterMask) return;
+      const currentMask = layer.masks?.find((mask) => mask.id === addFilterMask && mask.type === 'filter');
+      if (!currentMask || currentMask.type !== 'filter') return;
+      const newIndex = currentMask.filters.length;
+      this.updateMaskField(layer.id, addFilterMask, (mask) => mask.type === 'filter'
         ? { ...mask, filters: [...mask.filters, { kind: 'grayscale', strength: 1 }] }
         : mask);
+      this.openFilterMaskEditor(layer, addFilterMask, newIndex);
     }
 
   protected handleMaskChange(event: Event): void {
@@ -182,11 +197,16 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
           this.activeId = layer.id;
           this.activeMaskId = mask.id;
           this.syncUI();
-          if (mask.type === 'filter') this.openFilterMaskEditor(layer, mask.id);
-          else {
-            this.hideRightEditors();
-            this.q<HTMLDetailsElement>('.layer-mask-manager').open = true;
+          if (mask.type === 'filter') {
+            this.openFilterMaskEditor(layer, mask.id);
+            return;
           }
+          if (mask.type === 'styles') {
+            this.openLayerEffectsEditor(layer);
+            return;
+          }
+          this.hideRightEditors();
+          this.q<HTMLDetailsElement>('.layer-mask-manager').open = true;
         },
         onToggleMask: (layer, mask, enabled) => {
           this.ctl.updateMask(layer.id, mask.id, (current) => ({ ...current, enabled }));
@@ -456,9 +476,10 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
 
   protected openLayerEffectsEditor(layer: LayerNode): void {
       this.activeId = layer.id;
-      this.activeMaskId = '';
+      this.activeMaskId = layer.masks?.find((mask) => mask.type === 'styles')?.id ?? '';
       this.syncUI();
       this.layerEffectsPanel?.configureLayers(this.ctl.doc.layers, layer.id);
+      this.layerEffectsPanel?.configureCurrentStyle(layer);
       this.showRightEditor('effects-panel');
     }
 
@@ -539,13 +560,14 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
       this.showRightEditor('filters-panel');
     }
 
-  protected openFilterMaskEditor(layer: LayerNode, maskId: string): void {
+  protected openFilterMaskEditor(layer: LayerNode, maskId: string, filterIndex = 0): void {
       const mask = layer.masks?.find((candidate) => candidate.id === maskId && candidate.type === 'filter');
       if (!mask || mask.type !== 'filter') return;
+      if (!Number.isInteger(filterIndex) || filterIndex < 0 || filterIndex >= mask.filters.length) return;
       this.filterEditLayerId = null;
       this.filterMaskEditLayerId = layer.id;
       this.filterMaskEditId = mask.id;
-      this.filterMaskFilterIndex = 0;
+      this.filterMaskFilterIndex = filterIndex;
       const filter = mask.filters[this.filterMaskFilterIndex];
       this.prepareFilterEditor(
         layer.name,
@@ -603,17 +625,25 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
       const maskId = this.filterMaskEditId;
       const index = this.filterMaskFilterIndex;
       if (!layerId || !maskId) return;
-      this.ctl.updateMask(layerId, maskId, (mask) => {
-        if (mask.type !== 'filter') return mask;
-        const filters = [...mask.filters];
-        filters[index] = { kind, strength };
-        return { ...mask, filters };
-      });
-      this.filterMaskEditLayerId = null;
-      this.filterMaskEditId = null;
+      const layer = this.ctl.find(layerId);
+      const mask = layer?.masks?.find((candidate) => candidate.id === maskId && candidate.type === 'filter');
+      if (!mask || mask.type !== 'filter' || index < 0 || index >= mask.filters.length) {
+        this.q<HTMLElement>('#status').textContent = 'El filtro seleccionado ya no está disponible.';
+        this.closeFilterDialog();
+        return;
+      }
+      const updated = this.ctl.updateMask(layerId, maskId, (current) => this.replaceMaskFilter(current, index, kind, strength));
       this.closeFilterDialog();
-      this.finishMaskEdit('Se actualizó el filtro de la máscara.');
+      if (updated) this.finishMaskEdit('Se actualizó el filtro de la máscara.');
     }
+
+
+  private replaceMaskFilter(mask: LayerMask, index: number, kind: FilterKind, strength: number): LayerMask {
+    if (mask.type !== 'filter') return mask;
+    const filters = [...mask.filters];
+    filters[index] = { kind, strength };
+    return { ...mask, filters };
+  }
 
   protected getActiveFilterSelection(): { layer: LayerNode; kind: FilterKind; strength: number } | null {
       const layer = this.active();

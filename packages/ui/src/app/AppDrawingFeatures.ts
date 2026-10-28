@@ -94,8 +94,54 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
 
   protected applyStampStrategy(pixels: Uint8Array, operation: StampOperation): boolean {
       if (this.strokeTool === 'clone-stamp') return this.applyCloneStamp(pixels, operation);
+      if (this.strokeTool === 'smudge') return this.applySmudge(pixels, operation);
+      if (this.strokeTool === 'liquify') return this.applyLiquify(pixels, operation);
       const strategy = this.brushStrategies[this.strokeTool === 'eraser' ? 'eraser' : 'brush'];
       return strategy.apply(pixels, operation);
+    }
+
+  private applySmudge(pixels: Uint8Array, operation: StampOperation): boolean {
+      const original = pixels.slice();
+      const { width, height } = operation.region;
+      const strength = Math.max(0.05, Math.min(1, operation.opacity * 0.35));
+      for (let y = 1; y < height - 1; y++) this.smudgeRow(pixels, original, operation, y, width, strength);
+      return true;
+    }
+
+  private smudgeRow(pixels: Uint8Array, original: Uint8Array, operation: StampOperation, y: number, width: number, strength: number): void {
+      for (let x = 1; x < width - 1; x++) this.smudgePixel(pixels, original, operation, x, y, width, strength);
+    }
+
+  private smudgePixel(pixels: Uint8Array, original: Uint8Array, operation: StampOperation, x: number, y: number, width: number, strength: number): void {
+      const dx = operation.region.left + x - operation.centerX; const dy = operation.region.top + y - operation.centerY;
+      if (dx * dx + dy * dy > operation.radius * operation.radius) return;
+      const index = (y * width + x) * 4;
+      const averageRed = (original[index - 4] + original[index + 4] + original[index - width * 4] + original[index + width * 4]) / 4;
+      const averageGreen = (original[index - 3] + original[index + 5] + original[index - width * 4 + 1] + original[index + width * 4 + 1]) / 4;
+      const averageBlue = (original[index - 2] + original[index + 6] + original[index - width * 4 + 2] + original[index + width * 4 + 2]) / 4;
+      pixels[index] = Math.round(original[index] * (1 - strength) + averageRed * strength);
+      pixels[index + 1] = Math.round(original[index + 1] * (1 - strength) + averageGreen * strength);
+      pixels[index + 2] = Math.round(original[index + 2] * (1 - strength) + averageBlue * strength);
+    }
+
+  private applyLiquify(pixels: Uint8Array, operation: StampOperation): boolean {
+      const original = pixels.slice(); const { width, height } = operation.region;
+      const shift = Math.max(1, Math.min(4, Math.round(operation.radius * 0.12)));
+      for (let y = 0; y < height; y++) this.liquifyRow(pixels, original, operation, y, width, shift);
+      return true;
+    }
+
+  private liquifyRow(pixels: Uint8Array, original: Uint8Array, operation: StampOperation, y: number, width: number, shift: number): void {
+      for (let x = 0; x < width; x++) this.liquifyPixel(pixels, original, operation, x, y, width, shift);
+    }
+
+  private liquifyPixel(pixels: Uint8Array, original: Uint8Array, operation: StampOperation, x: number, y: number, width: number, shift: number): void {
+      const dx = operation.region.left + x - operation.centerX; const dy = operation.region.top + y - operation.centerY;
+      if (dx * dx + dy * dy > operation.radius * operation.radius) return;
+      const sourceX = Math.max(0, Math.min(width - 1, x - shift));
+      const source = (y * width + sourceX) * 4; const target = (y * width + x) * 4;
+      pixels[target] = original[source]; pixels[target + 1] = original[source + 1];
+      pixels[target + 2] = original[source + 2]; pixels[target + 3] = original[source + 3];
     }
 
   protected applyCloneStamp(pixels: Uint8Array, operation: StampOperation): boolean {
@@ -306,6 +352,39 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       const pixels = this.stampPixelsScratch.subarray(0, requiredBytes);
       layer.readRectToJS(region.left, region.top, region.width, region.height, pixels);
       return pixels;
+    }
+
+  protected commitGradient(start: { x: number; y: number }, end: { x: number; y: number }): void {
+      const layer = this.strokeLayer; if (!layer) return;
+      const width = this.ctl.doc.width; const height = this.ctl.doc.height;
+      const dx = end.x - start.x; const dy = end.y - start.y;
+      const lengthSquared = Math.max(1, dx * dx + dy * dy); const [red, green, blue] = this.brush.rgb;
+      const chunkHeight = 64;
+      for (let top = 0; top < height; top += chunkHeight) this.applyGradientChunk(layer, start, dx, dy, lengthSquared, red, green, blue, width, height, top, chunkHeight);
+      this.scheduleRefreshForRegion({ left: 0, top: 0, width, height });
+    }
+
+  private applyGradientChunk(layer: NonNullable<StrokeLayerPixels>, start: { x: number; y: number }, dx: number, dy: number, lengthSquared: number, red: number, green: number, blue: number, width: number, height: number, top: number, chunkHeight: number): void {
+      const rows = Math.min(chunkHeight, height - top); const bytes = width * rows * 4;
+      const original = new Uint8Array(bytes); const pixels = new Uint8Array(bytes);
+      layer.readRectToJS(0, top, width, rows, original);
+      for (let localY = 0; localY < rows; localY++) this.applyGradientRow(pixels, original, start, dx, dy, lengthSquared, red, green, blue, width, top, localY);
+      layer.writeRectFromJS(0, top, width, rows, pixels);
+    }
+
+  private applyGradientRow(pixels: Uint8Array, original: Uint8Array, start: { x: number; y: number }, dx: number, dy: number, lengthSquared: number, red: number, green: number, blue: number, width: number, top: number, localY: number): void {
+      for (let x = 0; x < width; x++) this.applyGradientPixel(pixels, original, start, dx, dy, lengthSquared, red, green, blue, width, top, localY, x);
+    }
+
+  private applyGradientPixel(pixels: Uint8Array, original: Uint8Array, start: { x: number; y: number }, dx: number, dy: number, lengthSquared: number, red: number, green: number, blue: number, width: number, top: number, localY: number, x: number): void {
+      const index = (localY * width + x) * 4; const y = top + localY;
+      const t = Math.max(0, Math.min(1, ((x - start.x) * dx + (y - start.y) * dy) / lengthSquared));
+      const alpha = (1 - t) * (this.brush.opacity / 100); const oldAlpha = original[index + 3] / 255;
+      const outAlpha = alpha + oldAlpha * (1 - alpha); if (outAlpha <= 0) return;
+      pixels[index] = Math.round((red * alpha + original[index] * oldAlpha * (1 - alpha)) / outAlpha);
+      pixels[index + 1] = Math.round((green * alpha + original[index + 1] * oldAlpha * (1 - alpha)) / outAlpha);
+      pixels[index + 2] = Math.round((blue * alpha + original[index + 2] * oldAlpha * (1 - alpha)) / outAlpha);
+      pixels[index + 3] = Math.round(outAlpha * 255);
     }
 
   protected commitShape(start: { x: number; y: number }, end: { x: number; y: number }, tool: Tool): void {
@@ -857,13 +936,13 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
         this.prepareInitialBrushDab(point);
         return;
       }
-      if (this.tool !== 'line' && this.tool !== 'rectangle' && this.tool !== 'ellipse') return;
+      if (this.tool !== 'line' && this.tool !== 'rectangle' && this.tool !== 'ellipse' && this.tool !== 'gradient') return;
       this.shapeStart = { ...point, clientX: event.clientX, clientY: event.clientY };
       this.drawToolPreview(event);
     }
 
   private isBrushStrokeTool(): boolean {
-    return this.tool === 'brush' || this.tool === 'eraser' || this.tool === 'clone-stamp';
+    return this.tool === 'brush' || this.tool === 'eraser' || this.tool === 'clone-stamp' || this.tool === 'smudge' || this.tool === 'liquify';
   }
 
   private prepareInitialBrushDab(point: { x: number; y: number }): void {
@@ -931,11 +1010,11 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
         return;
       }
       if (!this.stroke || !this.last || !this.strokeTool) return;
-      if (this.strokeTool === 'line' || this.strokeTool === 'rectangle' || this.strokeTool === 'ellipse') {
+      if (this.strokeTool === 'line' || this.strokeTool === 'rectangle' || this.strokeTool === 'ellipse' || this.strokeTool === 'gradient') {
         this.drawToolPreview(e);
         return;
       }
-      if (this.strokeTool !== 'brush' && this.strokeTool !== 'eraser' && this.strokeTool !== 'clone-stamp') return;
+      if (this.strokeTool !== 'brush' && this.strokeTool !== 'eraser' && this.strokeTool !== 'clone-stamp' && this.strokeTool !== 'smudge' && this.strokeTool !== 'liquify') return;
       let p = this.toDoc(e);
       if (!finalPoint && this.brush.smoothing > 0) {
         const blend = 1 - (this.brush.smoothing / 100) * 0.75;
@@ -974,7 +1053,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
 
   private canProcessPendingBrushDabs(): boolean {
     return Boolean(this.stroke && this.strokeLayer
-      && this.strokeTool !== null && ['brush', 'eraser', 'clone-stamp'].includes(this.strokeTool));
+      && this.strokeTool !== null && ['brush', 'eraser', 'clone-stamp', 'smudge', 'liquify'].includes(this.strokeTool));
   }
 
   private cancelPendingBrushDabs(): void {
@@ -1079,6 +1158,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
     if (this.strokeTool === 'line') return this.drawLinePreview(preview);
     if (this.strokeTool === 'rectangle') return this.drawRectanglePreview(preview);
     if (this.strokeTool === 'ellipse') return this.drawEllipsePreview(preview);
+    if (this.strokeTool === 'gradient') return this.drawLinePreview(preview);
   }
 
   private drawLinePreview({ ctx, start, end }: ToolPreviewContext): void {
@@ -1149,7 +1229,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       const label: Record<Tool, string> = {
         brush: 'Pincel', eraser: 'Borrador', eyedropper: 'Cuentagotas', line: 'Línea',
         rectangle: 'Rectángulo', ellipse: 'Elipse', fill: 'Relleno', hand: 'Mover lienzo',
-        text: 'Texto', 'vector-select': 'Selección vectorial', 'clone-stamp': 'Tampón de clonar', 'comic-panel': 'Marco y viñetas',
+        text: 'Texto', 'vector-select': 'Selección vectorial', 'clone-stamp': 'Tampón de clonar', 'comic-panel': 'Marco y viñetas', gradient: 'Degradado', smudge: 'Dedo', liquify: 'Licuar',
       };
       try {
         stroke.end(label[tool ?? 'brush']);

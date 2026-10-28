@@ -2,7 +2,7 @@
 import { AppSamplingFeatures } from './AppSamplingFeatures';
 import { DocumentController, type LayerNode } from '@nvts/document-model';
 import { readPreferences } from '../panels/PreferencesPanel';
-import { openFromDisk, packNvtsPhoto, saveToDisk, rememberRecentProject, supportsFileSystemAccess } from '@nvts/storage';
+import { documentFormats, openFromDisk, saveToDisk, rememberRecentProject, supportsFileSystemAccess } from '@nvts/storage';
 import type { Tool } from './AppBase';
 import { documentNameFromFile } from './AppUtilities';
 
@@ -38,11 +38,13 @@ export class AppFileFeatures extends AppSamplingFeatures {
   protected async saveDocument(asNew: boolean): Promise<void> {
       const doc = this.ctl.doc;
       const read = (layer: LayerNode) => this.ctl.readPixels(layer);
-      const handle = await saveToDisk(doc, read, asNew ? undefined : this.fileHandle ?? undefined);
+      const encode = (document: DocumentController['doc'], readPixels: (layer: LayerNode) => Uint8Array | null) =>
+        documentFormats.findWriter('.nvtsphoto').encode(document, readPixels);
+      const handle = await saveToDisk(doc, read, asNew ? undefined : this.fileHandle ?? undefined, encode);
       if (supportsFileSystemAccess() && !handle) return;
       if (handle) this.fileHandle = handle;
       this.syncDocumentHeader();
-      const bytes = packNvtsPhoto(doc, read);
+      const bytes = encode(doc, read);
       if (readPreferences().rememberRecentProjects) await this.rememberSavedProject(doc, bytes);
       this.q<HTMLElement>('#status').textContent = `Guardado · ${doc.width}×${doc.height}`;
     }
@@ -58,7 +60,7 @@ export class AppFileFeatures extends AppSamplingFeatures {
     }
 
   protected async openDocument(): Promise<void> {
-      const result = await openFromDisk();
+      const result = await openFromDisk((bytes, fileName) => documentFormats.findReader(bytes, fileName).decode(bytes));
       if (!result) return;
       this.fileHandle = result.handle;
       this.applyOpenedFileName(result);
@@ -66,7 +68,7 @@ export class AppFileFeatures extends AppSamplingFeatures {
       await this.refreshLinkedFileLayers(false);
       if (readPreferences().rememberRecentProjects) {
         const doc = this.ctl.doc;
-        const bytes = packNvtsPhoto(doc, (layer) => this.ctl.readPixels(layer));
+        const bytes = documentFormats.findWriter('.nvtsphoto').encode(doc, (layer) => this.ctl.readPixels(layer));
         await rememberRecentProject(doc, bytes).catch((error) => console.warn('No se pudo actualizar Proyectos recientes:', error));
       }
     }
@@ -76,10 +78,11 @@ export class AppFileFeatures extends AppSamplingFeatures {
     }
 
   protected commitPointerUpAction(e: PointerEvent | undefined, tool: Tool | null): void {
-      if (e && (tool === 'brush' || tool === 'eraser')) {
+      if (e && (tool === 'brush' || tool === 'eraser' || tool === 'smudge' || tool === 'liquify')) {
         this.onPointerMove(e, true);
         return;
       }
+      if (e && this.shapeStart && tool === 'gradient') { this.commitGradient(this.shapeStart, this.toDoc(e)); return; }
       if (e && this.shapeStart && (tool === 'line' || tool === 'rectangle' || tool === 'ellipse')) {
         this.commitShape(this.shapeStart, this.toDoc(e), tool);
       }

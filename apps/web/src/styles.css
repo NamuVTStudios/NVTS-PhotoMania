@@ -3877,6 +3877,11 @@ button.primary {
     mask-image: url("./icons/tools/fill-layer.svg");
 }
 
+.tool-icon--style-mask {
+    -webkit-mask-image: url("./icons/tools/style-mask.svg");
+    mask-image: url("./icons/tools/style-mask.svg");
+}
+
 .tool-icon--file-layer {
     -webkit-mask-image: url("./icons/tools/file-layer.svg");
     mask-image: url("./icons/tools/file-layer.svg");
@@ -4822,3 +4827,64 @@ button.primary {
         --right-dock-width: 220px;
     }
 }
+
+/* Layer menu and v1 non-destructive layer style controls. */
+.layer-style-content { display: flex; flex-direction: column; gap: 10px; padding: 14px; }
+.layer-style-content label { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+.layer-style-content input[type="range"], .layer-style-content select { width: 100%; }
+.layer-style-description, .layer-style-note { margin: 0; font-size: 12px; line-height: 1.45; color: var(--text-secondary, #777); }
+#layer-menu-dropdown { min-width: 250px; }
+#layer-menu-dropdown .menu-item.danger { color: var(--danger, #b42318); }
+
+/* Non-destructive layer effects editor. */
+.layer-style-effect { display: flex; flex-direction: column; gap: 7px; margin: 2px 0; padding: 10px; border: 1px solid var(--line, #d2d5df); border-radius: 8px; min-width: 0; }
+.layer-style-effect legend { padding: 0 5px; font-size: 12px; font-weight: 600; }
+.layer-style-effect legend label { justify-content: flex-start; }
+.layer-style-effect input[type="checkbox"] { width: auto; }
+.layer-style-effect input[type="color"] { width: 100%; min-height: 28px; padding: 2px; }
+#effects-panel .layer-style-content { max-height: min(72vh, 760px); overflow: auto; }
+
+
+/* Repeatable non-destructive layer-stroke editor. */
+.layer-style-stroke-stack-list {
+  display: grid;
+  gap: 8px;
+}
+.layer-style-stroke-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border, #594747);
+  border-radius: 8px;
+}
+.layer-style-stroke-row label {
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+}
+.layer-style-stroke-row input {
+  min-width: 0;
+  width: 100%;
+}
+.layer-style-stroke-row button {
+  grid-column: 1 / -1;
+}
+
+
+#comic-guide-overlay {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  object-fit: contain;
+  transform-origin: center center;
+}
+#toggle-comic-guides[aria-pressed="true"],
+#toggle-comic-symmetry[aria-pressed="true"] {
+  outline: 1px solid var(--accent, #d9293e);
+}
+
+/* SVG específicos de las herramientas raster añadidas. */
+.tool-icon--gradient { -webkit-mask-image: url("./icons/tools/gradient.svg"); mask-image: url("./icons/tools/gradient.svg"); }
+.tool-icon--smudge { -webkit-mask-image: url("./icons/tools/smudge.svg"); mask-image: url("./icons/tools/smudge.svg"); }
+.tool-icon--liquify { -webkit-mask-image: url("./icons/tools/liquify.svg"); mask-image: url("./icons/tools/liquify.svg"); }

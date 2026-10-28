@@ -1,4 +1,18 @@
 import type { TemplateDef } from './types';
+import { resolveTemplateInheritance } from './inheritance';
+import { TankobonTemplate } from './tankobon';
+import { KanzenbanTemplate } from './kanzenban';
+import { ShinchobanTemplate } from './shinchoban';
+import { BunkobanTemplate } from './bunkoban';
+import { MangaB5Template } from './manga-b5';
+import { WidebanTemplate } from './wideban';
+import { AizobanTemplate } from './aizoban';
+import { SoshuhenTemplate } from './soshuhen';
+import { DoujinshiB5Template } from './doujinshi-b5';
+import { WebtoonVerticalTemplate } from './webtoon-vertical';
+import { ManhwaPrintTemplate } from './manhwa-print';
+import { GraphicNovelTemplate } from './graphic-novel';
+import { ComicEuAlbumTemplate } from './comic-eu-album';
 import { instagramPostTemplate } from './instagram-post';
 import { instagramStoryTemplate } from './instagram-story';
 import { youtubeThumbTemplate } from './youtube-thumb';
@@ -24,6 +38,9 @@ import { texture2DTemplate } from './texture-2d';
 import { texture2DWideTemplate } from './texture-2d-wide';
 
 export type { TemplateDef } from './types';
+export { resolveTemplateInheritance } from './inheritance';
+export { calculatePrintGuideRects, getTemplatePrintProfile, millimetresToPixels } from './printProfile';
+export type { PrintBoundsMm, PrintGuideRect } from './printProfile';
 
 // Export individual definitions so other NVTS applications can import only the presets they need, without depending on PhotoMania's UI.
 export {
@@ -50,10 +67,23 @@ export {
   textureUv4KTemplate,
   texture2DTemplate,
   texture2DWideTemplate,
+  TankobonTemplate,
+  KanzenbanTemplate,
+  ShinchobanTemplate,
+  BunkobanTemplate,
+  MangaB5Template,
+  WidebanTemplate,
+  AizobanTemplate,
+  SoshuhenTemplate,
+  DoujinshiB5Template,
+  WebtoonVerticalTemplate,
+  ManhwaPrintTemplate,
+  GraphicNovelTemplate,
+  ComicEuAlbumTemplate,
 };
 
 /** Shared template catalog for NVTS applications. Each preset lives in its own module. */
-export const TEMPLATES: readonly TemplateDef[] = [
+const TEMPLATE_DEFINITIONS: readonly TemplateDef[] = [
   instagramPostTemplate,
   instagramStoryTemplate,
   youtubeThumbTemplate,
@@ -77,4 +107,20 @@ export const TEMPLATES: readonly TemplateDef[] = [
   textureUv4KTemplate,
   texture2DTemplate,
   texture2DWideTemplate,
+  TankobonTemplate,
+  KanzenbanTemplate,
+  ShinchobanTemplate,
+  BunkobanTemplate,
+  MangaB5Template,
+  WidebanTemplate,
+  AizobanTemplate,
+  SoshuhenTemplate,
+  DoujinshiB5Template,
+  WebtoonVerticalTemplate,
+  ManhwaPrintTemplate,
+  GraphicNovelTemplate,
+  ComicEuAlbumTemplate,
 ];
+
+/** Catalog with parent presets resolved; consumers receive complete, independent definitions. */
+export const TEMPLATES: readonly TemplateDef[] = resolveTemplateInheritance(TEMPLATE_DEFINITIONS);

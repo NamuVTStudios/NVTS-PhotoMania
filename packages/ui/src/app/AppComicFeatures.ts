@@ -2,7 +2,7 @@
 import { AppWorkspaceFeatures } from './AppWorkspaceFeatures';
 import { renderComicManagerPanel } from '../panels/ComicManagerPanel';
 import type { ComicPageEntry } from '../features/comics/types';
-import { unpackNvtsPhoto } from '@nvts/storage';
+import { documentFormats } from '@nvts/storage';
 import { COMIC_CONFIG_STORAGE_KEY, safeComicFolderName, safeComicFileName, defaultComicConfig, normalizeComicConfig, readComicConfig, storeComicProjectDirectoryHandle, readStoredComicProjectDirectoryHandle, copyBytesToArrayBuffer, writeFileHandleBytes, isNotFoundError, documentNameFromFile, DirectoryPickerWindow } from './AppUtilities';
 
 export abstract class AppComicFeatures extends AppWorkspaceFeatures {
@@ -630,7 +630,7 @@ export abstract class AppComicFeatures extends AppWorkspaceFeatures {
 
   protected async loadComicPageFile(file: File, page: ComicPageEntry): Promise<void> {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const unpacked = unpackNvtsPhoto(bytes);
+      const unpacked = documentFormats.findReader(bytes, file.name).decode(bytes);
       unpacked.doc.name = documentNameFromFile(file.name);
       this.fileHandle = null;
       this.setDocument(this.documentLifecycle.fromUnpacked(this.engine.module, unpacked));

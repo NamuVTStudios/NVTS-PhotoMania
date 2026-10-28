@@ -9,4 +9,5 @@ export const manhwaTemplate: TemplateDef = {
   height: 1280,
   icon: '▥',
   preview: 'portrait',
+  printProfile: { finishedWidthMm: 148, finishedHeightMm: 210, bleedMm: 3, safeMarginMm: 5, innerMarginMm: 8, outerMarginMm: 5, topMarginMm: 5, bottomMarginMm: 5, readingDirection: 'vertical', colorMode: 'rgb' },
 };

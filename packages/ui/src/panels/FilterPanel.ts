@@ -6,7 +6,7 @@ import { FILTER_LABELS, renderFilterGroups } from './FilterCatalog';
 export const FILTER_PANEL_TEMPLATE = `
 <section id="filters-panel" class="editor-panel" hidden>
   <header><strong class="panel-title-icon">${uiIcon('filter')}<span>Filtros</span></strong><span id="filters-layer-name"></span><button class="panel-close" data-close="filters-panel" type="button" aria-label="Cerrar filtros">${uiIcon('close')}</button></header>
-  <div class="editor-content"><aside class="editor-list" aria-label="Categorías de filtros">${renderFilterGroups()}</aside><div class="editor-settings"><strong id="filter-title">${FILTER_LABELS.grayscale}</strong><label>Intensidad <input id="filter-radius" type="range" min="1" max="100" value="100"/><output id="filter-radius-value">100%</output></label><p class="hint" id="filter-hint">En una capa de filtro, el ajuste queda editable y afecta a las capas que están debajo.</p></div></div>
+  <div class="editor-content"><aside class="editor-list" aria-label="Categorías de filtros">${renderFilterGroups()}</aside><div class="editor-settings"><strong id="filter-title">${FILTER_LABELS.grayscale}</strong><label>Intensidad <input id="filter-radius" type="range" min="0" max="100" value="100"/><output id="filter-radius-value">100%</output></label><p class="hint" id="filter-hint">En una capa de filtro, el ajuste queda editable y afecta a las capas que están debajo.</p></div></div>
   <footer><span id="filter-mode-hint">Ajuste no destructivo</span><button data-close="filters-panel">Cancelar</button><button class="primary" id="filter-apply">Aplicar</button></footer>
 </section>`;
 
@@ -59,7 +59,7 @@ export class FilterPanelController extends Panel {
   configure(configuration: FilterPanelConfiguration): void {
     this.layerName.textContent = configuration.layerName;
     this.selectFilter(configuration.kind);
-    const strength = Math.max(1, Math.min(100, Math.round(configuration.strength * 100)));
+    const strength = Math.max(0, Math.min(100, Math.round(configuration.strength * 100)));
     this.intensity.value = String(strength);
     this.updateIntensityLabel();
     this.hint.textContent = configuration.hint;
@@ -73,7 +73,7 @@ export class FilterPanelController extends Panel {
     if (!kind) return null;
     return {
       kind,
-      strength: Math.max(0.01, Math.min(1, Number(this.intensity.value) / 100)),
+      strength: Math.max(0, Math.min(1, Number(this.intensity.value) / 100)),
     };
   }
 

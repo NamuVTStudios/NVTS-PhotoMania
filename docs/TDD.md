@@ -10,7 +10,7 @@ This document describes the current repository implementation. It is not a promi
 - **C++/WebAssembly owns sparse pixel tile surfaces and the main raster compositor.** The UI writes edits through bindings instead of treating JSON as pixel storage.
 - **The engine is tile-oriented.** Tiles are 256×256 pixels in RGBA8 format. Mutations mark tiles dirty; the compositor recomposes changed tiles and the renderer uploads affected regions.
 - **Rendering is backend-agnostic at the UI boundary.** `RendererBackend` is implemented by WebGPU and WebGL2 renderers. WebGPU is attempted first; WebGL2 is used as a fallback where setup allows.
-- **Some features have UI-level rendering paths.** When a document contains filter layers or supported masks, `AppDocumentFeatures.ts` composes those effects by tile using Canvas 2D. Local brush edits invalidate only affected tiles plus effect padding; layer/property changes trigger a full invalidation. The presence of non-destructive effects and filter padding are cached until a general invalidation, avoiding a full layer-tree scan for every brush dab. Filter tiles are processed across animation frames (up to eight tiles or roughly 6 ms per frame); a single expensive tile can exceed that budget, but a full-canvas invalidation no longer loops through every tile in one frame. While drawing through an enabled transform/colorization mask dependency, full filtered recomposition is deferred until the stroke ends so every dab does not restart the full-document tile queue. Otherwise it uses the Wasm compositor refresh path.
+- **Some features have UI-level rendering paths.** When a document contains filter layers, supported masks, or enabled layer styles, `AppDocumentFeatures.ts` composes those effects by tile using Canvas 2D. Local brush edits invalidate only affected tiles plus effect padding; layer/property changes trigger a full invalidation. The presence of non-destructive effects and filter padding are cached until a general invalidation, avoiding a full layer-tree scan for every brush dab. Layer style bounds are included in tile padding so outer effects have room to render beyond the alpha bounds. Filter tiles are processed across animation frames (up to eight tiles or roughly 6 ms per frame); a single expensive tile can exceed that budget, but a full-canvas invalidation no longer loops through every tile in one frame. While drawing through an enabled transform/colorization mask dependency, full filtered recomposition is deferred until the stroke ends so every dab does not restart the full-document tile queue. Otherwise it uses the Wasm compositor refresh path.
 - **Panel modules do not own independent engines.** Each panel module defines/renderers its UI and forwards document mutations through callbacks to the `App` coordinator.
 
 ## Monorepo packages
@@ -29,7 +29,7 @@ This document describes the current repository implementation. It is not a promi
 
 ## Shared template package
 
-`@nvts/templates` is a workspace package intentionally kept separate from `@nvts/ui` so other NVTS applications can reuse document presets without importing PhotoMania's UI. The package has no runtime dependencies: its public API is TypeScript data only. `TemplateDef` defines a stable ID, title, category, default pixel dimensions, icon token, and gallery preview shape. Each preset lives in a separate module under `packages/templates/src/`; `index.ts` exports both the complete read-only `TEMPLATES` catalog and individual named definitions.
+`@nvts/templates` is a workspace package intentionally kept separate from `@nvts/ui` so other NVTS applications can reuse document presets without importing PhotoMania's UI. The package has no runtime dependencies: its public API is TypeScript data only. `TemplateDef` defines a stable ID, title, category, default pixel dimensions, icon token, gallery preview shape, and optional print profile metadata (finished dimensions, bleed, safe margins, binding margins, reading direction, and color workflow). `printProfile.ts` converts millimetres to pixels and calculates canvas, trim, and safe-area rectangles. Each preset lives in a separate module under `packages/templates/src/`; `index.ts` exports both the complete read-only `TEMPLATES` catalog and individual named definitions.
 
 When adding a preset, create a module conforming to `TemplateDef`, export the definition from the package index, and add it to the catalog. A consuming workspace package should declare `@nvts/templates` as a `workspace:*` dependency. Vite and the root TypeScript paths are configured to resolve the package in this monorepo.
 
@@ -207,9 +207,46 @@ Rebuilding the C++/Wasm engine requires an activated Emscripten toolchain:
 pnpm build:wasm
 ```
 
-`pnpm test` runs focused regression checks for pixel undo/redo memory bounds, structural redo invalidation, and `.nvtsphoto` round-trips and rejection paths. It requires the generated `packages/wasm-bindings/build/engine.js` and `.wasm` artifacts.
+`pnpm test` runs the focused regression suite sequentially to prevent concurrent Vite/WebSocket test servers from competing for resources. The suite requires the generated `packages/wasm-bindings/build/engine.js` and `.wasm` artifacts. The deployment workflow runs this suite after type checking and before the production build.
 
 The web app uses Vite, monorepo aliases and COOP/COEP dev-server headers. The browser must load the appropriate generated Wasm JavaScript/binary assets for the engine to initialize.
+
+On Windows, a broken Corepack/NVM executable or PATH ordering can make the `pnpm` command fail even when the pnpm package itself is installed. Diagnose executable resolution (`Get-Command pnpm -All` in PowerShell) before changing project dependencies. Do not hardcode per-user absolute paths or add machine-specific PowerShell workarounds to repository files. Keep `pnpm-lock.yaml` and the repository package-manager configuration intact when the failure is external to the project.
+
+
+## Version 1.0 implementation constraints
+
+This section records implementation architecture and engineering constraints, not individual Jira issues. Jira is the source of truth for the Version 1.0 task breakdown, subtasks, priorities, owners, statuses, and verification evidence. Keep implementation ticket lists out of this document; update the TDD when an architecture decision, interface, or technical constraint changes.
+
+### Layer command routing
+
+Keep menu markup in `packages/ui/src/components/ShellTemplates.ts` and route actions through the relevant application feature/event modules. Menu callbacks should not duplicate document mutation logic. Layer creation, duplication, rename, delete, reorder, visibility, locking, opacity, blending, and style edits should go through the established document/application APIs. Invalid or stale layer selections must fail safely, UI state should remain synchronized with document state, and supported structural changes should use the existing history mechanism.
+
+### Layer-style data and rendering
+
+The shared style model is defined in `packages/shared/src/nvtsphoto.ts`, keeping style types independent of DOM and panel classes. The current model includes Stroke, Outer Glow, Drop Shadow, and Bevel/Emboss. New style edits are stored in a `styles` mask (`Máscara de estilos`) and render through the same tiled composition path. The legacy `layerStyles` layer property remains a read-compatible fallback for older documents; applying styles migrates that data into the mask and clears the legacy field.
+
+`packages/image-processing/src/effects/LayerStyleRenderer.ts` owns alpha-mask generation and effect drawing. The tiled Canvas 2D composition path in `AppDocumentFeatures.ts` draws enabled effects to temporary surfaces rather than writing to source pixel buffers. Tile padding accounts for enabled effects to reduce clipping and seams. Effect-property changes must invalidate the rendered composite, disabling effects must restore the base appearance, and unsupported layer kinds must have explicit behavior. Bevel/Emboss uses an alpha-gradient approximation and should not be described as a physically accurate or feature-identical implementation.
+
+Parameter defaults and normalization must be deterministic; numeric values and colors must be bounded; invalid optional values should fall back safely; and clone/snapshot paths must not share mutable nested style objects.
+
+### Native persistence and document history
+
+`packages/storage/src/NvtsPhotoIO.ts` serializes style-mask data through the layer's `masks` metadata and normalizes legacy `layerStyles` when loading older files. `DocumentController.adopt()` must clone style metadata when rebuilding runtime layer nodes from an unpacked document; otherwise the manifest can contain effects that disappear when the controller is constructed. The `.nvtsphoto` format identifier and major version remain unchanged because this field is optional and additive. Existing documents without this field must remain readable.
+
+Style changes use `DocumentController.setLayerAppearance` and the existing property-history path; do not add a parallel history stack for effects. Applying opacity, blend mode, and style-mask settings is recorded as one coherent document mutation, undo/redo restore the previous/current values, canceling the panel causes no document mutation, and the affected composite refreshes after a change. The `styles` mask is serialized through the same `masks` field as other masks and is normalized on load. These behaviors require runtime regression evidence before release sign-off.
+
+### Design pattern integration boundaries
+
+- **Command:** `packages/document-model/src/commands/DocumentCommand.ts` defines reversible operations and `CallbackDocumentCommand` adapts existing callbacks. Pixel history remains in the Wasm `HistoryManager`; structural/property history is coordinated by `DocumentController`. Not every mutation has yet been migrated to a dedicated domain command class.
+- **Observer:** `packages/document-model/src/DocumentEvents.ts` provides UI-independent, revisioned document notifications. `DocumentController.subscribe()` returns an unsubscribe function. The application subscribes when a document is installed and disposes that subscription before replacing it; the document model must not import UI panels.
+- **Adapter:** `packages/storage/src/adapters/DocumentFormatAdapter.ts`, `NvtsPhotoFormatAdapter`, and `DocumentFormatRegistry` provide a format-independent interface, currently with `.nvtsphoto` registered. The open/save helpers accept encoder/decoder callbacks, and UI open/save/recent-project flows resolve through the registry. `RendererProvider` and `RendererProviders.ts` provide common backend selection for WebGPU and WebGL2.
+
+These are initial integrations rather than a claim that all operations and formats are fully migrated. Command history ordering, observer disposal/error isolation, format-registry coverage, and renderer fallback behavior must be supported by integration test evidence before being considered release-certified.
+
+### Release verification requirements
+
+Version 1.0 validation covers clean dependency installation, TypeScript checks, WebAssembly and production builds, automated regression tests, and a browser smoke test of the deployment. Automated tests must clean up Vite/WebSocket servers on success and failure. The production browser check includes Wasm initialization, home-screen entry points, create/open/save/save-as, layer editing, undo/redo, and reopening a saved `.nvtsphoto` document. Test or build steps must not be silently removed to work around a failing check.
 
 ## Technical constraints and next steps
 
@@ -265,7 +302,7 @@ The incremental decomposition has extracted responsibilities into the following 
 - `packages/renderer/webgpu/WebGPURenderer.ts` and `packages/renderer/webgl2/WebGL2Renderer.ts`: resource creation, canvas sizing, `contain`-scale calculation, and render command submission are separated into methods.
 - `packages/ui/src/app/AppSamplingFeatures.ts`: full-document and single-pixel sampling share helpers for raster layers, groups, and filters. `AppLayerPanelFeatures.ts` owns layer thumbnails and linked-file refresh.
 
-The latest static control-flow audit scanned 143 project TypeScript/JavaScript files, including tests. It found no nested control-flow structures in authored source after the refactor; the only remaining matches were in `packages/shared/src/index.js`, a generated CommonJS helper file that was intentionally left untouched. The audit excludes installed dependencies, `build/`, `dist/`, and repository metadata. The change extracts focused helpers across the document model, image processing, UI, storage, vector rendering, docking, and tests while preserving public APIs where practical. Pixel-filter, colorization, tile-layout, comic-divider, and clone-stamp behavior was compared against the pre-refactor implementation in isolated Node checks. A full project build and normal test suite could not be run in this environment because `pnpm`, Vite, and several project type dependencies are unavailable; the TypeScript syntax pass succeeded, and the temporary typecheck reported only missing-environment/dependency typings after the refactor-specific type errors were corrected. Continue to verify event order, history, persistence, and rendering when adding new behavior.
+The latest static control-flow audit scanned 153 project TypeScript/JavaScript files, including tests, and detected zero nested control-flow structures in the audited authored source. The audit intentionally excludes generated outputs (`packages/shared/src/index.js`, `packages/shared/src/nvtsphoto.js`, and `packages/wasm-bindings/build/engine.js`), installed dependencies, `build/`, `dist/`, and repository metadata. Responsibility extraction spans the document model, image processing, UI, storage, vector rendering, docking, and tests while preserving public APIs where practical. Pixel-filter, colorization, tile-layout, comic-divider, and clone-stamp behavior has been compared in isolated checks. Layer-style model and renderer helpers have isolated checks for defaults, enablement, normalization, clone isolation, and tile padding. The current code changes add regression coverage for controller-level style restoration and format-adapter selection; these Vite-based tests still need to pass in an environment with project dependencies installed. Do not treat a static audit or syntax check as a substitute for typechecking, the full suite, production build, or browser verification.
 
 
 ## Comic panel layers and clipping
@@ -281,3 +318,39 @@ Comic frame splitting creates straight dividers from the gesture start/end point
 ### WebAssembly heap export compatibility
 
 The engine build explicitly exports `HEAPU8` with `-s EXPORTED_RUNTIME_METHODS=HEAPU8`. Newer Emscripten releases no longer expose standard heap views on the returned module by default, while the TypeScript memory wrappers need `module.HEAPU8`. `EngineClient.create` validates this contract and reports an actionable initialization error if the export is missing.
+
+## Design pattern implementation — Version 1.0
+
+### Command pattern
+
+- `packages/document-model/src/commands/DocumentCommand.ts` defines the reversible `DocumentCommand` contract and `CallbackDocumentCommand` adapter for existing mutation callbacks.
+- `DocumentController` records structural history entries as commands with a label, undo/redo operations, and memory accounting. Existing pixel history remains delegated to the Wasm `HistoryManager`; both kinds are coordinated by the controller's history stack.
+- Validation boundary: execute/undo/redo ordering, redo-stack invalidation, memory trimming, and exception safety are not yet fully certified by integration tests. Existing mutation sites are wrapped in commands incrementally; they have not all been rewritten as dedicated domain command classes.
+
+### Observer pattern
+
+- `packages/document-model/src/DocumentEvents.ts` defines UI-independent document change events and listener contracts.
+- `DocumentController.subscribe()` exposes an unsubscribe function and publishes revisioned notifications for recorded structural changes, pixel edits, undo, and redo.
+- `AppDocumentFeatures` subscribes when a document is installed and unsubscribes before replacement. The UI coordinator refreshes panels, history, and rendering in response; the document model does not import or call UI code.
+- Validation boundary: listener failure isolation, subscription disposal during document replacement, and duplicate refresh behavior still require integration-test evidence.
+
+### Adapter pattern
+
+- `packages/storage/src/adapters/DocumentFormatAdapter.ts` defines a format-independent encode/decode contract. `NvtsPhotoFormatAdapter` adapts the current `.nvtsphoto` serializer and `DocumentFormatRegistry` selects readers/writers. The initial registry contains `.nvtsphoto`; other formats can be added without changing callers.
+- `packages/renderer/RendererProvider.ts` defines a provider contract and `RendererProviders.ts` adapts WebGPU and WebGL2 creation to the common `RendererBackend` interface. Provider fallback is sequential because canvas contexts cannot safely be initialized concurrently on the same canvas.
+- The document-open/save helpers accept injected decoder/encoder callbacks, and UI flows for opening, saving, recent-project snapshots, and comic-page loading resolve through `DocumentFormatRegistry`. The registry currently contains only `.nvtsphoto`, but the call sites now share one selection boundary for future formats.
+
+### Design-pattern verification status
+
+The latest recorded control-flow audit detected zero nested control-flow structures across 153 audited authored source files; this is a static audit only. A full TypeScript typecheck, Vite-based test suite, production build, and browser smoke test must still be executed and recorded for the current commit. Treat these patterns as initial integrations, not release-certified implementations, until integration tests and production verification provide evidence.
+
+## Development tracking
+
+Jira owns actionable implementation work, subtasks, priorities, owners, statuses, and completion evidence. This TDD owns architecture, technical contracts, implementation constraints, and verification strategy. Do not duplicate Jira tickets or their status fields here. Update this document when the architecture or a technical decision changes; update Jira when work is planned, assigned, completed, or verified.
+
+
+## Comic guides and repeatable layer strokes
+
+`packages/ui/src/features/comics/ComicGuideOverlay.ts` draws non-destructive bleed, trim, safe-area, grid and symmetry-axis overlays on a separate canvas. The editor binds the overlay to the canvas view and exposes Guías and Simetría toggles. These axes are visual guides; they do not yet mirror brush input automatically.
+
+`LayerStyles.strokes` is an optional ordered collection of additional stroke instances. The legacy `stroke` property remains supported for older `.nvtsphoto` files. The renderer applies every enabled stroke instance and sums their padding to reduce clipping; the Layer Effects panel can add and remove additional strokes.

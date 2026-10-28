@@ -11,6 +11,8 @@ NVTS-PhotoMania is a browser-based, layer-oriented image editor developed by Nam
 - Emscripten/emsdk activated to rebuild the C++ engine to WebAssembly.
 - A modern browser with WebGPU or WebGL2. Chrome and Edge are the primary targets for File System Access API workflows such as choosing a project directory and keeping file handles.
 
+The Layer Effects panel provides non-destructive Stroke, Outer Glow, Drop Shadow, and Bevel/Emboss controls. Parameters are stored in the layer model and `.nvtsphoto` manifest; the Canvas 2D compositor renders them on offscreen surfaces with effect-aware tile padding. Full browser visual verification remains a release gate.
+
 When running on a browser without File System Access API support, document open/save can use classic file-input/download fallbacks. Directory-based Comic Manager workflows require browser support for `showDirectoryPicker` and a secure context such as `localhost` or HTTPS.
 
 ## Getting started
@@ -22,16 +24,18 @@ pnpm install
 pnpm dev
 ```
 
-Open the local URL printed by Vite (normally `http://localhost:5173`).
+The root `dev` script enters `apps/web` and runs the workspace-local Vite executable directly, avoiding a nested `pnpm` invocation from inside a pnpm lifecycle script. Open the local URL printed by Vite (normally `http://localhost:5173`).
 
 Useful commands:
 
 ```bash
 pnpm typecheck    # TypeScript check
-pnpm test         # History and native-format regression tests
+pnpm test         # History, native-format, and layer-style regression tests
 pnpm build        # Production web build
 pnpm build:wasm   # Rebuild the C++ engine and copy the Wasm assets
 ```
+
+If `pnpm dev` fails in Git Bash on Windows while calling the global `pnpm` launcher from inside the root script, the root script is intentionally configured to launch Vite directly from `apps/web`. Do not commit machine-specific absolute paths to `node.exe` or `pnpm.mjs`; those paths vary per computer. If the command still fails before the script starts, verify `node --version`, `pnpm --version`, and that `pnpm install` completed successfully, then use the complete error output to identify a PATH or package-manager installation problem.
 
 `pnpm build:wasm` requires Emscripten. The generated artifacts are copied to the web app's public Wasm directory by `tools/copy-wasm.mjs`.
 
@@ -76,6 +80,7 @@ The editor uses interchangeable strategies where behavior varies by tool or algo
 - `packages/ui/src/app/EditorStrategies.ts` defines brush/eraser and clone-stamp algorithms, contiguous/global fill strategies, and immediate-tool strategies. `AppDrawingFeatures` selects the relevant implementation based on the active tool and fill settings.
 - `packages/ui/src/tools/` contains the inheritance hierarchy and catalog: `ToolsBase` is the common parent, `ToolsRaster` handles tools that edit paint/raster layers, and `ToolsVectors` handles tools that edit vector layers. Concrete tool classes are registered through `ToolCatalog.ts`; `ToolManager` owns the active ID and exposes layer compatibility checks.
 - `packages/image-processing/src/filters/FilterProcessor.ts` uses strategy registries for CSS-backed and pixel-backed filter algorithms. The same filter strategy is reused by destructive filters, non-destructive filter layers, and sampling/composition paths.
+- `packages/image-processing/src/effects/LayerStyleRenderer.ts` renders Stroke, Outer Glow, Drop Shadow, and Bevel/Emboss onto a cached offscreen composite surface; each effect supports an ordered stack of independent instances while legacy single-instance fields remain compatible. Layer source pixels remain unchanged.
 
 To add another brush, fill algorithm, immediate tool, or pixel filter, implement the corresponding contract and register it rather than adding another branch to the central drawing or filter flow. A dedicated raster-selection tool is not currently part of `ToolId`; vector selection is covered by the immediate-tool strategy until a separate raster-selection feature is implemented.
 
@@ -94,16 +99,17 @@ The refactoring is incremental: modules that only define data, render a view, or
 
 ## Current capabilities
 
-- **Document templates:** the 23 document presets (social posts/stories, screen sizes, A4, US/European comics, manga/manhwa, animation, and UV/2D textures) are maintained as individual modules in the shared `@nvts/templates` workspace package so other NVTS apps can reuse them.
+- **Document templates:** the 36 document presets (social posts/stories, screen sizes, A4, US/European comics, manga/manhwa, animation, and UV/2D textures) are maintained as individual modules in the shared `@nvts/templates` workspace package so other NVTS apps can reuse them. Related print presets support optional `extendsId` inheritance; `resolveTemplateInheritance` resolves parent fields, merges print metadata, and rejects missing parents or cycles before the catalog is exposed.
 - **Canvas and navigation:** fit-to-window view, zoom with controls or Ctrl/Meta + mouse wheel, panning with the Hand tool or Space + drag, and responsive canvas sizing.
 - **Drawing tools:** brush, eraser, clone stamp, eyedropper, line, rectangle, ellipse, bucket fill, text, vector selection, and a comic frame/panel tool. Clone Stamp uses `Alt + click` to set the source point, then samples only the source patch needed for each dab and paints into the selected paint layer. Same-layer cloning preserves original snapshots only for touched 256×256 tiles, with a 64 MiB per-stroke guard. Comic mode creates a full-page outer frame on click or individual rectangular panels by dragging; both are editable vector shapes and participate in document history. The brush exposes size, opacity, hardness, spacing, and smoothing controls; the clone stamp reuses size/opacity controls; the comic tool exposes frame/panel/split mode, border width, one-or-two straight split lines, and the spacing between parallel dividers. Tool and vector-shape icons are individual SVG assets in `apps/web/src/icons/tools/`. Menus, the welcome screen, timeline controls, comic manager, filter/effect panels, and dialog close buttons use the collection of 95 SVG assets in `apps/web/public/icons/ui/`; CSS masks inherit the active text color and remain legible in both themes. Google Drive and Dropbox display their SVG logos but remain marked as future integrations until their cloud APIs are implemented.
-- **Non-destructive layer masks:** affine transform masks, colorization masks with editable color strokes, and filter masks with per-layer filter stacks. All three mask types are created from **Layers → New Layer** in the Layers panel; the mask disclosure section keeps the selected mask controls available. Mask metadata is saved in `.nvtsphoto`; colorization currently uses a line-barrier region fill and is limited to 4 million document pixels. Filter masks apply to the entire layer; painted grayscale coverage and advanced warp transforms are not implemented yet.
+- **Non-destructive layer masks:** affine transform masks, colorization masks with editable color strokes, filter masks with per-layer filter stacks, and style masks. The layer-style editor supports additional independent instances of Stroke, Outer Glow, Drop Shadow, and Bevel/Emboss, each with its own parameters; all instances are retained in the native document format and included in rendering. Transform, colorization, and filter masks can be created from **Layers → New Layer** in the Layers panel; a `Máscara de estilos` is created automatically when layer styles are applied. The mask disclosure section keeps selected-mask controls available, and mask metadata is saved in `.nvtsphoto`. Colorization currently uses a line-barrier region fill and is limited to 4 million document pixels. Filter masks apply to the entire layer; every filter entry can be opened and edited in the shared Filters window. Style masks can be enabled/disabled and reopened without destructive pixel changes. Painted grayscale coverage and advanced warp transforms are not implemented yet.
 - **Layer model:** paint, filter, fill, file/image, vector, text, and group layers. Layers support names, order, visibility, lock state, opacity, blend mode, duplication, deletion, nested groups, and thumbnails.
 - **History:** pixel edits use the Wasm tile history; document structure and property changes are recorded by the TypeScript `DocumentController`. Undo/redo shortcuts are `Ctrl/Meta+Z`, `Ctrl/Meta+Shift+Z`, and `Ctrl/Meta+Y`. The history panel shows an estimated memory total, including snapshots retained during an active brush/eraser stroke.
 - **Performance and large documents:** brush/eraser dabs are processed in short animation-frame batches (up to 64 dabs or roughly 4 ms per batch) so long pointer paths yield to the browser. When non-destructive effects are present, local edits invalidate only affected tiles plus filter padding; effect changes force a full invalidation. Effect tiles are rendered incrementally (up to eight tiles or about 6 ms per frame) so initial large filtered documents can appear progressively rather than monopolizing one frame. On a layer path with a transform/colorization mask that requires global recomposition, the filtered preview is recomputed after the pointer is released instead of restarting a full-canvas render during every dab. The engine reuses bounded read/write scratch buffers, the renderer avoids an extra GPU-upload copy for ordinary `ArrayBuffer` views, and pixel plus structural history share the configured memory budget. The editor still runs on the main thread; a Worker-based engine, streaming file I/O and fully asynchronous imports/exports remain future work.
 - **Text:** a text layer stores editable text and typography metadata along with a raster preview. The top tool bar contains font, style, size, and color; advanced options contain alignment, line height, letter spacing, stroke, and background controls.
 - **Vector layers:** editable shape metadata, object list, move/resize interactions, shape editing controls, and SVG export. The displayed compositor image is currently rasterized; this is not yet a feature-complete vector illustration package.
-- **Filters and layer effects:** 17 effects covering grayscale, invert, sepia, blur, brightness, contrast, saturation, hue rotation, sharpen, posterize, threshold, duotone, solarize, pixelation, edge detection, grain and vignette, plus blend/opacity controls. Filter layers render non-destructively in the current UI renderer path.
+- **Filters and layer appearance:** 17 filters covering grayscale, invert, sepia, blur, brightness, contrast, saturation, hue rotation, sharpen, posterize, threshold, duotone, solarize, pixelation, edge detection, grain, and vignette. Filter layers render non-destructively in the current UI renderer path; layer opacity and blend modes are available as layer properties.
+- **Layer Styles status:** the panel exposes non-destructive Stroke, Outer Glow, Drop Shadow, and Bevel/Emboss controls. Their parameters are represented in the shared layer model and serialized in `.nvtsphoto`; visual regression, undo/redo, and full production-build verification remain pending. Color Overlay and Gradient Overlay are not part of this implementation slice. Jira is the source of truth for implementation tasks and statuses; the GDD defines product scope and the TDD records the technical design and verification strategy.
 - **Workspaces:** General, Digital Illustration, Vector Illustration, Image Manipulation, Comics, Storyboarding, and Animation, with a saved workspace choice.
 - **Panels and appearance:** modular Layers, History, Advanced Tool Options, Comic Manager, and supporting filter/vector/effects/plugin/preferences panels; light and dark themes; per-panel visibility under **View → Panels**; `Tab` toggles the panel zone. Dock panels can be reordered by dragging their headers, detached into floating windows, re-docked, resized individually, and the width of the whole panel zone can be dragged. Layouts are saved separately for each workspace.
 - **Projects:** create, open, Save, Save As, `.nvtsphoto` serialization, and optional recent-project snapshots persisted in IndexedDB according to Preferences.
@@ -111,385 +117,418 @@ The refactoring is incremental: modules that only define data, render a view, or
 
 ## Repository structure (folders first, alphabetical)
 
-The tree below reflects the contents of this archive. At each level, directories and their subdirectories are listed first in alphabetical order, followed by files in alphabetical order. `.git/` and any `node_modules/` directories are excluded because they are repository metadata and installed dependencies; run `pnpm install` to restore dependencies. Build output is shown only when it is included in the archive.
-
 ```text
 NVTS-PhotoMania/
-├─ .github/
-│  └─ workflows/
-│     └─ deploy.yml
-├─ apps/
-│  └─ web/
-│     ├─ public/
-│     │  ├─ branding/
-│     │  │  ├─ photomania-icon.png
-│     │  │  └─ photomania-icon.svg
-│     │  ├─ icons/
-│     │  │  └─ ui/
-│     │  │     ├─ apply.svg
-│     │  │     ├─ arrow-left.svg
-│     │  │     ├─ arrow-right.svg
-│     │  │     ├─ blur.svg
-│     │  │     ├─ brightness-down.svg
-│     │  │     ├─ brightness-up.svg
-│     │  │     ├─ browse.svg
-│     │  │     ├─ clear.svg
-│     │  │     ├─ close.svg
-│     │  │     ├─ contrast.svg
-│     │  │     ├─ delete.svg
-│     │  │     ├─ device.svg
-│     │  │     ├─ drop-paste.svg
-│     │  │     ├─ dropbox.svg
-│     │  │     ├─ duplicate.svg
-│     │  │     ├─ edge-detect.svg
-│     │  │     ├─ edit.svg
-│     │  │     ├─ effects.svg
-│     │  │     ├─ export-jpeg.svg
-│     │  │     ├─ export-png.svg
-│     │  │     ├─ export.svg
-│     │  │     ├─ file.svg
-│     │  │     ├─ filter.svg
-│     │  │     ├─ folder-open.svg
-│     │  │     ├─ folder.svg
-│     │  │     ├─ frame-first.svg
-│     │  │     ├─ frame-next.svg
-│     │  │     ├─ frame-previous.svg
-│     │  │     ├─ google-drive.svg
-│     │  │     ├─ help.svg
-│     │  │     ├─ history-item.svg
-│     │  │     ├─ history.svg
-│     │  │     ├─ image.svg
-│     │  │     ├─ import-image.svg
-│     │  │     ├─ import.svg
-│     │  │     ├─ invert.svg
-│     │  │     ├─ layer.svg
-│     │  │     ├─ link.svg
-│     │  │     ├─ move-down.svg
-│     │  │     ├─ move-up.svg
-│     │  │     ├─ new-project.svg
-│     │  │     ├─ noise.svg
-│     │  │     ├─ open-file.svg
-│     │  │     ├─ page.svg
-│     │  │     ├─ palette.svg
-│     │  │     ├─ panels-visible.svg
-│     │  │     ├─ panels.svg
-│     │  │     ├─ pause.svg
-│     │  │     ├─ pixelate.svg
-│     │  │     ├─ play.svg
-│     │  │     ├─ plugin-install.svg
-│     │  │     ├─ plugin-manage.svg
-│     │  │     ├─ plugins.svg
-│     │  │     ├─ plus.svg
-│     │  │     ├─ pop-out.svg
-│     │  │     ├─ posterize.svg
-│     │  │     ├─ preferences.svg
-│     │  │     ├─ project-name.svg
-│     │  │     ├─ ratio-lock.svg
-│     │  │     ├─ recent.svg
-│     │  │     ├─ ruler-horizontal.svg
-│     │  │     ├─ ruler-vertical.svg
-│     │  │     ├─ saturation.svg
-│     │  │     ├─ save-as.svg
-│     │  │     ├─ save.svg
-│     │  │     ├─ select.svg
-│     │  │     ├─ sepia.svg
-│     │  │     ├─ sharpen.svg
-│     │  │     ├─ solarize.svg
-│     │  │     ├─ storyboard.svg
-│     │  │     ├─ style-bevel.svg
-│     │  │     ├─ style-color-overlay.svg
-│     │  │     ├─ style-gradient-overlay.svg
-│     │  │     ├─ style-outer-glow.svg
-│     │  │     ├─ style-stroke.svg
-│     │  │     ├─ sun.svg
-│     │  │     ├─ template-animation.svg
-│     │  │     ├─ template-comic.svg
-│     │  │     ├─ template-print.svg
-│     │  │     ├─ template-screen.svg
-│     │  │     ├─ template-social.svg
-│     │  │     ├─ template-storyboard.svg
-│     │  │     ├─ template-texture.svg
-│     │  │     ├─ threshold.svg
-│     │  │     ├─ timeline.svg
-│     │  │     ├─ view.svg
-│     │  │     ├─ vignette.svg
-│     │  │     ├─ workspace-animation.svg
-│     │  │     ├─ workspace-comics.svg
-│     │  │     ├─ workspace-general.svg
-│     │  │     ├─ workspace-illustration.svg
-│     │  │     ├─ workspace-image.svg
-│     │  │     ├─ workspace-storyboard.svg
-│     │  │     ├─ workspace-vector.svg
-│     │  │     └─ workspace.svg
-│     │  └─ wasm/
-│     │     ├─ coi-serviceworker.js
-│     │     └─ engine.wasm
-│     ├─ src/
-│     │  ├─ icons/
-│     │  │  └─ tools/
-│     │  │     ├─ brush.svg
-│     │  │     ├─ clone-stamp.svg
-│     │  │     ├─ comic-panel.svg
-│     │  │     ├─ delete.svg
-│     │  │     ├─ duplicate.svg
-│     │  │     ├─ ellipse.svg
-│     │  │     ├─ eraser.svg
-│     │  │     ├─ eyedropper.svg
-│     │  │     ├─ file-layer.svg
-│     │  │     ├─ fill-layer.svg
-│     │  │     ├─ fill.svg
-│     │  │     ├─ filter-layer.svg
-│     │  │     ├─ group-layer-open.svg
-│     │  │     ├─ group-layer.svg
-│     │  │     ├─ hand.svg
-│     │  │     ├─ layers.svg
-│     │  │     ├─ line.svg
-│     │  │     ├─ lock.svg
-│     │  │     ├─ move-down.svg
-│     │  │     ├─ move-up.svg
-│     │  │     ├─ paint-layer.svg
-│     │  │     ├─ plus.svg
-│     │  │     ├─ rectangle.svg
-│     │  │     ├─ shape-bezier.svg
-│     │  │     ├─ shape-ellipse.svg
-│     │  │     ├─ shape-freehand.svg
-│     │  │     ├─ shape-line.svg
-│     │  │     ├─ shape-polygon.svg
-│     │  │     ├─ shape-polyline.svg
-│     │  │     ├─ shape-rectangle.svg
-│     │  │     ├─ shape-rounded-rectangle.svg
-│     │  │     ├─ shape-spiral.svg
-│     │  │     ├─ shape-star.svg
-│     │  │     ├─ shape-text.svg
-│     │  │     ├─ text-layer.svg
-│     │  │     ├─ text.svg
-│     │  │     ├─ unlock.svg
-│     │  │     ├─ vector-layer.svg
-│     │  │     ├─ vector-select.svg
-│     │  │     ├─ zoom-fit.svg
-│     │  │     ├─ zoom-in.svg
-│     │  │     └─ zoom-out.svg
-│     │  ├─ main.ts
-│     │  └─ styles.css
-│     ├─ index.html
-│     ├─ package.json
-│     └─ vite.config.ts
-├─ docs/
-│  ├─ GDD.md
-│  └─ TDD.md
-├─ packages/
-│  ├─ document-model/
-│  │  ├─ src/
-│  │  │  ├─ DocumentController.ts
-│  │  │  ├─ EditSession.ts
-│  │  │  ├─ index.ts
-│  │  │  ├─ LayerTreeQueries.ts
-│  │  │  └─ types.ts
-│  │  └─ package.json
-│  ├─ engine/
-│  │  ├─ src/
-│  │  │  ├─ blend.h
-│  │  │  ├─ compositor.cpp
-│  │  │  ├─ compositor.h
-│  │  │  ├─ engine.cpp
-│  │  │  ├─ history.cpp
-│  │  │  ├─ history.h
-│  │  │  ├─ tiled_layer.cpp
-│  │  │  └─ tiled_layer.h
-│  │  └─ build.sh
-│  ├─ image-processing/
-│  │  ├─ src/
-│  │  │  ├─ brush/
-│  │  │  │  └─ BrushStampProcessor.ts
-│  │  │  ├─ colorize/
-│  │  │  │  └─ ColorizeProcessor.ts
-│  │  │  ├─ filters/
-│  │  │  │  ├─ FilterProcessor.ts
-│  │  │  │  └─ FilterTileLayout.ts
-│  │  │  └─ index.ts
-│  │  └─ package.json
-│  ├─ renderer/
-│  │  ├─ shaders/
-│  │  │  └─ layer.wgsl
-│  │  ├─ webgl2/
-│  │  │  └─ WebGL2Renderer.ts
-│  │  ├─ webgpu/
-│  │  │  └─ WebGPURenderer.ts
-│  │  ├─ createRenderer.ts
-│  │  ├─ index.ts
-│  │  ├─ package.json
-│  │  ├─ RendererBackend.ts
-│  │  └─ wgsl.d.ts
-│  ├─ shared/
-│  │  ├─ src/
-│  │  │  ├─ index.js
-│  │  │  ├─ index.ts
-│  │  │  ├─ layerMaskLabels.ts
-│  │  │  ├─ layerMasks.ts
-│  │  │  ├─ nvtsphoto.js
-│  │  │  ├─ nvtsphoto.ts
-│  │  │  └─ vectorShapes.ts
-│  │  └─ package.json
-│  ├─ storage/
-│  │  ├─ src/
-│  │  │  ├─ index.ts
-│  │  │  ├─ LayerMaskCodec.ts
-│  │  │  ├─ NvtsPhotoIO.ts
-│  │  │  └─ RecentProjects.ts
-│  │  └─ package.json
-│  ├─ templates/
-│  │  ├─ src/
-│  │  │  ├─ 4k-uhd.ts
-│  │  │  ├─ a4.ts
-│  │  │  ├─ animation-2d.ts
-│  │  │  ├─ animation-vertical.ts
-│  │  │  ├─ animation-web.ts
-│  │  │  ├─ comic-eu.ts
-│  │  │  ├─ comic-us.ts
-│  │  │  ├─ facebook-post.ts
-│  │  │  ├─ facebook-story.ts
-│  │  │  ├─ full-hd.ts
-│  │  │  ├─ index.ts
-│  │  │  ├─ instagram-post.ts
-│  │  │  ├─ instagram-story.ts
-│  │  │  ├─ manga.ts
-│  │  │  ├─ manhwa.ts
-│  │  │  ├─ storyboard-horizontal.ts
-│  │  │  ├─ storyboard-vertical.ts
-│  │  │  ├─ texture-2d-wide.ts
-│  │  │  ├─ texture-2d.ts
-│  │  │  ├─ texture-uv-4k.ts
-│  │  │  ├─ texture-uv.ts
-│  │  │  ├─ tiktok-post.ts
-│  │  │  ├─ tiktok-story.ts
-│  │  │  ├─ types.ts
-│  │  │  └─ youtube-thumb.ts
-│  │  └─ package.json
-│  ├─ ui/
-│  │  ├─ src/
-│  │  │  ├─ app/
-│  │  │  │  ├─ AppBase.ts
-│  │  │  │  ├─ AppComicFeatures.ts
-│  │  │  │  ├─ AppDocumentFeatures.ts
-│  │  │  │  ├─ AppDrawingFeatures.ts
-│  │  │  │  ├─ AppEventFeatures.ts
-│  │  │  │  ├─ AppFileFeatures.ts
-│  │  │  │  ├─ AppLayerPanelFeatures.ts
-│  │  │  │  ├─ AppLayerStateFeatures.ts
-│  │  │  │  ├─ AppSamplingFeatures.ts
-│  │  │  │  ├─ AppUtilities.ts
-│  │  │  │  ├─ AppVectorFeatures.ts
-│  │  │  │  ├─ AppWorkspaceFeatures.ts
-│  │  │  │  └─ EditorStrategies.ts
-│  │  │  ├─ components/
-│  │  │  │  ├─ EditorTemplate.ts
-│  │  │  │  ├─ ShellTemplates.ts
-│  │  │  │  └─ Toolbar.ts
-│  │  │  ├─ features/
-│  │  │  │  └─ comics/
-│  │  │  │     ├─ createComicSplitShapes.ts
-│  │  │  │     └─ types.ts
-│  │  │  ├─ managers/
-│  │  │  │  ├─ AppManager.ts
-│  │  │  │  ├─ AppStartupManager.ts
-│  │  │  │  ├─ ComicProjectManager.ts
-│  │  │  │  ├─ DockLayoutManager.ts
-│  │  │  │  ├─ DocumentLifecycleManager.ts
-│  │  │  │  ├─ ToolManager.ts
-│  │  │  │  ├─ UIManager.ts
-│  │  │  │  └─ WorkspaceManager.ts
-│  │  │  ├─ panels/
-│  │  │  │  ├─ AdvancedToolOptionsPanel.ts
-│  │  │  │  ├─ AnimationTimelinePanel.ts
-│  │  │  │  ├─ ComicManagerPanel.ts
-│  │  │  │  ├─ FilterCatalog.ts
-│  │  │  │  ├─ FilterPanel.ts
-│  │  │  │  ├─ HistoryPanel.ts
-│  │  │  │  ├─ LayerEffectsPanel.ts
-│  │  │  │  ├─ LayerMaskEditor.ts
-│  │  │  │  ├─ LayersPanel.ts
-│  │  │  │  ├─ Panel.ts
-│  │  │  │  ├─ PluginsPanel.ts
-│  │  │  │  ├─ PreferencesPanel.ts
-│  │  │  │  ├─ RecentProjectsPanel.ts
-│  │  │  │  ├─ StoryboardPanel.ts
-│  │  │  │  └─ VectorEditorPanel.ts
-│  │  │  ├─ persistence/
-│  │  │  │  ├─ DockLayoutStorage.ts
-│  │  │  │  └─ PluginStorage.ts
-│  │  │  ├─ screens/
-│  │  │  │  └─ HomeScreenController.ts
-│  │  │  ├─ tools/
-│  │  │  │  ├─ ToolCatalog.ts
-│  │  │  │  ├─ ToolsBase.ts
-│  │  │  │  ├─ ToolsRaster.ts
-│  │  │  │  └─ ToolsVectors.ts
-│  │  │  ├─ workspaces/
-│  │  │  │  ├─ AnimationWorkspace.ts
-│  │  │  │  ├─ ComicsWorkspace.ts
-│  │  │  │  ├─ DigitalIllustrationWorkspace.ts
-│  │  │  │  ├─ GeneralWorkspace.ts
-│  │  │  │  ├─ ImageManipulationWorkspace.ts
-│  │  │  │  ├─ index.ts
-│  │  │  │  ├─ persistence.ts
-│  │  │  │  ├─ StoryboardingWorkspace.ts
-│  │  │  │  ├─ types.ts
-│  │  │  │  └─ VectorIllustrationWorkspace.ts
-│  │  │  ├─ App.ts
-│  │  │  └─ index.ts
-│  │  └─ package.json
-│  ├─ vector/
-│  │  ├─ src/
-│  │  │  ├─ index.ts
-│  │  │  ├─ VectorCanvasRenderer.ts
-│  │  │  └─ VectorSvgExporter.ts
-│  │  └─ package.json
-│  └─ wasm-bindings/
-│     ├─ build/
-│     │  ├─ engine.js
-│     │  └─ engine.wasm
-│     ├─ ts-wrapper/
-│     │  ├─ BlendMode.ts
-│     │  ├─ DirtyTiles.ts
-│     │  ├─ engine.d.ts
-│     │  ├─ EngineClient.ts
-│     │  ├─ EngineSession.ts
-│     │  ├─ index.ts
-│     │  ├─ SafeMemory.ts
-│     │  └─ WasmRuntimeManager.ts
-│     ├─ index.ts
-│     └─ package.json
-├─ tests/
-│  ├─ helpers/
-│  │  └─ vite-test-server.mjs
-│  ├─ blend-mode.test.mjs
-│  ├─ brush-stamp-processor.test.mjs
-│  ├─ dock-layout-storage.test.mjs
-│  ├─ editor-tool-hierarchy.test.mjs
-│  ├─ filter-processor.test.mjs
-│  ├─ filter-tile-layout.test.mjs
-│  ├─ history-and-format.test.mjs
-│  ├─ layer-mask-cloning.test.mjs
-│  ├─ layer-tree-queries.test.mjs
-│  ├─ mask-format.test.mjs
-│  ├─ plugin-storage.test.mjs
-│  ├─ vector-shape-cloning.test.mjs
-│  └─ vector-svg-export.test.mjs
-├─ tools/
-│  ├─ audit-control-flow.mjs
-│  └─ copy-wasm.mjs
-├─ .env.example
-├─ .gitattributes
-├─ .gitignore
-├─ LICENSE
-├─ package.json
-├─ pnpm-lock.yaml
-├─ pnpm-workspace.yaml
-├─ README.md
-├─ tsconfig.base.json
-└─ tsconfig.json
+├── .github/
+│   └── workflows/
+│       └── deploy.yml
+├── apps/
+│   └── web/
+│       ├── public/
+│       │   ├── branding/
+│       │   │   ├── photomania-icon.png
+│       │   │   └── photomania-icon.svg
+│       │   ├── icons/
+│       │   │   └── ui/
+│       │   │       ├── apply.svg
+│       │   │       ├── arrow-left.svg
+│       │   │       ├── arrow-right.svg
+│       │   │       ├── blur.svg
+│       │   │       ├── brightness-down.svg
+│       │   │       ├── brightness-up.svg
+│       │   │       ├── browse.svg
+│       │   │       ├── clear.svg
+│       │   │       ├── close.svg
+│       │   │       ├── contrast.svg
+│       │   │       ├── delete.svg
+│       │   │       ├── device.svg
+│       │   │       ├── drop-paste.svg
+│       │   │       ├── dropbox.svg
+│       │   │       ├── duplicate.svg
+│       │   │       ├── edge-detect.svg
+│       │   │       ├── edit.svg
+│       │   │       ├── effects.svg
+│       │   │       ├── export-jpeg.svg
+│       │   │       ├── export-png.svg
+│       │   │       ├── export.svg
+│       │   │       ├── file.svg
+│       │   │       ├── filter.svg
+│       │   │       ├── folder-open.svg
+│       │   │       ├── folder.svg
+│       │   │       ├── frame-first.svg
+│       │   │       ├── frame-next.svg
+│       │   │       ├── frame-previous.svg
+│       │   │       ├── google-drive.svg
+│       │   │       ├── help.svg
+│       │   │       ├── history-item.svg
+│       │   │       ├── history.svg
+│       │   │       ├── image.svg
+│       │   │       ├── import-image.svg
+│       │   │       ├── import.svg
+│       │   │       ├── invert.svg
+│       │   │       ├── layer.svg
+│       │   │       ├── link.svg
+│       │   │       ├── move-down.svg
+│       │   │       ├── move-up.svg
+│       │   │       ├── new-project.svg
+│       │   │       ├── noise.svg
+│       │   │       ├── open-file.svg
+│       │   │       ├── page.svg
+│       │   │       ├── palette.svg
+│       │   │       ├── panels-visible.svg
+│       │   │       ├── panels.svg
+│       │   │       ├── pause.svg
+│       │   │       ├── pixelate.svg
+│       │   │       ├── play.svg
+│       │   │       ├── plugin-install.svg
+│       │   │       ├── plugin-manage.svg
+│       │   │       ├── plugins.svg
+│       │   │       ├── plus.svg
+│       │   │       ├── pop-out.svg
+│       │   │       ├── posterize.svg
+│       │   │       ├── preferences.svg
+│       │   │       ├── project-name.svg
+│       │   │       ├── ratio-lock.svg
+│       │   │       ├── recent.svg
+│       │   │       ├── ruler-horizontal.svg
+│       │   │       ├── ruler-vertical.svg
+│       │   │       ├── saturation.svg
+│       │   │       ├── save-as.svg
+│       │   │       ├── save.svg
+│       │   │       ├── select.svg
+│       │   │       ├── sepia.svg
+│       │   │       ├── sharpen.svg
+│       │   │       ├── solarize.svg
+│       │   │       ├── storyboard.svg
+│       │   │       ├── style-bevel.svg
+│       │   │       ├── style-color-overlay.svg
+│       │   │       ├── style-gradient-overlay.svg
+│       │   │       ├── style-outer-glow.svg
+│       │   │       ├── style-stroke.svg
+│       │   │       ├── sun.svg
+│       │   │       ├── template-animation.svg
+│       │   │       ├── template-comic.svg
+│       │   │       ├── template-print.svg
+│       │   │       ├── template-screen.svg
+│       │   │       ├── template-social.svg
+│       │   │       ├── template-storyboard.svg
+│       │   │       ├── template-texture.svg
+│       │   │       ├── threshold.svg
+│       │   │       ├── timeline.svg
+│       │   │       ├── view.svg
+│       │   │       ├── vignette.svg
+│       │   │       ├── workspace-animation.svg
+│       │   │       ├── workspace-comics.svg
+│       │   │       ├── workspace-general.svg
+│       │   │       ├── workspace-illustration.svg
+│       │   │       ├── workspace-image.svg
+│       │   │       ├── workspace-storyboard.svg
+│       │   │       ├── workspace-vector.svg
+│       │   │       └── workspace.svg
+│       │   └── wasm/
+│       │       ├── coi-serviceworker.js
+│       │       └── engine.wasm
+│       ├── src/
+│       │   ├── icons/
+│       │   │   └── tools/
+│       │   │       ├── brush.svg
+│       │   │       ├── clone-stamp.svg
+│       │   │       ├── comic-panel.svg
+│       │   │       ├── delete.svg
+│       │   │       ├── duplicate.svg
+│       │   │       ├── ellipse.svg
+│       │   │       ├── eraser.svg
+│       │   │       ├── eyedropper.svg
+│       │   │       ├── file-layer.svg
+│       │   │       ├── fill-layer.svg
+│       │   │       ├── fill.svg
+│       │   │       ├── filter-layer.svg
+│       │   │       ├── group-layer-open.svg
+│       │   │       ├── group-layer.svg
+│       │   │       ├── hand.svg
+│       │   │       ├── layers.svg
+│       │   │       ├── line.svg
+│       │   │       ├── lock.svg
+│       │   │       ├── move-down.svg
+│       │   │       ├── move-up.svg
+│       │   │       ├── paint-layer.svg
+│       │   │       ├── plus.svg
+│       │   │       ├── rectangle.svg
+│       │   │       ├── shape-bezier.svg
+│       │   │       ├── shape-ellipse.svg
+│       │   │       ├── shape-freehand.svg
+│       │   │       ├── shape-line.svg
+│       │   │       ├── shape-polygon.svg
+│       │   │       ├── shape-polyline.svg
+│       │   │       ├── shape-rectangle.svg
+│       │   │       ├── shape-rounded-rectangle.svg
+│       │   │       ├── shape-spiral.svg
+│       │   │       ├── shape-star.svg
+│       │   │       ├── shape-text.svg
+│       │   │       ├── style-mask.svg
+│       │   │       ├── text-layer.svg
+│       │   │       ├── text.svg
+│       │   │       ├── unlock.svg
+│       │   │       ├── vector-layer.svg
+│       │   │       ├── vector-select.svg
+│       │   │       ├── zoom-fit.svg
+│       │   │       ├── zoom-in.svg
+│       │   │       └── zoom-out.svg
+│       │   ├── main.ts
+│       │   └── styles.css
+│       ├── index.html
+│       ├── package.json
+│       └── vite.config.ts
+├── docs/
+│   ├── GDD.md
+│   └── TDD.md
+├── packages/
+│   ├── document-model/
+│   │   ├── src/
+│   │   │   ├── commands/
+│   │   │   │   └── DocumentCommand.ts
+│   │   │   ├── DocumentController.ts
+│   │   │   ├── DocumentEvents.ts
+│   │   │   ├── EditSession.ts
+│   │   │   ├── index.ts
+│   │   │   ├── LayerTreeQueries.ts
+│   │   │   └── types.ts
+│   │   └── package.json
+│   ├── engine/
+│   │   ├── src/
+│   │   │   ├── blend.h
+│   │   │   ├── compositor.cpp
+│   │   │   ├── compositor.h
+│   │   │   ├── engine.cpp
+│   │   │   ├── history.cpp
+│   │   │   ├── history.h
+│   │   │   ├── tiled_layer.cpp
+│   │   │   └── tiled_layer.h
+│   │   └── build.sh
+│   ├── image-processing/
+│   │   ├── src/
+│   │   │   ├── brush/
+│   │   │   │   └── BrushStampProcessor.ts
+│   │   │   ├── colorize/
+│   │   │   │   └── ColorizeProcessor.ts
+│   │   │   ├── effects/
+│   │   │   │   └── LayerStyleRenderer.ts
+│   │   │   ├── filters/
+│   │   │   │   ├── FilterProcessor.ts
+│   │   │   │   └── FilterTileLayout.ts
+│   │   │   └── index.ts
+│   │   └── package.json
+│   ├── renderer/
+│   │   ├── shaders/
+│   │   │   └── layer.wgsl
+│   │   ├── src/
+│   │   │   └── adapters/
+│   │   ├── webgl2/
+│   │   │   └── WebGL2Renderer.ts
+│   │   ├── webgpu/
+│   │   │   └── WebGPURenderer.ts
+│   │   ├── createRenderer.ts
+│   │   ├── index.ts
+│   │   ├── package.json
+│   │   ├── RendererBackend.ts
+│   │   ├── RendererProvider.ts
+│   │   ├── RendererProviders.ts
+│   │   └── wgsl.d.ts
+│   ├── shared/
+│   │   ├── src/
+│   │   │   ├── index.js
+│   │   │   ├── index.ts
+│   │   │   ├── layerMaskLabels.ts
+│   │   │   ├── layerMasks.ts
+│   │   │   ├── nvtsphoto.js
+│   │   │   ├── nvtsphoto.ts
+│   │   │   └── vectorShapes.ts
+│   │   └── package.json
+│   ├── storage/
+│   │   ├── src/
+│   │   │   ├── adapters/
+│   │   │   │   ├── DocumentFormatAdapter.ts
+│   │   │   │   ├── DocumentFormatRegistry.ts
+│   │   │   │   ├── index.ts
+│   │   │   │   └── NvtsPhotoFormatAdapter.ts
+│   │   │   ├── index.ts
+│   │   │   ├── LayerMaskCodec.ts
+│   │   │   ├── NvtsPhotoIO.ts
+│   │   │   └── RecentProjects.ts
+│   │   └── package.json
+│   ├── templates/
+│   │   ├── src/
+│   │   │   ├── 4k-uhd.ts
+│   │   │   ├── a4.ts
+│   │   │   ├── animation-2d.ts
+│   │   │   ├── animation-vertical.ts
+│   │   │   ├── animation-web.ts
+│   │   │   ├── comic-eu.ts
+│   │   │   ├── comic-us.ts
+│   │   │   ├── facebook-post.ts
+│   │   │   ├── facebook-story.ts
+│   │   │   ├── full-hd.ts
+│   │   │   ├── index.ts
+│   │   │   ├── instagram-post.ts
+│   │   │   ├── instagram-story.ts
+│   │   │   ├── manga.ts
+│   │   │   ├── manhwa.ts
+│   │   │   ├── storyboard-horizontal.ts
+│   │   │   ├── storyboard-vertical.ts
+│   │   │   ├── texture-2d-wide.ts
+│   │   │   ├── texture-2d.ts
+│   │   │   ├── texture-uv-4k.ts
+│   │   │   ├── texture-uv.ts
+│   │   │   ├── tiktok-post.ts
+│   │   │   ├── tiktok-story.ts
+│   │   │   ├── types.ts
+│   │   │   └── youtube-thumb.ts
+│   │   └── package.json
+│   ├── ui/
+│   │   ├── src/
+│   │   │   ├── app/
+│   │   │   │   ├── AppBase.ts
+│   │   │   │   ├── AppComicFeatures.ts
+│   │   │   │   ├── AppDocumentFeatures.ts
+│   │   │   │   ├── AppDrawingFeatures.ts
+│   │   │   │   ├── AppEventFeatures.ts
+│   │   │   │   ├── AppFileFeatures.ts
+│   │   │   │   ├── AppLayerPanelFeatures.ts
+│   │   │   │   ├── AppLayerStateFeatures.ts
+│   │   │   │   ├── AppSamplingFeatures.ts
+│   │   │   │   ├── AppUtilities.ts
+│   │   │   │   ├── AppVectorFeatures.ts
+│   │   │   │   ├── AppWorkspaceFeatures.ts
+│   │   │   │   └── EditorStrategies.ts
+│   │   │   ├── components/
+│   │   │   │   ├── EditorTemplate.ts
+│   │   │   │   ├── ShellTemplates.ts
+│   │   │   │   └── Toolbar.ts
+│   │   │   ├── features/
+│   │   │   │   └── comics/
+│   │   │   │       ├── createComicSplitShapes.ts
+│   │   │   │       └── types.ts
+│   │   │   ├── managers/
+│   │   │   │   ├── AppManager.ts
+│   │   │   │   ├── AppStartupManager.ts
+│   │   │   │   ├── ComicProjectManager.ts
+│   │   │   │   ├── DockLayoutManager.ts
+│   │   │   │   ├── DocumentLifecycleManager.ts
+│   │   │   │   ├── ToolManager.ts
+│   │   │   │   ├── UIManager.ts
+│   │   │   │   └── WorkspaceManager.ts
+│   │   │   ├── panels/
+│   │   │   │   ├── AdvancedToolOptionsPanel.ts
+│   │   │   │   ├── AnimationTimelinePanel.ts
+│   │   │   │   ├── ComicManagerPanel.ts
+│   │   │   │   ├── FilterCatalog.ts
+│   │   │   │   ├── FilterPanel.ts
+│   │   │   │   ├── HistoryPanel.ts
+│   │   │   │   ├── LayerEffectsPanel.ts
+│   │   │   │   ├── LayerMaskEditor.ts
+│   │   │   │   ├── LayersPanel.ts
+│   │   │   │   ├── Panel.ts
+│   │   │   │   ├── PluginsPanel.ts
+│   │   │   │   ├── PreferencesPanel.ts
+│   │   │   │   ├── RecentProjectsPanel.ts
+│   │   │   │   ├── StoryboardPanel.ts
+│   │   │   │   └── VectorEditorPanel.ts
+│   │   │   ├── persistence/
+│   │   │   │   ├── DockLayoutStorage.ts
+│   │   │   │   └── PluginStorage.ts
+│   │   │   ├── screens/
+│   │   │   │   └── HomeScreenController.ts
+│   │   │   ├── tools/
+│   │   │   │   ├── ToolCatalog.ts
+│   │   │   │   ├── ToolsBase.ts
+│   │   │   │   ├── ToolsRaster.ts
+│   │   │   │   └── ToolsVectors.ts
+│   │   │   ├── workspaces/
+│   │   │   │   ├── AnimationWorkspace.ts
+│   │   │   │   ├── ComicsWorkspace.ts
+│   │   │   │   ├── DigitalIllustrationWorkspace.ts
+│   │   │   │   ├── GeneralWorkspace.ts
+│   │   │   │   ├── ImageManipulationWorkspace.ts
+│   │   │   │   ├── index.ts
+│   │   │   │   ├── persistence.ts
+│   │   │   │   ├── StoryboardingWorkspace.ts
+│   │   │   │   ├── types.ts
+│   │   │   │   └── VectorIllustrationWorkspace.ts
+│   │   │   ├── App.ts
+│   │   │   └── index.ts
+│   │   └── package.json
+│   ├── vector/
+│   │   ├── src/
+│   │   │   ├── index.ts
+│   │   │   ├── VectorCanvasRenderer.ts
+│   │   │   └── VectorSvgExporter.ts
+│   │   └── package.json
+│   └── wasm-bindings/
+│       ├── build/
+│       │   ├── engine.js
+│       │   └── engine.wasm
+│       ├── ts-wrapper/
+│       │   ├── BlendMode.ts
+│       │   ├── DirtyTiles.ts
+│       │   ├── engine.d.ts
+│       │   ├── EngineClient.ts
+│       │   ├── EngineSession.ts
+│       │   ├── index.ts
+│       │   ├── SafeMemory.ts
+│       │   └── WasmRuntimeManager.ts
+│       ├── index.ts
+│       └── package.json
+├── tests/
+│   ├── helpers/
+│   │   └── vite-test-server.mjs
+│   ├── blend-mode.test.mjs
+│   ├── brush-stamp-processor.test.mjs
+│   ├── comic-split-geometry.test.mjs
+│   ├── dock-editor-panel-preservation.test.mjs
+│   ├── dock-layout-storage.test.mjs
+│   ├── document-format-adapters.test.mjs
+│   ├── editor-tool-hierarchy.test.mjs
+│   ├── filter-processor.test.mjs
+│   ├── filter-tile-layout.test.mjs
+│   ├── history-and-format.test.mjs
+│   ├── layer-mask-cloning.test.mjs
+│   ├── layer-styles-format.test.mjs
+│   ├── layer-tree-queries.test.mjs
+│   ├── mask-format.test.mjs
+│   ├── panel-base.test.mjs
+│   ├── plugin-storage.test.mjs
+│   ├── vector-shape-cloning.test.mjs
+│   ├── vector-svg-export.test.mjs
+│   └── wasm-heap-export.test.mjs
+├── tools/
+│   ├── audit-control-flow.mjs
+│   └── copy-wasm.mjs
+├── .env.example
+├── .gitattributes
+├── .gitignore
+├── LICENSE
+├── package.json
+├── pnpm-lock.yaml
+├── pnpm-workspace.yaml
+├── README.md
+├── tsconfig.base.json
+└── tsconfig.json
 ```
 
+## Documentation maintenance
+
+- Whenever a file or directory is added, removed, renamed, or moved, regenerate the **Repository structure** tree in this README from the repository contents. Keep directories and subdirectories alphabetically first at each level, followed by files alphabetically. Exclude only repository metadata (`.git/`) and installed dependencies (`node_modules/`); list generated/build artifacts when they are present in the delivered archive.
+- Keep all project documentation in English. Record user-visible product scope, priorities, and acceptance criteria for the active **Version 1.0** release in `docs/GDD.md`. Record implementation design, code responsibilities, persistence, compatibility, tests, and release engineering tasks in `docs/TDD.md`.
+- Jira is the source of truth for actionable Version 1.0 tasks, subtasks, priorities, assignees, and statuses. Do not duplicate Jira backlogs in the GDD or TDD. Keep product requirements and acceptance criteria in `docs/GDD.md`; keep architecture, implementation constraints, and verification strategy in `docs/TDD.md`.
+
+
+## Design Patterns
+
+- **Command:** `packages/document-model/src/commands/DocumentCommand.ts` represents structural history operations through a reversible command contract. `DocumentController` coordinates structural commands with the existing WebAssembly pixel-history manager.
+- **Observer:** `packages/document-model/src/DocumentEvents.ts` exposes revisioned, UI-independent document change events. The application coordinator subscribes when a document is installed and refreshes panels/history/rendering without making the document model import UI code.
+- **Adapter — document formats:** `packages/storage/src/adapters/` defines the common document-format contract, the `.nvtsphoto` adapter, and a registry for selecting readers and writers. `.nvtsphoto` is the only registered format currently.
+- **Adapter — rendering:** `packages/renderer/RendererProvider.ts` and `RendererProviders.ts` adapt WebGPU/WebGL2 initialization to the shared `RendererBackend` contract. Fallback is sequential because the same canvas must not initialize competing contexts concurrently.
+- These are incremental implementations. Run typechecking, the full test suite, production build, and browser smoke tests before marking the design-pattern work release-ready.
 
 ## Organization by Responsibility
 

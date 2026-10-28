@@ -5,7 +5,7 @@
 // Nota: zipSync/unzipSync son síncronos; con imágenes grandes conviene moverlos a un Worker.
 
 import { zipSync, unzipSync, strToU8, strFromU8, type Zippable } from 'fflate';
-import { cloneLayerMasks, cloneVectorShapes, NVTS_FORMAT, NVTS_VERSION, isPixelLayerType, type LayerManifest, type NvtsManifest, type LayerType } from '@nvts/shared';
+import { cloneLayerMasks, cloneLayerStyles, normalizeLayerStyles, cloneVectorShapes, NVTS_FORMAT, NVTS_VERSION, isPixelLayerType, type LayerManifest, type NvtsManifest, type LayerType } from '@nvts/shared';
 import type { DocumentState, LayerNode, UnpackedDocument } from '@nvts/document-model';
 import { parseLayerMasks } from './LayerMaskCodec';
 
@@ -18,6 +18,8 @@ const PICKER_TYPES = [{
 }];
 /** Devuelve los píxeles RGBA8 (ancho*alto*4) de una capa raster, o null si está vacía. */
 export type PixelReader = (layer: LayerNode) => Uint8Array | null;
+export type DocumentEncoder = (doc: DocumentState, read: PixelReader) => Uint8Array;
+export type DocumentDecoder = (bytes: Uint8Array, fileName?: string) => UnpackedDocument;
 
 /* ───────────── 1. SERIALIZAR ───────────── */
 
@@ -25,6 +27,7 @@ function createLayerManifest(layer: LayerNode): LayerManifest {
   return {
     id: layer.id, type: layer.type, name: layer.name, visible: layer.visible,
     locked: layer.locked, opacity: layer.opacity, blendMode: layer.blendMode,
+    ...(layer.layerStyles ? { layerStyles: cloneLayerStyles(layer.layerStyles) } : {}),
     ...(layer.fillColor ? { fillColor: layer.fillColor } : {}),
     ...(layer.filterKind ? { filterKind: layer.filterKind } : {}),
     ...(layer.filterStrength !== undefined ? { filterStrength: layer.filterStrength } : {}),
@@ -100,6 +103,7 @@ function createLayerFromManifest(manifest: LayerManifest): LayerNode {
     name: String(manifest.name ?? 'Capa'), visible: !!manifest.visible, locked: !!manifest.locked,
     opacity: Math.min(1, Math.max(0, Number(manifest.opacity) || 0)),
     blendMode: manifest.blendMode ?? 'normal',
+    layerStyles: normalizeLayerStyles(manifest.layerStyles),
     fillColor: manifest.fillColor,
     filterKind: manifest.filterKind,
     filterStrength: typeof manifest.filterStrength === 'number' ? Math.min(1, Math.max(0, manifest.filterStrength)) : undefined,
@@ -174,19 +178,20 @@ export async function saveToDisk(
   doc: DocumentState,
   read: PixelReader,
   existing?: FileSystemFileHandle,
+  encode: DocumentEncoder = packNvtsPhoto,
 ): Promise<FileSystemFileHandle | null> {
   if (!hasFSA()) {
-    downloadDocument(doc, read);
+    downloadDocument(doc, read, encode);
     return null;
   }
   const handle = existing ?? await chooseSaveHandle(doc);
   if (!handle) return null;
-  await writeDocumentToHandle(doc, read, handle);
+  await writeDocumentToHandle(doc, read, handle, encode);
   return handle;
 }
 
-function downloadDocument(doc: DocumentState, read: PixelReader): void {
-  const data = packNvtsPhoto(doc, read);
+function downloadDocument(doc: DocumentState, read: PixelReader, encode: DocumentEncoder): void {
+  const data = encode(doc, read);
   const url = URL.createObjectURL(new Blob([data as BlobPart], { type: 'application/x-nvtsphoto' }));
   const link = Object.assign(document.createElement('a'), { href: url, download: `${doc.name}.nvtsphoto` });
   link.click();
@@ -206,9 +211,11 @@ function handlePickerFailure(error: unknown): null {
   throw error;
 }
 
-async function writeDocumentToHandle(doc: DocumentState, read: PixelReader, handle: FileSystemFileHandle): Promise<void> {
+async function writeDocumentToHandle(
+  doc: DocumentState, read: PixelReader, handle: FileSystemFileHandle, encode: DocumentEncoder,
+): Promise<void> {
   updateDocumentNameFromHandle(doc, handle);
-  const data = packNvtsPhoto(doc, read);
+  const data = encode(doc, read);
   const writable = await handle.createWritable();
   try {
     await writable.write(data as BlobPart);
@@ -225,11 +232,13 @@ function updateDocumentNameFromHandle(doc: DocumentState, handle: FileSystemFile
 }
 
 /** Abre un .nvtsphoto del disco. Devuelve null si el usuario cancela. */
-export async function openFromDisk(): Promise<(UnpackedDocument & { handle: FileSystemFileHandle | null; bytes: Uint8Array; fileName: string }) | null> {
+export async function openFromDisk(
+  decode: DocumentDecoder = (bytes) => unpackNvtsPhoto(bytes),
+): Promise<(UnpackedDocument & { handle: FileSystemFileHandle | null; bytes: Uint8Array; fileName: string }) | null> {
   const picked = await chooseNvtsFile();
   if (!picked) return null;
   const bytes = new Uint8Array(await picked.file.arrayBuffer());
-  const unpacked = unpackNvtsPhoto(bytes);
+  const unpacked = decode(bytes, picked.file.name);
   updateDocumentNameFromFile(unpacked.doc, picked.file);
   return { ...unpacked, handle: picked.handle, bytes, fileName: picked.file.name };
 }
