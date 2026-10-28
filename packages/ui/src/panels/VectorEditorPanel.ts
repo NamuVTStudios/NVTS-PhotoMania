@@ -1,4 +1,4 @@
-import type { VectorShape } from '@nvts/shared';
+import { getVectorShapeBounds, type VectorShape } from '@nvts/shared';
 import { uiIcon } from '../components/ShellTemplates';
 
 // Panel template. Editor interactions are wired by the application controller.
@@ -40,7 +40,7 @@ export interface VectorEditorPanelCallbacks {
   apply(): void;
   cancel(): void;
   clear(): void;
-  updateFromFields(): void;
+  updateFromFields(fieldId?: string): void;
 }
 
 /** Owns the vector editor's static control wiring; document/object mutations are delegated to App. */
@@ -85,12 +85,12 @@ function bindVectorFieldChanges(root: HTMLElement, callbacks: VectorEditorPanelC
     'vector-font-weight','vector-text-align',
   ];
   inputIds.forEach((id) => bindVectorFieldChange(root, id, callbacks));
-  root.querySelector<HTMLTextAreaElement>('#vector-points')?.addEventListener('change', () => callbacks.updateFromFields());
+  root.querySelector<HTMLTextAreaElement>('#vector-points')?.addEventListener('change', () => callbacks.updateFromFields('vector-points'));
 }
 
 function bindVectorFieldChange(root: HTMLElement, id: string, callbacks: VectorEditorPanelCallbacks): void {
   const input = root.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`);
-  input?.addEventListener(id === 'vector-opacity' ? 'input' : 'change', () => callbacks.updateFromFields());
+  input?.addEventListener(id === 'vector-opacity' ? 'input' : 'change', () => callbacks.updateFromFields(id));
 }
 
 /** Renders the editable vector object list and selected-object fields. */
@@ -138,7 +138,8 @@ function createVectorShapeButton(
   icon.className = `tool-icon tool-icon--${getVectorShapeIconName(shape.kind)}`;
   icon.setAttribute('aria-hidden', 'true');
   const label = document.createElement('span');
-  label.textContent = `${labelForKind(shape.kind)} · ${Math.round(shape.x)}, ${Math.round(shape.y)}`;
+  const bounds = getVectorShapeBounds(shape);
+  label.textContent = `${labelForKind(shape.kind)} · ${Math.round(bounds.x)}, ${Math.round(bounds.y)}`;
   button.replaceChildren(icon, label);
   button.onclick = () => onSelectShape(shape.id);
   return button;
@@ -178,10 +179,11 @@ function updateVectorFieldAvailability(root: HTMLElement, hasSelection: boolean)
 
 function setVectorGeometryFields(root: HTMLElement, shape: VectorShape): void {
   getVectorField<HTMLSelectElement>(root, 'vector-kind')!.value = shape.kind;
-  getVectorField<HTMLInputElement>(root, 'vector-x')!.value = String(Math.round(shape.x));
-  getVectorField<HTMLInputElement>(root, 'vector-y')!.value = String(Math.round(shape.y));
-  getVectorField<HTMLInputElement>(root, 'vector-width')!.value = String(Math.round(shape.width));
-  getVectorField<HTMLInputElement>(root, 'vector-height')!.value = String(Math.round(shape.height));
+  const bounds = getVectorShapeBounds(shape);
+  getVectorField<HTMLInputElement>(root, 'vector-x')!.value = String(Math.round(bounds.x));
+  getVectorField<HTMLInputElement>(root, 'vector-y')!.value = String(Math.round(bounds.y));
+  getVectorField<HTMLInputElement>(root, 'vector-width')!.value = String(Math.round(bounds.width));
+  getVectorField<HTMLInputElement>(root, 'vector-height')!.value = String(Math.round(bounds.height));
   getVectorField<HTMLInputElement>(root, 'vector-rotation')!.value = String(Math.round(shape.rotation ?? 0));
   getVectorField<HTMLInputElement>(root, 'vector-corner-radius')!.value = String(shape.cornerRadius ?? 20);
   getVectorField<HTMLInputElement>(root, 'vector-star-points')!.value = String(shape.starPoints ?? 5);

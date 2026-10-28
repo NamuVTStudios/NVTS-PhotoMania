@@ -19,7 +19,7 @@ The current repository is an active prototype. This document distinguishes imple
 
 ### Document templates
 
-The new-project selector currently offers 36 presets for social media content, screen/video sizes, A4 print, US and European comics, manga/manhwa, animation, and UV/2D textures. Their definitions live in the shared `@nvts/templates` package rather than inside the UI, allowing future NVTS programs to reuse the same presets. Print presets can carry editable page dimensions, bleed, safe-area, margins, reading direction and color-workflow metadata. Comic guide and symmetry overlays are visual aids and do not enter exported artwork.
+The new-project selector currently offers 36 presets for social media content, screen/video sizes, A4 print, US and European comics, manga/manhwa, animation, and UV/2D textures. Their definitions live in the shared `@nvts/templates` package rather than inside the UI, allowing future NVTS programs to reuse the same presets. Print presets can carry editable page dimensions, bleed, safe-area, margins, reading direction and color-workflow metadata. Comic guide overlays and symmetry axes are visual aids and do not enter exported artwork; when symmetry is enabled, supported raster strokes are mirrored in the editable artwork itself.
 
 ### Document and layers
 

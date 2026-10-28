@@ -27,15 +27,33 @@ test('el catálogo registra todas las herramientas y sus clases base correspondi
   const [base, raster, vectors] = toolClasses;
   assert.deepEqual([...tools.keys()].sort(), [
     'brush', 'clone-stamp', 'comic-panel', 'ellipse', 'eraser', 'eyedropper',
-    'fill', 'hand', 'line', 'rectangle', 'text', 'vector-select',
+    'fill', 'gradient', 'hand', 'line', 'liquify', 'rectangle', 'smudge', 'text',
+    'vector-select', 'vector-rectangle', 'vector-rounded-rectangle', 'vector-ellipse', 'vector-line',
+    'vector-pen', 'vector-polygon', 'vector-star', 'vector-freehand', 'vector-polyline', 'vector-spiral',
+    'pixel-rounded-rectangle', 'pixel-polyline', 'pixel-bezier', 'pixel-polygon', 'pixel-star', 'pixel-spiral',
   ].sort());
   assert.ok(tools.get('clone-stamp') instanceof raster.ToolsRaster);
   assert.ok(tools.get('comic-panel') instanceof vectors.ToolsVectors);
+  assert.ok(tools.get('vector-rectangle') instanceof vectors.ToolsVectors);
+  assert.ok(tools.get('vector-star') instanceof vectors.ToolsVectors);
+  assert.ok(tools.get('vector-rounded-rectangle') instanceof vectors.ToolsVectors);
+  assert.ok(tools.get('vector-polyline') instanceof vectors.ToolsVectors);
+  assert.ok(tools.get('vector-spiral') instanceof vectors.ToolsVectors);
+  assert.ok(tools.get('pixel-rounded-rectangle') instanceof raster.ToolsRaster);
+  assert.ok(tools.get('pixel-polyline') instanceof raster.ToolsRaster);
+  assert.ok(tools.get('pixel-bezier') instanceof raster.ToolsRaster);
+  assert.ok(tools.get('pixel-polygon') instanceof raster.ToolsRaster);
+  assert.ok(tools.get('pixel-star') instanceof raster.ToolsRaster);
+  assert.ok(tools.get('pixel-spiral') instanceof raster.ToolsRaster);
+  assert.equal(tools.get('pixel-spiral').canUseLayer('paint'), true);
+  assert.equal(tools.get('pixel-spiral').canUseLayer('vector'), false);
   assert.ok(tools.get('brush') instanceof base.ToolsBase);
   assert.equal(tools.get('clone-stamp').canUseLayer('paint'), true);
   assert.equal(tools.get('clone-stamp').canUseLayer('vector'), false);
   assert.equal(tools.get('comic-panel').canUseLayer('vector'), true);
   assert.equal(tools.get('comic-panel').canUseLayer('paint'), false);
+  assert.equal(tools.get('vector-ellipse').canUseLayer('vector'), true);
+  assert.equal(tools.get('vector-ellipse').canUseLayer('paint'), false);
   assert.equal(tools.get('eyedropper').canUseLayer('vector'), true);
 });
 

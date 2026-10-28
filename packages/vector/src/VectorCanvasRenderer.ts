@@ -1,4 +1,4 @@
-import type { VectorKind, VectorShape } from '@nvts/shared';
+import { getVectorShapeCenter, type VectorKind, type VectorShape } from '@nvts/shared';
 
 type PaintOptions = { fill: boolean; stroke: boolean; strokeWidth: number };
 type PathPainter = (close?: boolean) => void;
@@ -16,7 +16,10 @@ const GEOMETRY_RENDERERS: Record<VectorKind, GeometryRenderer> = {
     finish();
   },
   line: (ctx, shape, _paint, finish) => {
-    ctx.beginPath(); ctx.moveTo(shape.x, shape.y); ctx.lineTo(shape.x + shape.width, shape.y + shape.height); finish(false);
+    const points = shape.points;
+    const start = points?.[0] ?? { x: shape.x, y: shape.y };
+    const end = points?.[1] ?? { x: shape.x + shape.width, y: shape.y + shape.height };
+    ctx.beginPath(); ctx.moveTo(start.x, start.y); ctx.lineTo(end.x, end.y); finish(false);
   },
   polygon: drawPath,
   polyline: drawPath,
@@ -44,8 +47,9 @@ function getPaintOptions(shape: VectorShape): PaintOptions {
 }
 
 function applyShapeStyles(ctx: CanvasRenderingContext2D, shape: VectorShape): void {
-  const centerX = shape.x + shape.width / 2;
-  const centerY = shape.y + shape.height / 2;
+  const center = getVectorShapeCenter(shape);
+  const centerX = center.x;
+  const centerY = center.y;
   ctx.globalAlpha = Math.max(0, Math.min(1, shape.opacity));
   ctx.translate(centerX, centerY);
   ctx.rotate(((shape.rotation ?? 0) * Math.PI) / 180);
@@ -147,12 +151,20 @@ function drawPolarPathPoint(
   appendPathPoint(ctx, index, x, y);
 }
 
+function getAlignedTextX(left: number, width: number, alignment: VectorShape['textAlign']): number {
+  if (alignment === 'center') return left + width / 2;
+  if (alignment === 'right') return left + width;
+  return left;
+}
+
 function drawText(ctx: CanvasRenderingContext2D, shape: VectorShape, paint: PaintOptions): void {
   ctx.font = `${shape.fontStyle ?? 'normal'} ${shape.fontWeight ?? 'normal'} ${Math.max(1, shape.fontSize ?? 64)}px ${shape.fontFamily ?? 'Arial'}`;
   ctx.textAlign = shape.textAlign ?? 'left';
   ctx.textBaseline = 'top';
   const text = shape.text ?? 'Texto vectorial';
-  const width = Math.max(1, shape.width);
-  if (paint.fill) ctx.fillText(text, shape.x, shape.y, width);
-  if (paint.stroke && paint.strokeWidth > 0) ctx.strokeText(text, shape.x, shape.y, width);
+  const width = Math.max(1, Math.abs(shape.width));
+  const left = Math.min(shape.x, shape.x + shape.width);
+  const alignedX = getAlignedTextX(left, width, shape.textAlign);
+  if (paint.fill) ctx.fillText(text, alignedX, shape.y, width);
+  if (paint.stroke && paint.strokeWidth > 0) ctx.strokeText(text, alignedX, shape.y, width);
 }

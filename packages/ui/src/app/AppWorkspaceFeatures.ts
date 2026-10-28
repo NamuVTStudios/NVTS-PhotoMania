@@ -4,9 +4,9 @@ import type { WorkspaceDefinition, WorkspaceId } from '../workspaces';
 import type { WorkspacePanelElements } from './AppBase';
 
 export abstract class AppWorkspaceFeatures extends AppDocumentFeatures {
-  protected applyWorkspace(workspace: WorkspaceId, announce = true): void {
+  protected applyWorkspace(workspace: WorkspaceId, announce = true, savePrevious = true): void {
       const selectedWorkspace = this.resolveWorkspace(workspace);
-      this.dockLayout?.saveCurrentWorkspace();
+      if (savePrevious) this.dockLayout?.saveCurrentWorkspace();
       this.workspace = selectedWorkspace;
       this.workspaceManager.setCurrent(selectedWorkspace);
       const panels = this.getWorkspacePanelElements();
@@ -18,6 +18,14 @@ export abstract class AppWorkspaceFeatures extends AppDocumentFeatures {
       this.refreshPanelMenuChecks(panels);
       this.updateWorkspacePanelToggleState(panels);
       if (announce) this.announceWorkspace(selectedWorkspace);
+    }
+
+  protected restoreWorkspaceDefaults(): void {
+      const selectedWorkspace = this.workspace;
+      this.dockLayout?.resetWorkspace(selectedWorkspace);
+      this.applyWorkspace(selectedWorkspace, false, false);
+      const status = this.root.querySelector<HTMLElement>('#status');
+      if (status) status.textContent = 'Se restauró la configuración predeterminada del espacio de trabajo seleccionado. Los demás espacios no se modificaron.';
     }
 
   protected resolveWorkspace(workspace: WorkspaceId): WorkspaceId {

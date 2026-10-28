@@ -5,11 +5,12 @@ import { createViteTestServer } from './helpers/vite-test-server.mjs';
 let vite;
 let readDockLayout;
 let writeDockLayout;
+let resetDockLayout;
 const originalStorageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
 
 before(async () => {
   vite = await createViteTestServer();
-  ({ readDockLayout, writeDockLayout } = await vite.ssrLoadModule('/packages/ui/src/persistence/DockLayoutStorage.ts'));
+  ({ readDockLayout, writeDockLayout, resetDockLayout } = await vite.ssrLoadModule('/packages/ui/src/persistence/DockLayoutStorage.ts'));
 });
 
 after(async () => {
@@ -70,4 +71,34 @@ test('tolera almacenamiento bloqueado tanto al leer como al escribir', () => {
   console.warn = () => {};
   try { assert.doesNotThrow(() => writeDockLayout({ version: 1, workspaces: {} })); }
   finally { console.warn = originalWarn; }
+});
+
+
+test('restaura solo el espacio de trabajo seleccionado y conserva los demás', () => {
+  const general = { dockWidth: 420, panelsHidden: true, order: ['history'], panels: {} };
+  const vector = { dockWidth: 380, panelsHidden: false, order: ['layers'], panels: {} };
+  const storage = useStorage(JSON.stringify({
+    version: 1,
+    workspaces: { general, vector },
+  }));
+
+  const result = resetDockLayout('vector');
+  assert.deepEqual(result, { version: 1, workspaces: { general } });
+  assert.deepEqual(readDockLayout(), { version: 1, workspaces: { general } });
+  assert.equal(storage.get('nvts-photomania-dock-layout-v1'), JSON.stringify({ version: 1, workspaces: { general } }));
+});
+
+test('restaura la configuración predeterminada eliminando todos los overrides guardados', () => {
+  const storage = useStorage(JSON.stringify({
+    version: 1,
+    workspaces: {
+      general: { dockWidth: 420, panelsHidden: true, order: ['history'], panels: {} },
+      vector: { dockWidth: 380, panelsHidden: false, order: ['layers'], panels: {} },
+    },
+  }));
+
+  assert.equal(Object.keys(readDockLayout().workspaces).length, 2);
+  assert.deepEqual(resetDockLayout(), { version: 1, workspaces: {} });
+  assert.deepEqual(readDockLayout(), { version: 1, workspaces: {} });
+  assert.equal(storage.get('nvts-photomania-dock-layout-v1'), JSON.stringify({ version: 1, workspaces: {} }));
 });

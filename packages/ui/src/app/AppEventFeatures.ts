@@ -1,7 +1,8 @@
+import { findVectorSelectionTarget, getDocumentDisplayTransform, getVectorSelectionFrame, vectorDeltaToLocal } from './VectorSelectionGeometry';
 // Event wiring, menus, shortcuts and vector gestures.
 import { AppVectorFeatures } from './AppVectorFeatures';
 import { refresh, type LayerNode } from '@nvts/document-model';
-import { cloneVectorShape, cloneVectorShapes, type VectorShape } from '@nvts/shared';
+import { cloneVectorShape, cloneVectorShapes, getVectorShapeBounds, remapVectorPoints, type VectorShape } from '@nvts/shared';
 import { wireLayersPanel } from '../panels/LayersPanel';
 import { wireLayerEffectsPanel } from '../panels/LayerEffectsPanel';
 import { wireFilterPanel } from '../panels/FilterPanel';
@@ -185,8 +186,22 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
           refresh();
         });
       });
+      this.bindWorkspaceResetButton(dropdown, workspaceMenu);
       refresh();
     }
+
+  private bindWorkspaceResetButton(
+    dropdown: HTMLElement,
+    workspaceMenu: { button: HTMLButtonElement; dropdown: HTMLElement },
+  ): void {
+    dropdown.querySelector<HTMLButtonElement>('#workspace-reset-defaults')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!window.confirm('Se borrará la configuración personalizada del espacio de trabajo seleccionado y se restaurarán sus valores predeterminados. Los demás espacios de trabajo no se modificarán. ¿Continuar?')) return;
+      this.restoreWorkspaceDefaults();
+      this.closeMenu(workspaceMenu);
+    });
+  }
 
   protected getPanelVisibilityEntries(): PanelVisibilityEntry[] {
       return [
@@ -334,8 +349,24 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       on('#rail-line', () => this.setTool('line'));
       on('#rail-text', () => this.setTool('text'));
       on('#rail-vector-select', () => this.setTool('vector-select'));
+      on('#rail-vector-rectangle', () => this.setTool('vector-rectangle'));
+      on('#rail-vector-rounded-rectangle', () => this.setTool('vector-rounded-rectangle'));
+      on('#rail-vector-ellipse', () => this.setTool('vector-ellipse'));
+      on('#rail-vector-line', () => this.setTool('vector-line'));
+      on('#rail-vector-polyline', () => this.setTool('vector-polyline'));
+      on('#rail-vector-pen', () => this.setTool('vector-pen'));
+      on('#rail-vector-polygon', () => this.setTool('vector-polygon'));
+      on('#rail-vector-star', () => this.setTool('vector-star'));
+      on('#rail-vector-spiral', () => this.setTool('vector-spiral'));
+      on('#rail-vector-freehand', () => this.setTool('vector-freehand'));
       on('#rail-rectangle', () => this.setTool('rectangle'));
       on('#rail-ellipse', () => this.setTool('ellipse'));
+      on('#rail-pixel-rounded-rectangle', () => this.setTool('pixel-rounded-rectangle'));
+      on('#rail-pixel-polyline', () => this.setTool('pixel-polyline'));
+      on('#rail-pixel-bezier', () => this.setTool('pixel-bezier'));
+      on('#rail-pixel-polygon', () => this.setTool('pixel-polygon'));
+      on('#rail-pixel-star', () => this.setTool('pixel-star'));
+      on('#rail-pixel-spiral', () => this.setTool('pixel-spiral'));
       on('#rail-fill', () => this.setTool('fill'));
       on('#rail-clone-stamp', () => this.setTool('clone-stamp'));
       on('#rail-gradient', () => this.setTool('gradient'));
@@ -440,7 +471,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
         apply: () => this.applyVectorEditor(),
         cancel: () => this.cancelVectorEditor(),
         clear: () => this.clearVectorEditor(),
-        updateFromFields: () => this.updateVectorShapeFromFields(),
+        updateFromFields: (fieldId) => this.updateVectorShapeFromFields(fieldId),
       });
     }
 
@@ -536,13 +567,15 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       }
       if (!this.spaceDown && !event.shiftKey) return;
       event.preventDefault();
-      this.panX -= event.deltaX;
-      this.panY -= event.deltaY;
+      const sensitivity = this.brush.panSensitivity / 100;
+      this.panX -= event.deltaX * sensitivity;
+      this.panY -= event.deltaY * sensitivity;
       this.applyCanvasView();
     }
 
   private getWheelZoom(deltaY: number): number {
-    const factor = deltaY < 0 ? 1.1 : 1 / 1.1;
+    const step = Math.max(1.05, Math.min(1.5, this.brush.zoomIncrement));
+    const factor = deltaY < 0 ? step : 1 / step;
     return Math.max(0.25, Math.min(8, this.zoom * factor));
   }
 
@@ -647,24 +680,23 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       if (!layer || layer.type !== 'vector') { this.q<HTMLElement>('#status').textContent = 'Seleccioná una capa vectorial.'; return; }
       if (this.ctl.isEffectivelyLocked(layer.id) || !this.ctl.isEffectivelyVisible(layer.id)) { this.q<HTMLElement>('#status').textContent = 'La capa vectorial está bloqueada u oculta.'; return; }
       const shapes = layer.vectorShapes ?? [];
-      const hit = [...shapes].reverse().find((shape) => {
-        const x1 = Math.min(shape.x, shape.x + shape.width), x2 = Math.max(shape.x, shape.x + shape.width);
-        const y1 = Math.min(shape.y, shape.y + shape.height), y2 = Math.max(shape.y, shape.y + shape.height);
-        const pad = Math.max(5, shape.strokeWidth / 2);
-        return point.x >= x1 - pad && point.x <= x2 + pad && point.y >= y1 - pad && point.y <= y2 + pad;
-      });
-      if (!hit) {
+      const target = findVectorSelectionTarget(
+        point,
+        shapes,
+        (shape) => Math.max(5, shape.strokeWidth / 2),
+      );
+      if (!target) {
         this.vectorDirectSelectedId = null; this.clearToolPreview();
         this.q<HTMLElement>('#status').textContent = this.getVectorHitMissMessage(shapes.length);
         return;
       }
+      const { shape: hit, mode } = target;
       const copy = cloneVectorShape(hit);
-      const handle = Math.abs(point.x - (hit.x + hit.width)) <= 12 && Math.abs(point.y - (hit.y + hit.height)) <= 12;
       this.vectorDirectSelectedId = hit.id;
-      this.vectorGesture = { layerId: layer.id, shapeId: hit.id, mode: handle ? 'resize' : 'move', startPoint: point, original: copy, latest: cloneVectorShape(copy), moved: false };
+      this.vectorGesture = { layerId: layer.id, shapeId: hit.id, mode, startPoint: point, original: copy, latest: cloneVectorShape(copy), moved: false };
       this.canvas.setPointerCapture(event.pointerId);
       this.drawVectorSelectionOverlay(copy);
-      this.q<HTMLElement>('#status').textContent = `${this.vectorKindLabel(hit.kind)} seleccionado · ${handle ? 'redimensionar' : 'arrastrar para mover'}`;
+      this.q<HTMLElement>('#status').textContent = `${this.vectorKindLabel(hit.kind)} seleccionado · ${mode === 'resize' ? 'redimensionar' : 'arrastrar para mover'}`;
     }
 
   private getVectorHitMissMessage(shapeCount: number): string {
@@ -679,12 +711,34 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
         clone.points = this.moveVectorPoints(clone.points, dx, dy);
         return clone;
       }
-      const nextWidth = Math.max(1, original.width + dx), nextHeight = Math.max(1, original.height + dy);
-      const sx = nextWidth / Math.max(1, original.width), sy = nextHeight / Math.max(1, original.height);
-      clone.width = nextWidth; clone.height = nextHeight;
-      clone.points = this.resizeVectorPoints(clone.points, original, sx, sy);
-      if (clone.kind === 'text') clone.fontSize = Math.max(1, (original.fontSize ?? 64) * Math.min(sx, sy));
+      return this.resizeVectorShapeToFrame(original, clone, dx, dy);
+    }
+
+  private resizeVectorShapeToFrame(original: VectorShape, clone: VectorShape, dx: number, dy: number): VectorShape {
+      const source = getVectorShapeBounds(original);
+      let nextWidth = Math.max(1, source.width + dx);
+      let nextHeight = Math.max(1, source.height + dy);
+      const aspectRatio = source.width / Math.max(1, source.height);
+      const widthChange = Math.abs(dx / Math.max(1, source.width));
+      const heightChange = Math.abs(dy / Math.max(1, source.height));
+      if (this.brush.vectorKeepAspectRatio && widthChange >= heightChange) nextHeight = Math.max(1, nextWidth / aspectRatio);
+      if (this.brush.vectorKeepAspectRatio && widthChange < heightChange) nextWidth = Math.max(1, nextHeight * aspectRatio);
+      const target = { x: source.x, y: source.y, width: nextWidth, height: nextHeight };
+      const points = original.points ?? this.createLineResizePoints(original);
+      clone.points = remapVectorPoints(points, source, target);
+      Object.assign(clone, target);
+      this.scaleVectorTextSize(original, clone, nextWidth / source.width, nextHeight / source.height);
       return clone;
+    }
+
+  private createLineResizePoints(shape: VectorShape): NonNullable<VectorShape['points']> | undefined {
+      if (shape.kind !== 'line') return undefined;
+      return [{ x: shape.x, y: shape.y }, { x: shape.x + shape.width, y: shape.y + shape.height }];
+    }
+
+  private scaleVectorTextSize(original: VectorShape, clone: VectorShape, scaleX: number, scaleY: number): void {
+      if (clone.kind !== 'text') return;
+      clone.fontSize = Math.max(1, (original.fontSize ?? 64) * Math.min(scaleX, scaleY));
     }
 
   protected moveVectorPoints(
@@ -705,18 +759,19 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       sx: number,
       sy: number,
     ): VectorShape['points'] {
-      return points?.map((point) => ({
-        ...point, x: original.x + (point.x - original.x) * sx, y: original.y + (point.y - original.y) * sy,
-        ...(point.inX !== undefined ? { inX: original.x + (point.inX - original.x) * sx } : {}), ...(point.inY !== undefined ? { inY: original.y + (point.inY - original.y) * sy } : {}),
-        ...(point.outX !== undefined ? { outX: original.x + (point.outX - original.x) * sx } : {}), ...(point.outY !== undefined ? { outY: original.y + (point.outY - original.y) * sy } : {}),
-      }));
+      const source = getVectorShapeBounds(original);
+      const target = { ...source, width: Math.max(1, source.width * sx), height: Math.max(1, source.height * sy) };
+      return remapVectorPoints(points, source, target);
     }
 
   protected updateVectorGesture(point: { x: number; y: number }): void {
       const gesture = this.vectorGesture; if (!gesture) return;
       const dx = point.x - gesture.startPoint.x, dy = point.y - gesture.startPoint.y;
+      const localDelta = gesture.mode === 'resize'
+        ? vectorDeltaToLocal(dx, dy, gesture.original.rotation ?? 0)
+        : { x: dx, y: dy };
       gesture.moved = gesture.moved || Math.hypot(dx, dy) > 1;
-      gesture.latest = this.transformVectorShape(gesture.original, dx, dy, gesture.mode);
+      gesture.latest = this.transformVectorShape(gesture.original, localDelta.x, localDelta.y, gesture.mode);
       this.drawVectorSelectionOverlay(gesture.latest);
     }
 
@@ -741,13 +796,27 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       const dpr = window.devicePixelRatio || 1; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const stageRect = this.q<HTMLElement>('.canvas-stage').getBoundingClientRect();
       const canvasRect = this.canvas.getBoundingClientRect();
-      const x = canvasRect.left - stageRect.left + shape.x / this.ctl.doc.width * canvasRect.width;
-      const y = canvasRect.top - stageRect.top + shape.y / this.ctl.doc.height * canvasRect.height;
-      const w = shape.width / this.ctl.doc.width * canvasRect.width, h = shape.height / this.ctl.doc.height * canvasRect.height;
-      ctx.save(); ctx.strokeStyle = '#c92334'; ctx.lineWidth = 1.25; ctx.setLineDash([5, 3]); ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
-      ctx.fillStyle = '#fff'; ctx.strokeStyle = '#c92334'; ctx.lineWidth = 1.25;
-      const points = [[x,y],[x+w,y],[x,y+h],[x+w,y+h]];
-      points.forEach(([px,py]) => { ctx.fillRect(px - 3.5, py - 3.5, 7, 7); ctx.strokeRect(px - 3.5, py - 3.5, 7, 7); });
+      const display = getDocumentDisplayTransform(stageRect, canvasRect, this.ctl.doc.width, this.ctl.doc.height);
+      const frame = getVectorSelectionFrame(shape);
+      const centerX = display.left + frame.centerX * display.scale;
+      const centerY = display.top + frame.centerY * display.scale;
+      const width = frame.width * display.scale;
+      const height = frame.height * display.scale;
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      ctx.rotate(frame.rotation * Math.PI / 180);
+      ctx.strokeStyle = '#c92334';
+      ctx.lineWidth = 1.25;
+      ctx.setLineDash([5, 3]);
+      ctx.strokeRect(-width / 2, -height / 2, width, height);
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#fff';
+      ctx.strokeStyle = '#c92334';
+      ctx.lineWidth = 1.25;
+      const halfWidth = width / 2;
+      const halfHeight = height / 2;
+      const points = [[-halfWidth, -halfHeight], [halfWidth, -halfHeight], [-halfWidth, halfHeight], [halfWidth, halfHeight]];
+      points.forEach(([x, y]) => { ctx.fillRect(x - 3.5, y - 3.5, 7, 7); ctx.strokeRect(x - 3.5, y - 3.5, 7, 7); });
       ctx.restore();
     }
 
@@ -768,7 +837,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       if (!this.toolManager.canUseLayer(t, layerType)) return this.reportUnavailableToolTarget(definition.target, layer);
       if (this.hasUnavailableToolLayer(definition.target, layer)) return this.reportUnavailableToolTarget(definition.target, layer);
       this.tool = t;
-      this.vectorGesture = null; this.vectorDirectSelectedId = null;
+      this.vectorGesture = null; this.vectorDrawGesture = null; this.vectorDirectSelectedId = null;
       this.renderToolOptions();
       this.renderAdvancedToolOptions();
       this.applyCanvasView();

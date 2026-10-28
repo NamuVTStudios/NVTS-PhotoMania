@@ -2,7 +2,7 @@
 import { AppComicFeatures } from './AppComicFeatures';
 import { runEdit, type LayerNode } from '@nvts/document-model';
 import { isPixelLayerType, type TextLayerStyle } from '@nvts/shared';
-import { renderAdvancedToolOptionsPanel } from '../panels/AdvancedToolOptionsPanel';
+import { renderAdvancedToolOptionsPanel, type AdvancedComicSettings } from '../panels/advanced-tool-options/AdvancedToolOptionsController';
 import { renderHistoryPanel } from '../panels/HistoryPanel';
 import { readPreferences } from '../panels/PreferencesPanel';
 import { documentFormats, rememberRecentProject } from '@nvts/storage';
@@ -74,6 +74,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       if (layer && blend) blend.value = layer.blendMode;
       this.updateLayerTypeButtons(layer);
       if (this.tool === 'text' && layer?.type === 'text') this.syncTextLayerSettings(layer);
+      this.syncAdvancedTextControls();
     }
 
   protected updateLayerTypeButtons(layer: LayerNode | undefined): void {
@@ -136,10 +137,14 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       };
       const canPaint = canUseActiveLayer('brush');
       const canUseVector = canUseActiveLayer('comic-panel');
-      this.setToolButtonsDisabled(['#rail-brush', '#rail-eraser', '#rail-line', '#rail-rectangle', '#rail-ellipse', '#rail-fill', '#rail-clone-stamp', '#rail-gradient', '#rail-smudge', '#rail-liquify'], !canPaint);
+      this.setToolButtonsDisabled(['#rail-brush', '#rail-eraser', '#rail-line', '#rail-rectangle', '#rail-ellipse', '#rail-pixel-rounded-rectangle', '#rail-pixel-polyline', '#rail-pixel-bezier', '#rail-pixel-polygon', '#rail-pixel-star', '#rail-pixel-spiral', '#rail-fill', '#rail-clone-stamp', '#rail-gradient', '#rail-smudge', '#rail-liquify'], !canPaint);
       this.setToolButtonsDisabled(['#advanced-brightness-down', '#advanced-brightness-up'], !canPaint);
       this.setToolButtonsDisabled(['#rail-eyedropper', '#rail-hand'], false);
-      this.setToolButtonsDisabled(['#rail-vector-select', '#rail-comic-panel'], !canUseVector);
+      this.setToolButtonsDisabled([
+        '#rail-vector-select', '#rail-vector-rectangle', '#rail-vector-rounded-rectangle', '#rail-vector-ellipse',
+        '#rail-vector-line', '#rail-vector-polyline', '#rail-vector-pen', '#rail-vector-polygon', '#rail-vector-star',
+        '#rail-vector-spiral', '#rail-vector-freehand', '#rail-comic-panel',
+      ], !canUseVector);
       const swatch = this.root.querySelector<HTMLElement>('#foreground-swatch');
       if (swatch) swatch.style.background = this.foregroundHex();
     }
@@ -179,6 +184,13 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
         brush: 'Pincel', eraser: 'Borrador', eyedropper: 'Cuentagotas', line: 'Línea',
         rectangle: 'Rectángulo', ellipse: 'Elipse', fill: 'Relleno', hand: 'Mover lienzo',
         text: 'Texto', 'vector-select': 'Selección vectorial',
+        'pixel-rounded-rectangle': 'Rectángulo redondeado de píxeles', 'pixel-polyline': 'Polilínea de píxeles',
+        'pixel-bezier': 'Curva Bézier de píxeles', 'pixel-polygon': 'Polígono de píxeles',
+        'pixel-star': 'Estrella de píxeles', 'pixel-spiral': 'Espiral de píxeles',
+        'vector-rectangle': 'Rectángulo vectorial', 'vector-rounded-rectangle': 'Rectángulo redondeado vectorial',
+        'vector-ellipse': 'Elipse vectorial', 'vector-line': 'Línea vectorial', 'vector-polyline': 'Polilínea vectorial',
+        'vector-pen': 'Pluma vectorial', 'vector-polygon': 'Polígono vectorial', 'vector-star': 'Estrella vectorial',
+        'vector-freehand': 'Trazo vectorial libre', 'vector-spiral': 'Espiral vectorial',
         'clone-stamp': 'Tampón de clonar', 'comic-panel': 'Marco y viñetas', gradient: 'Degradado', smudge: 'Dedo', liquify: 'Licuar',
       };
       this.q<HTMLElement>('#tool-current-label').textContent = labels[this.tool];
@@ -197,7 +209,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
 
   private createCommonToolFields(): { color: string; size: string; opacity: string } {
     const color = `<label class="tool-setting">Color <input id="tool-color" type="color" value="${this.foregroundHex()}" /></label>`;
-    const sizeLabel = this.tool === 'line' || this.tool === 'rectangle' || this.tool === 'ellipse' ? 'Grosor' : 'Tamaño';
+    const sizeLabel = this.isRasterShapeTool(this.tool) ? 'Grosor' : 'Tamaño';
     const size = `<label class="tool-setting">${sizeLabel} <input id="tool-size" type="range" min="1" max="256" value="${this.brush.size}" /><output id="tool-size-value">${this.brush.size}px</output></label>`;
     const opacity = `<label class="tool-setting">Opacidad <input id="tool-opacity" type="range" min="1" max="100" value="${this.brush.opacity}" /><output id="tool-opacity-value">${this.brush.opacity}%</output></label>`;
     return { color, size, opacity };
@@ -213,9 +225,13 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
     return `<option value="${name}" ${selected}>${name}</option>`;
   }
 
+  private isRasterShapeTool(tool: Tool): boolean {
+    return ['line', 'rectangle', 'ellipse', 'pixel-rounded-rectangle', 'pixel-polyline', 'pixel-bezier', 'pixel-polygon', 'pixel-star', 'pixel-spiral'].includes(tool);
+  }
+
   private createToolSpecificOptions(fields: { color: string; size: string; opacity: string }, fontOptions: string): string {
     if (this.tool === 'brush') return `${fields.color}${fields.size}${fields.opacity}`;
-    if (this.tool === 'gradient') return `${fields.color}<span class="tool-help">Arrastrá para aplicar un degradado lineal desde el color frontal hacia transparente.</span>`;
+    if (this.tool === 'gradient') return `${fields.color}${fields.opacity}<span class="tool-help">Arrastrá para aplicar un degradado configurable desde el color frontal. El tipo y la inversión están en opciones avanzadas.</span>`;
     if (this.tool === 'smudge') return `${fields.size}${fields.opacity}<span class="tool-help">Arrastrá para mezclar los colores existentes.</span>`;
     if (this.tool === 'liquify') return `${fields.size}<span class="tool-help">Arrastrá para empujar los píxeles dentro del radio del pincel.</span>`;
     if (this.tool === 'clone-stamp') return this.createCloneStampToolMarkup(fields);
@@ -223,10 +239,13 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
     if (this.tool === 'eraser') return `${fields.size}${fields.opacity}`;
     if (this.tool === 'line') return `${fields.color}${fields.size}${fields.opacity}`;
     if (this.tool === 'rectangle' || this.tool === 'ellipse') return this.createShapeToolMarkup(fields);
+    if (this.tool === 'pixel-rounded-rectangle' || this.tool === 'pixel-polygon' || this.tool === 'pixel-star') return this.createShapeToolMarkup(fields);
+    if (this.tool === 'pixel-polyline' || this.tool === 'pixel-bezier' || this.tool === 'pixel-spiral') return `${fields.color}${fields.size}${fields.opacity}<span class="tool-help">La forma se rasteriza en la capa de pintura seleccionada. Los parámetros específicos están en Opciones avanzadas.</span>`;
     if (this.tool === 'fill') return this.createFillToolMarkup(fields.color);
     if (this.tool === 'text') return this.createTextToolMarkup(fontOptions);
     if (this.tool === 'eyedropper') return '<span class="tool-help">Hacé clic en el lienzo para tomar un color.</span>';
-    if (this.tool === 'vector-select') return '<span class="tool-help">Seleccioná un objeto vectorial; arrastralo para moverlo o usá el control inferior derecho para cambiar su tamaño.</span>';
+    if (this.tool === 'vector-select') return '<span class="tool-help">Seleccioná un objeto vectorial; arrastralo para moverlo o usá el control de la esquina inferior derecha para cambiar su tamaño.</span>';
+    if (this.tool.startsWith('vector-')) return `${fields.color}${fields.size}${fields.opacity}<span class="tool-help">Arrastrá sobre una capa vectorial visible y desbloqueada para crear un objeto editable. El relleno y el estilo del trazo se configuran en Opciones avanzadas.</span>`;
     return '<span class="tool-help">Arrastrá el lienzo para desplazarte. Usá − / + o la rueda con Ctrl para cambiar el zoom.</span>';
   }
 
@@ -282,16 +301,28 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       if (opacity) opacity.oninput = () => {
         this.brush.opacity = Number(opacity.value);
         this.updateToolOutput(host, '#tool-opacity-value', `${this.brush.opacity}%`);
+        const advancedOpacity = this.root.querySelector<HTMLInputElement>('#advanced-gradient-opacity');
+        if (advancedOpacity && this.tool === 'gradient') advancedOpacity.value = opacity.value;
+        const advancedOpacityOutput = this.root.querySelector<HTMLOutputElement>('#advanced-gradient-opacity-value');
+        if (advancedOpacityOutput && this.tool === 'gradient') advancedOpacityOutput.value = `${opacity.value}%`;
       };
     }
 
   protected bindFillToolControls(host: HTMLElement): void {
       const shapeFill = host.querySelector<HTMLInputElement>('#tool-shape-fill');
-      if (shapeFill) shapeFill.onchange = () => { this.brush.shapeFill = shapeFill.checked; };
+      if (shapeFill) shapeFill.onchange = () => {
+        this.brush.shapeFill = shapeFill.checked;
+        const advancedFill = this.root.querySelector<HTMLInputElement>('#advanced-shape-fill');
+        if (advancedFill) advancedFill.checked = shapeFill.checked;
+      };
       const tolerance = host.querySelector<HTMLInputElement>('#tool-tolerance');
       if (tolerance) tolerance.oninput = () => {
         this.brush.tolerance = Number(tolerance.value);
         this.updateToolOutput(host, '#tool-tolerance-value', tolerance.value);
+        const advancedTolerance = this.root.querySelector<HTMLInputElement>('#advanced-tolerance');
+        const advancedToleranceOutput = this.root.querySelector<HTMLOutputElement>('#advanced-tolerance-value');
+        if (advancedTolerance) advancedTolerance.value = tolerance.value;
+        if (advancedToleranceOutput) advancedToleranceOutput.value = tolerance.value;
       };
     }
 
@@ -319,11 +350,53 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       };
     }
 
+
+  protected applyAdvancedComicSettings(settings: Partial<AdvancedComicSettings>): void {
+      if (settings.mode !== undefined) this.comicToolMode = settings.mode;
+      if (settings.borderWidth !== undefined) this.comicBorderWidth = Math.max(1, Math.min(20, settings.borderWidth));
+      if (settings.splitLineCount !== undefined) this.comicSplitLineCount = settings.splitLineCount === 2 ? 2 : 1;
+      if (settings.splitDistance !== undefined) this.comicSplitDistance = Math.max(4, Math.min(240, settings.splitDistance));
+      const mode = this.root.querySelector<HTMLSelectElement>('#comic-tool-mode');
+      const border = this.root.querySelector<HTMLInputElement>('#comic-border-width');
+      const borderOutput = this.root.querySelector<HTMLOutputElement>('#comic-border-value');
+      const count = this.root.querySelector<HTMLSelectElement>('#comic-split-line-count');
+      const distance = this.root.querySelector<HTMLInputElement>('#comic-split-distance');
+      const distanceOutput = this.root.querySelector<HTMLOutputElement>('#comic-split-distance-value');
+      if (mode) mode.value = this.comicToolMode;
+      if (border) border.value = String(this.comicBorderWidth);
+      if (borderOutput) borderOutput.value = `${this.comicBorderWidth}px`;
+      if (count) count.value = String(this.comicSplitLineCount);
+      if (distance) distance.value = String(this.comicSplitDistance);
+      if (distanceOutput) distanceOutput.value = `${this.comicSplitDistance}px`;
+      this.syncComicSplitControls(this.root.querySelector<HTMLElement>('#toolbar') ?? this.root);
+    }
+
   protected syncComicSplitControls(host: HTMLElement): void {
       const options = host.querySelector<HTMLElement>('.comic-split-options');
       options?.toggleAttribute('hidden', this.comicToolMode !== 'split');
       const distance = host.querySelector<HTMLInputElement>('#comic-split-distance');
       if (distance) distance.disabled = this.comicSplitLineCount !== 2;
+      this.syncAdvancedComicControls();
+    }
+
+  protected syncAdvancedComicControls(): void {
+      const mode = this.root.querySelector<HTMLSelectElement>('#advanced-comic-mode');
+      const border = this.root.querySelector<HTMLInputElement>('#advanced-comic-border');
+      const borderOutput = this.root.querySelector<HTMLOutputElement>('#advanced-comic-border-value');
+      const count = this.root.querySelector<HTMLSelectElement>('#advanced-comic-split-count');
+      const distance = this.root.querySelector<HTMLInputElement>('#advanced-comic-split-distance');
+      const distanceOutput = this.root.querySelector<HTMLOutputElement>('#advanced-comic-split-distance-value');
+      const options = this.root.querySelector<HTMLElement>('#advanced-comic-split-options');
+      if (mode) mode.value = this.comicToolMode;
+      if (border) border.value = String(this.comicBorderWidth);
+      if (borderOutput) borderOutput.value = `${this.comicBorderWidth}px`;
+      if (count) count.value = String(this.comicSplitLineCount);
+      if (distance) {
+        distance.value = String(this.comicSplitDistance);
+        distance.disabled = this.comicSplitLineCount !== 2;
+      }
+      if (distanceOutput) distanceOutput.value = `${this.comicSplitDistance}px`;
+      options?.toggleAttribute('hidden', this.comicToolMode !== 'split');
     }
 
   protected bindTextToolControls(host: HTMLElement): void {
@@ -366,6 +439,13 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
         hand: '#rail-hand', brush: '#rail-brush', eraser: '#rail-eraser', line: '#rail-line',
         rectangle: '#rail-rectangle', ellipse: '#rail-ellipse', fill: '#rail-fill',
         eyedropper: '#rail-eyedropper', text: '#rail-text', 'vector-select': '#rail-vector-select',
+        'pixel-rounded-rectangle': '#rail-pixel-rounded-rectangle', 'pixel-polyline': '#rail-pixel-polyline',
+        'pixel-bezier': '#rail-pixel-bezier', 'pixel-polygon': '#rail-pixel-polygon',
+        'pixel-star': '#rail-pixel-star', 'pixel-spiral': '#rail-pixel-spiral',
+        'vector-rectangle': '#rail-vector-rectangle', 'vector-rounded-rectangle': '#rail-vector-rounded-rectangle',
+        'vector-ellipse': '#rail-vector-ellipse', 'vector-line': '#rail-vector-line', 'vector-polyline': '#rail-vector-polyline',
+        'vector-pen': '#rail-vector-pen', 'vector-polygon': '#rail-vector-polygon', 'vector-star': '#rail-vector-star',
+        'vector-spiral': '#rail-vector-spiral', 'vector-freehand': '#rail-vector-freehand',
         'clone-stamp': '#rail-clone-stamp', 'comic-panel': '#rail-comic-panel', gradient: '#rail-gradient', smudge: '#rail-smudge', liquify: '#rail-liquify',
       };
       Object.values(toolButtons).forEach((selector) => this.root.querySelector<HTMLElement>(selector)?.classList.remove('selected'));
@@ -376,7 +456,12 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       const cursors: Record<Tool, string> = {
         hand: 'grab', eyedropper: 'copy', text: 'text', 'vector-select': 'default',
         brush: 'crosshair', eraser: 'crosshair', line: 'crosshair', rectangle: 'crosshair',
-        ellipse: 'crosshair', fill: 'crosshair', 'clone-stamp': 'crosshair', 'comic-panel': 'crosshair', gradient: 'crosshair', smudge: 'crosshair', liquify: 'crosshair',
+        ellipse: 'crosshair', 'pixel-rounded-rectangle': 'crosshair', 'pixel-polyline': 'crosshair',
+        'pixel-bezier': 'crosshair', 'pixel-polygon': 'crosshair', 'pixel-star': 'crosshair', 'pixel-spiral': 'crosshair',
+        fill: 'crosshair', 'clone-stamp': 'crosshair', 'comic-panel': 'crosshair', gradient: 'crosshair', smudge: 'crosshair', liquify: 'crosshair',
+        'vector-rectangle': 'crosshair', 'vector-rounded-rectangle': 'crosshair', 'vector-ellipse': 'crosshair',
+        'vector-line': 'crosshair', 'vector-polyline': 'crosshair', 'vector-pen': 'crosshair',
+        'vector-polygon': 'crosshair', 'vector-star': 'crosshair', 'vector-spiral': 'crosshair', 'vector-freehand': 'crosshair',
       };
       this.canvas.style.cursor = cursors[this.tool];
     }
@@ -391,6 +476,13 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
           adjustActiveLayerBrightness: (delta) => this.adjustActiveLayerBrightness(delta),
           applyTextSettingsToSelectedLayer: () => this.applyTextSettingsToSelectedLayer(),
           editVectorLayer: () => { const layer = this.active(); if (layer?.type === 'vector') this.editVectorLayer(layer); },
+          updateComicSettings: (settings) => this.applyAdvancedComicSettings(settings),
+        },
+        {
+          mode: this.comicToolMode,
+          borderWidth: this.comicBorderWidth,
+          splitLineCount: this.comicSplitLineCount,
+          splitDistance: this.comicSplitDistance,
         },
       );
     }
@@ -527,8 +619,39 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       this.ctl.replaceTextContent(layer.id, this.textLayerPatch(content, x, y, settings), pixels);
     }
 
+  protected syncAdvancedTextControls(): void {
+      const values: Array<[string, string]> = [
+        ['#advanced-text-font', this.textSettings.fontFamily],
+        ['#advanced-text-style', this.textSettings.style],
+        ['#advanced-text-color', this.textSettings.color],
+        ['#advanced-text-align', this.textSettings.align],
+        ['#advanced-text-stroke-color', this.textSettings.strokeColor],
+        ['#advanced-text-background', this.textSettings.backgroundColor],
+      ];
+      values.forEach(([selector, value]) => {
+        const input = this.root.querySelector<HTMLInputElement | HTMLSelectElement>(selector);
+        if (input) input.value = value;
+      });
+      const fontSize = this.root.querySelector<HTMLInputElement>('#advanced-text-font-size');
+      const fontSizeOutput = this.root.querySelector<HTMLOutputElement>('#advanced-text-font-size-value');
+      if (fontSize) fontSize.value = String(this.textSettings.fontSize);
+      if (fontSizeOutput) fontSizeOutput.value = `${this.textSettings.fontSize}px`;
+      this.syncAdvancedTextRange('lineHeight', '#advanced-text-line-height', '#advanced-text-line-height-value', '×');
+      this.syncAdvancedTextRange('letterSpacing', '#advanced-text-letter-spacing', '#advanced-text-letter-spacing-value', 'px');
+      this.syncAdvancedTextRange('strokeWidth', '#advanced-text-stroke-width', '#advanced-text-stroke-width-value', 'px');
+    }
+
+  protected syncAdvancedTextRange(key: 'lineHeight' | 'letterSpacing' | 'strokeWidth', inputSelector: string, outputSelector: string, suffix: string): void {
+      const value = this.textSettings[key];
+      const input = this.root.querySelector<HTMLInputElement>(inputSelector);
+      const output = this.root.querySelector<HTMLOutputElement>(outputSelector);
+      if (input) input.value = String(value);
+      if (output) output.value = `${value}${suffix}`;
+    }
+
   protected applyTextSettingsToSelectedLayer(): void {
       const layer = this.active();
+      this.syncAdvancedTextControls();
       if (!layer || layer.type !== 'text' || this.ctl.isEffectivelyLocked(layer.id) || !layer.textContent) return;
       try {
         const settings = { ...this.textSettings };

@@ -1,4 +1,4 @@
-import type { VectorShape } from '@nvts/shared';
+import { getVectorShapeCenter, type VectorShape } from '@nvts/shared';
 
 function escapeSvgText(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -6,9 +6,8 @@ function escapeSvgText(value: string): string {
 
 function getShapeTransform(shape: VectorShape): string {
   if (!shape.rotation) return '';
-  const centerX = shape.x + shape.width / 2;
-  const centerY = shape.y + shape.height / 2;
-  return ` transform="rotate(${shape.rotation} ${centerX} ${centerY})"`;
+  const center = getVectorShapeCenter(shape);
+  return ` transform="rotate(${shape.rotation} ${center.x} ${center.y})"`;
 }
 
 function getShapeStyle(shape: VectorShape, forceNoFill = false): string {
@@ -90,7 +89,10 @@ function renderText(shape: VectorShape, style: string, transform: string): strin
   const fontFamily = escapeSvgText(shape.fontFamily ?? 'Arial');
   const text = escapeSvgText(shape.text ?? 'Texto vectorial');
   const anchor = getTextAnchor(shape.textAlign);
-  return `<text x="${shape.x}" y="${shape.y + Math.max(1, fontSize)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${shape.fontWeight ?? 'normal'}" font-style="${shape.fontStyle ?? 'normal'}" text-anchor="${anchor}" ${style}${transform}>${text}</text>`;
+  const left = Math.min(shape.x, shape.x + shape.width);
+  const width = Math.max(1, Math.abs(shape.width));
+  const x = shape.textAlign === 'center' ? left + width / 2 : shape.textAlign === 'right' ? left + width : left;
+  return `<text x="${x}" y="${shape.y + Math.max(1, fontSize)}" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${shape.fontWeight ?? 'normal'}" font-style="${shape.fontStyle ?? 'normal'}" text-anchor="${anchor}" ${style}${transform}>${text}</text>`;
 }
 
 function getTextAnchor(alignment: VectorShape['textAlign']): string {
@@ -103,7 +105,11 @@ const SHAPE_RENDERERS: Record<VectorShape['kind'], ShapeRenderer> = {
   rectangle: (shape, { style, transform }) => `<rect x="${shape.x}" y="${shape.y}" width="${shape.width}" height="${shape.height}" ${style}${transform}/>`,
   'rounded-rectangle': (shape, { style, transform }) => `<rect x="${shape.x}" y="${shape.y}" width="${shape.width}" height="${shape.height}" rx="${shape.cornerRadius ?? 20}" ${style}${transform}/>`,
   ellipse: (shape, { centerX, centerY, style, transform }) => `<ellipse cx="${centerX}" cy="${centerY}" rx="${Math.abs(shape.width / 2)}" ry="${Math.abs(shape.height / 2)}" ${style}${transform}/>`,
-  line: (shape, { style, transform }) => `<line x1="${shape.x}" y1="${shape.y}" x2="${shape.x + shape.width}" y2="${shape.y + shape.height}" ${style}${transform}/>`,
+  line: (shape, { style, transform }) => {
+    const start = shape.points?.[0] ?? { x: shape.x, y: shape.y };
+    const end = shape.points?.[1] ?? { x: shape.x + shape.width, y: shape.y + shape.height };
+    return `<line x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" ${style}${transform}/>`;
+  },
   polygon: renderPath,
   polyline: renderPath,
   bezier: renderPath,
@@ -116,8 +122,8 @@ const SHAPE_RENDERERS: Record<VectorShape['kind'], ShapeRenderer> = {
 /** Serializes one native vector shape as SVG while dispatching by its shape strategy. */
 export function exportVectorShapeToSvg(shape: VectorShape): string {
   const context = {
-    centerX: shape.x + shape.width / 2,
-    centerY: shape.y + shape.height / 2,
+    centerX: getVectorShapeCenter(shape).x,
+    centerY: getVectorShapeCenter(shape).y,
     transform: getShapeTransform(shape),
     style: getShapeStyle(shape),
   };

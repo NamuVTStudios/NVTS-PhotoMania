@@ -89,6 +89,8 @@ export const MAIN_MENU = `<nav class="menus" aria-label="Menú principal">
         <button class="menu-item workspace-menu-item" role="menuitemradio" aria-checked="false" data-workspace="comics" type="button">${menuLabel('workspace-comics', 'Cómics')}<span class="menu-check"></span></button>
         <button class="menu-item workspace-menu-item" role="menuitemradio" aria-checked="false" data-workspace="storyboarding" type="button">${menuLabel('workspace-storyboard', 'Storyboarding')}<span class="menu-check"></span></button>
         <button class="menu-item workspace-menu-item" role="menuitemradio" aria-checked="false" data-workspace="animation" type="button">${menuLabel('workspace-animation', 'Animación')}<span class="menu-check"></span></button>
+        <div class="menu-divider" role="separator"></div>
+        <button id="workspace-reset-defaults" class="menu-item" role="menuitem" type="button">${menuLabel('workspace', 'Restaurar espacio de trabajo actual')}</button>
       </div>
     </div>
     <button id="menu-help">${uiIcon('help')}<span>Ayuda</span></button>

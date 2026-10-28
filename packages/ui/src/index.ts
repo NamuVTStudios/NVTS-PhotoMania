@@ -3,6 +3,8 @@ export * from './managers/AppManager';
 export * from './managers/ComicProjectManager';
 export * from './managers/DocumentLifecycleManager';
 export * from './managers/ToolManager';
+export { DEFAULT_SYMMETRY_SETTINGS, SymmetryManager, createSymmetryPoints, symmetryManager } from './managers/SymmetryManager';
+export type { SymmetryAxis, SymmetryPoint, SymmetrySettings } from './managers/SymmetryManager';
 export * from './managers/UIManager';
 export * from './managers/WorkspaceManager';
 export { ToolsBase } from './tools/ToolsBase';

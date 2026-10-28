@@ -49,3 +49,24 @@ export function writeDockLayout(layout: PersistedDockLayout): void {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(layout)); }
   catch (error) { console.warn('No se pudo guardar la disposición de paneles:', error); }
 }
+
+/** Removes saved customizations for one workspace, preserving all other workspaces. */
+export function resetDockLayout(
+  workspaceId?: string,
+  currentLayout?: PersistedDockLayout,
+): PersistedDockLayout {
+  if (!workspaceId) return resetAllDockLayouts();
+  const layout = currentLayout ?? readDockLayout();
+  const workspaces = { ...layout.workspaces };
+  delete workspaces[workspaceId];
+  const nextLayout: PersistedDockLayout = { version: 1, workspaces };
+  writeDockLayout(nextLayout);
+  return nextLayout;
+}
+
+/** Deletes all saved customizations. Kept for migrations and explicit global resets. */
+function resetAllDockLayouts(): PersistedDockLayout {
+  const defaults = emptyDockLayout();
+  writeDockLayout(defaults);
+  return defaults;
+}

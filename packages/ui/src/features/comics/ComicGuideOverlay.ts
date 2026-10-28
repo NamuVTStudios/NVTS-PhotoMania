@@ -1,4 +1,5 @@
 import { calculatePrintGuideRects, millimetresToPixels, type PrintBoundsMm } from '@nvts/templates';
+import { symmetryManager, type SymmetryAxis } from '../../managers/SymmetryManager';
 
 export interface ComicGuideOptions {
   dpi: number;
@@ -13,6 +14,8 @@ export interface ComicGuideOptions {
   symmetryAxes: number;
   symmetryCenterX: number;
   symmetryCenterY: number;
+  symmetryVerticalAxis?: boolean;
+  symmetryHorizontalAxis?: boolean;
 }
 
 export const DEFAULT_COMIC_GUIDE_OPTIONS: ComicGuideOptions = {
@@ -100,8 +103,29 @@ function drawSymmetry(context: CanvasRenderingContext2D, rect: { width: number; 
   context.strokeStyle = '#29a66b';
   context.lineWidth = 1;
   context.setLineDash([8, 5]);
-  for (let index = 0; index < axes; index += 1) drawSymmetryAxis(context, centerX, centerY, radius, index / axes * Math.PI);
+  drawConfiguredSymmetryAxes(context, options, centerX, centerY, radius, axes);
   context.setLineDash([]);
+}
+
+function drawConfiguredSymmetryAxes(
+  context: CanvasRenderingContext2D,
+  options: ComicGuideOptions,
+  centerX: number,
+  centerY: number,
+  radius: number,
+  axes: number,
+): void {
+  if (options.symmetryVerticalAxis === undefined && options.symmetryHorizontalAxis === undefined) {
+    return drawLegacySymmetryAxes(context, centerX, centerY, radius, axes);
+  }
+  if (options.symmetryHorizontalAxis) drawSymmetryAxis(context, centerX, centerY, radius, 0);
+  if (options.symmetryVerticalAxis) drawSymmetryAxis(context, centerX, centerY, radius, Math.PI / 2);
+}
+
+function drawLegacySymmetryAxes(context: CanvasRenderingContext2D, centerX: number, centerY: number, radius: number, axes: number): void {
+  for (let index = 0; index < axes; index += 1) {
+    drawSymmetryAxis(context, centerX, centerY, radius, index / axes * Math.PI);
+  }
 }
 
 function drawSymmetryAxis(context: CanvasRenderingContext2D, x: number, y: number, radius: number, angle: number): void {
@@ -128,17 +152,21 @@ export function createPrintCanvasSize(page: PrintBoundsMm, dpi: number): { width
 export class ComicGuideOverlayController {
   private readonly overlay: HTMLCanvasElement;
   private readonly guidesButton: HTMLButtonElement;
-  private readonly symmetryButton: HTMLButtonElement;
+  private readonly verticalSymmetryButton: HTMLButtonElement;
+  private readonly horizontalSymmetryButton: HTMLButtonElement;
   private showGuides = false;
-  private showSymmetry = false;
+  private showSymmetry = symmetryManager.isEnabled();
   private readonly observer: MutationObserver;
 
   constructor(private readonly root: HTMLElement, private readonly sourceCanvas: HTMLCanvasElement) {
     this.overlay = this.createOverlay();
     this.guidesButton = this.requireButton('#toggle-comic-guides');
-    this.symmetryButton = this.requireButton('#toggle-comic-symmetry');
+    this.verticalSymmetryButton = this.requireButton('#toggle-comic-symmetry-vertical');
+    this.horizontalSymmetryButton = this.requireButton('#toggle-comic-symmetry-horizontal');
+    this.syncSymmetryButtons();
     this.guidesButton.addEventListener('click', () => this.toggleGuides());
-    this.symmetryButton.addEventListener('click', () => this.toggleSymmetry());
+    this.verticalSymmetryButton.addEventListener('click', () => this.toggleSymmetryAxis('vertical'));
+    this.horizontalSymmetryButton.addEventListener('click', () => this.toggleSymmetryAxis('horizontal'));
     this.observer = new MutationObserver(() => this.syncCanvasView());
     this.observer.observe(this.sourceCanvas, { attributes: true, attributeFilter: ['style', 'width', 'height'] });
     new ResizeObserver(() => this.syncCanvasView()).observe(this.sourceCanvas.parentElement!);
@@ -165,10 +193,17 @@ export class ComicGuideOverlayController {
     this.redraw();
   }
 
-  private toggleSymmetry(): void {
-    this.showSymmetry = !this.showSymmetry;
-    this.symmetryButton.setAttribute('aria-pressed', String(this.showSymmetry));
+  private toggleSymmetryAxis(axis: SymmetryAxis): void {
+    symmetryManager.toggleAxis(axis);
+    this.showSymmetry = symmetryManager.isEnabled();
+    this.syncSymmetryButtons();
     this.redraw();
+  }
+
+  private syncSymmetryButtons(): void {
+    const settings = symmetryManager.getSettings();
+    this.verticalSymmetryButton.setAttribute('aria-pressed', String(settings.verticalAxis));
+    this.horizontalSymmetryButton.setAttribute('aria-pressed', String(settings.horizontalAxis));
   }
 
   private syncCanvasView(): void {
@@ -201,6 +236,7 @@ export class ComicGuideOverlayController {
       topMarginMm: 5,
       bottomMarginMm: 5,
     };
+    const symmetry = symmetryManager.getSettings();
     drawComicGuideOverlay(this.overlay, {
       ...DEFAULT_COMIC_GUIDE_OPTIONS,
       dpi,
@@ -211,6 +247,10 @@ export class ComicGuideOverlayController {
       showMargins: this.showGuides,
       showSymmetry: this.showSymmetry,
       symmetryAxes: 2,
+      symmetryCenterX: symmetry.centerX,
+      symmetryCenterY: symmetry.centerY,
+      symmetryVerticalAxis: symmetry.verticalAxis,
+      symmetryHorizontalAxis: symmetry.horizontalAxis,
     });
   }
 }

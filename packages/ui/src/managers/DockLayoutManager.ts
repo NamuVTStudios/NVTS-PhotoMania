@@ -3,6 +3,7 @@ import { uiIcon } from '../components/ShellTemplates';
 import {
   readDockLayout,
   writeDockLayout,
+  resetDockLayout,
   type DockablePanelId,
   type PanelSavedState,
   type PersistedDockLayout,
@@ -41,6 +42,7 @@ export interface DockLayoutController {
   saveCurrentWorkspace(): void;
   applyWorkspace(workspace: string): void;
   refreshVisibility(): void;
+  resetWorkspace(workspace: string): void;
   save(): void;
 }
 
@@ -88,7 +90,7 @@ export function createDockLayoutManager(root: HTMLElement, initialWorkspace: str
 }
 
 function createEmptyDockController(): DockLayoutController {
-  return { saveCurrentWorkspace() {}, applyWorkspace() {}, refreshVisibility() {}, save() {} };
+  return { saveCurrentWorkspace() {}, applyWorkspace() {}, refreshVisibility() {}, resetWorkspace() {}, save() {} };
 }
 
 /** Owns dock state; individual interactions are separated into small methods. */
@@ -706,6 +708,10 @@ class DockLayoutManagerImpl implements DockLayoutController {
     this.persistToStorage();
   }
 
+  resetWorkspace(workspace: string): void {
+    this.persisted = resetDockLayout(workspace, this.persisted);
+  }
+
   private persistToStorage(): void {
     writeDockLayout(this.persisted);
   }
@@ -776,7 +782,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
 
   private resetWorkspaceToPreset(): void {
     const presetOrder = this.capturePresetOrder();
-    for (const item of this.items.values()) this.dockItemIfFloating(item);
+    for (const item of this.items.values()) this.resetPanelGeometry(item);
     this.order = [...this.items.values()]
       .sort((a, b) => (presetOrder.get(a.id) ?? VALID_IDS.indexOf(a.id)) - (presetOrder.get(b.id) ?? VALID_IDS.indexOf(b.id)))
       .map((item) => item.id);
@@ -785,6 +791,13 @@ class DockLayoutManagerImpl implements DockLayoutController {
     this.setTimelineDockHeight(260);
     this.dock.classList.remove('panels-hidden');
     this.workspaceElement.classList.remove('panels-hidden');
+  }
+
+  private resetPanelGeometry(item: PanelItem): void {
+    this.dockItemIfFloating(item);
+    item.slot.style.height = `${item.defaultHeight}px`;
+    item.slot.hidden = item.panel.hidden;
+    item.panel.style.order = '';
   }
 
   private dockItemIfFloating(item: PanelItem): void {
@@ -804,8 +817,9 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private getPanelCssOrder(item: PanelItem): string {
-    if (item.floating) return item.panel.style.order;
-    return item.slot.style.order;
+    const slotOrder = item.slot.style.order;
+    if (slotOrder) return slotOrder;
+    return item.panel.style.order;
   }
 
   private applyDefaultDockOrder(): void {

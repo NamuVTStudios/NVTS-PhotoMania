@@ -44,7 +44,7 @@ test('preserva cierre de polígonos, manejadores Bezier y transformaciones', () 
 
   assert.match(polygon, /Z"/);
   assert.match(bezier, / C 5 8 15 2 20 10/);
-  assert.match(bezier, /rotate\(45 30 35\)/);
+  assert.match(bezier, /rotate\(45 10 5\)/);
 });
 
 test('escapa texto y valores de color antes de insertarlos en SVG', () => {

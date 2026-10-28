@@ -197,16 +197,46 @@ export abstract class AppSamplingFeatures extends AppDrawingFeatures {
   protected pickColorAt(x: number, y: number): void {
       const layer = this.active();
       if (!layer) return;
-      let rgba: Uint8Array | null = null;
-      if (this.brush.sampleMerged) {
-        const one = this.compositeSamplePixel(x, y); rgba = one;
-      } else {
-        rgba = this.readActiveLayerPixel(layer, x, y);
-      }
+      const rgba = this.sampleColorArea(layer, Math.round(x), Math.round(y));
       if (!rgba) { this.q<HTMLElement>('#status').textContent = 'No se pudo tomar el color de esta capa.'; return; }
       this.brush.rgb = [rgba[0], rgba[1], rgba[2]];
       this.renderToolOptions(); this.syncToolbarProps();
       this.q<HTMLElement>('#status').textContent = `Color seleccionado ${this.foregroundHex()}`;
+    }
+
+  protected sampleColorArea(layer: LayerNode, centerX: number, centerY: number): Uint8Array | null {
+      const size = this.brush.sampleRadius;
+      const radius = Math.floor(size / 2);
+      const startX = Math.max(0, centerX - radius);
+      const startY = Math.max(0, centerY - radius);
+      const endX = Math.min(this.ctl.doc.width - 1, centerX + radius);
+      const endY = Math.min(this.ctl.doc.height - 1, centerY + radius);
+      const totals = [0, 0, 0];
+      let samples = 0;
+      const width = endX - startX + 1;
+      const height = endY - startY + 1;
+      const totalPixels = width * height;
+      for (let index = 0; index < totalPixels; index++) {
+        const x = startX + (index % width);
+        const y = startY + Math.floor(index / width);
+        const sample = this.readColorSample(layer, x, y);
+        samples += this.accumulateSampleColor(totals, sample);
+      }
+      if (samples === 0) return null;
+      return new Uint8Array([Math.round(totals[0] / samples), Math.round(totals[1] / samples), Math.round(totals[2] / samples), 255]);
+    }
+
+  protected accumulateSampleColor(totals: number[], sample: Uint8Array | null): number {
+      if (!sample || sample[3] === 0) return 0;
+      totals[0] += sample[0];
+      totals[1] += sample[1];
+      totals[2] += sample[2];
+      return 1;
+    }
+
+  protected readColorSample(layer: LayerNode, x: number, y: number): Uint8Array | null {
+      if (this.brush.sampleMerged) return this.compositeSamplePixel(x, y);
+      return this.readActiveLayerPixel(layer, x, y);
     }
 
   protected readActiveLayerPixel(layer: LayerNode, x: number, y: number): Uint8Array | null {

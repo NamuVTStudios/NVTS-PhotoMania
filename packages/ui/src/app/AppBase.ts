@@ -7,6 +7,7 @@ import { type ColorizeStroke, type FilterKind, type LayerMask, type LayerType, t
 import { ComicProjectManager } from '../managers/ComicProjectManager';
 import { DocumentLifecycleManager } from '../managers/DocumentLifecycleManager';
 import { ToolManager, type ToolId } from '../managers/ToolManager';
+import type { VectorDrawingToolId } from '../tools/ToolsBase';
 import { WorkspaceManager } from '../managers/WorkspaceManager';
 import type { ComicConfig, ComicPageEntry } from '../features/comics/types';
 import { type LayerEffectsPanelController } from '../panels/LayerEffectsPanel';
@@ -18,7 +19,7 @@ import type { WorkspaceDefinition, WorkspaceId } from '../workspaces';
 import { readComicConfig } from './AppUtilities';
 
 export type Tool = ToolId;
-export type ToolSettings = { size: number; opacity: number; hardness: number; spacing: number; smoothing: number; tolerance: number; contiguous: boolean; sampleMerged: boolean; shapeFill: boolean; lineCap: CanvasLineCap; lineJoin: CanvasLineJoin };
+export type ToolSettings = { size: number; opacity: number; hardness: number; spacing: number; smoothing: number; tolerance: number; contiguous: boolean; sampleMerged: boolean; sampleRadius: 1 | 3 | 5; shapeFill: boolean; shapeCornerRadius: number; polygonSides: number; starPoints: number; spiralTurns: number; lineCap: CanvasLineCap; lineJoin: CanvasLineJoin; gradientType: 'linear' | 'radial'; gradientReverse: boolean; panSensitivity: number; zoomIncrement: number; vectorKeepAspectRatio: boolean };
 export type FillOperation = {
   width: number; height: number; original: Uint8Array; reference: Uint8Array; seedX: number; seedY: number;
   seedColor: readonly [number, number, number, number]; tolerance: number; color: readonly [number, number, number];
@@ -60,8 +61,10 @@ export abstract class AppBase {
   protected comicSplitDistance = 48;
   protected textSettings: TextToolSettings = { fontFamily: 'Arial', fontSize: 64, style: 'normal', color: '#e03030', align: 'left', lineHeight: 1.2, letterSpacing: 0, strokeColor: '#000000', strokeWidth: 0, backgroundColor: 'transparent' };
   protected vectorDirectSelectedId: string | null = null;
+  protected vectorDrawGesture: { layerId: string; id: string; tool: VectorDrawingToolId; startPoint: { x: number; y: number }; currentPoint: { x: number; y: number }; points: Array<{ x: number; y: number }> } | null = null;
+  protected pixelShapePoints: Array<{ x: number; y: number }> = [];
   protected vectorGesture: { layerId: string; shapeId: string; mode: 'move' | 'resize'; startPoint: { x: number; y: number }; original: VectorShape; latest: VectorShape; moved: boolean } | null = null;
-  protected brush: ToolSettings & { rgb: [number, number, number] } = { rgb: [224, 48, 48], size: 24, opacity: 100, hardness: 80, spacing: 15, smoothing: 0, tolerance: 24, contiguous: true, sampleMerged: false, shapeFill: false, lineCap: 'round', lineJoin: 'round' };
+  protected brush: ToolSettings & { rgb: [number, number, number] } = { rgb: [224, 48, 48], size: 24, opacity: 100, hardness: 80, spacing: 15, smoothing: 0, tolerance: 24, contiguous: true, sampleMerged: false, sampleRadius: 1, shapeFill: false, shapeCornerRadius: 20, polygonSides: 6, starPoints: 5, spiralTurns: 4, lineCap: 'round', lineJoin: 'round', gradientType: 'linear', gradientReverse: false, panSensitivity: 100, zoomIncrement: 1.1, vectorKeepAspectRatio: false };
   protected stroke: StrokeSession | null = null;
   protected strokeLayer: ReturnType<DocumentController['layerPixels']> = null;
   protected strokeTool: Tool | null = null;

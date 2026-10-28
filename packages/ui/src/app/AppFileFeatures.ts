@@ -4,6 +4,7 @@ import { DocumentController, type LayerNode } from '@nvts/document-model';
 import { readPreferences } from '../panels/PreferencesPanel';
 import { documentFormats, openFromDisk, saveToDisk, rememberRecentProject, supportsFileSystemAccess } from '@nvts/storage';
 import type { Tool } from './AppBase';
+import { isPixelShapeTool } from '../tools/ToolsBase';
 import { documentNameFromFile } from './AppUtilities';
 
 export class AppFileFeatures extends AppSamplingFeatures {
@@ -85,7 +86,11 @@ export class AppFileFeatures extends AppSamplingFeatures {
       if (e && this.shapeStart && tool === 'gradient') { this.commitGradient(this.shapeStart, this.toDoc(e)); return; }
       if (e && this.shapeStart && (tool === 'line' || tool === 'rectangle' || tool === 'ellipse')) {
         this.commitShape(this.shapeStart, this.toDoc(e), tool);
+        return;
       }
+      if (!e || !this.shapeStart || !isPixelShapeTool(tool)) return;
+      if (tool === 'pixel-polyline') this.onPointerMove(e, true);
+      this.commitShape(this.shapeStart, this.toDoc(e), tool, this.pixelShapePoints);
     }
 
   protected fail(e: unknown): void {

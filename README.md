@@ -101,17 +101,17 @@ The refactoring is incremental: modules that only define data, render a view, or
 
 - **Document templates:** the 36 document presets (social posts/stories, screen sizes, A4, US/European comics, manga/manhwa, animation, and UV/2D textures) are maintained as individual modules in the shared `@nvts/templates` workspace package so other NVTS apps can reuse them. Related print presets support optional `extendsId` inheritance; `resolveTemplateInheritance` resolves parent fields, merges print metadata, and rejects missing parents or cycles before the catalog is exposed.
 - **Canvas and navigation:** fit-to-window view, zoom with controls or Ctrl/Meta + mouse wheel, panning with the Hand tool or Space + drag, and responsive canvas sizing.
-- **Drawing tools:** brush, eraser, clone stamp, eyedropper, line, rectangle, ellipse, bucket fill, text, vector selection, and a comic frame/panel tool. Clone Stamp uses `Alt + click` to set the source point, then samples only the source patch needed for each dab and paints into the selected paint layer. Same-layer cloning preserves original snapshots only for touched 256×256 tiles, with a 64 MiB per-stroke guard. Comic mode creates a full-page outer frame on click or individual rectangular panels by dragging; both are editable vector shapes and participate in document history. The brush exposes size, opacity, hardness, spacing, and smoothing controls; the clone stamp reuses size/opacity controls; the comic tool exposes frame/panel/split mode, border width, one-or-two straight split lines, and the spacing between parallel dividers. Tool and vector-shape icons are individual SVG assets in `apps/web/src/icons/tools/`. Menus, the welcome screen, timeline controls, comic manager, filter/effect panels, and dialog close buttons use the collection of 95 SVG assets in `apps/web/public/icons/ui/`; CSS masks inherit the active text color and remain legible in both themes. Google Drive and Dropbox display their SVG logos but remain marked as future integrations until their cloud APIs are implemented.
+- **Drawing tools:** brush, eraser, clone stamp, eyedropper, line, rectangle, ellipse, bucket fill, text, gradient, smudge, liquify, vector selection, a comic frame/panel tool, editable vector rectangle, rounded rectangle, ellipse, line, Bézier pen, polygon, star, freehand, polyline and spiral, plus rasterized pixel counterparts for rounded rectangle, polyline, Bézier curve, polygon, star and spiral. The existing pixel line, rectangle, ellipse and brush also cover the matching simple vector forms. Clone Stamp uses `Alt + click` to set the source point, then samples only the source patch needed for each dab and paints into the selected paint layer. Same-layer cloning preserves original snapshots only for touched 256×256 tiles, with a 64 MiB per-stroke guard. Comic mode creates a full-page outer frame on click or individual rectangular panels by dragging; both are editable vector shapes and participate in document history. The brush exposes size, opacity, hardness, spacing, and smoothing controls; the clone stamp reuses size/opacity controls; the comic tool exposes frame/panel/split mode, border width, one-or-two straight split lines, and the spacing between parallel dividers. Tool and vector-shape icons are individual SVG assets in `apps/web/src/icons/tools/`. Menus, the welcome screen, timeline controls, comic manager, filter/effect panels, and dialog close buttons use the collection of 95 SVG assets in `apps/web/public/icons/ui/`; CSS masks inherit the active text color and remain legible in both themes. Google Drive and Dropbox display their SVG logos but remain marked as future integrations until their cloud APIs are implemented.
 - **Non-destructive layer masks:** affine transform masks, colorization masks with editable color strokes, filter masks with per-layer filter stacks, and style masks. The layer-style editor supports additional independent instances of Stroke, Outer Glow, Drop Shadow, and Bevel/Emboss, each with its own parameters; all instances are retained in the native document format and included in rendering. Transform, colorization, and filter masks can be created from **Layers → New Layer** in the Layers panel; a `Máscara de estilos` is created automatically when layer styles are applied. The mask disclosure section keeps selected-mask controls available, and mask metadata is saved in `.nvtsphoto`. Colorization currently uses a line-barrier region fill and is limited to 4 million document pixels. Filter masks apply to the entire layer; every filter entry can be opened and edited in the shared Filters window. Style masks can be enabled/disabled and reopened without destructive pixel changes. Painted grayscale coverage and advanced warp transforms are not implemented yet.
 - **Layer model:** paint, filter, fill, file/image, vector, text, and group layers. Layers support names, order, visibility, lock state, opacity, blend mode, duplication, deletion, nested groups, and thumbnails.
 - **History:** pixel edits use the Wasm tile history; document structure and property changes are recorded by the TypeScript `DocumentController`. Undo/redo shortcuts are `Ctrl/Meta+Z`, `Ctrl/Meta+Shift+Z`, and `Ctrl/Meta+Y`. The history panel shows an estimated memory total, including snapshots retained during an active brush/eraser stroke.
 - **Performance and large documents:** brush/eraser dabs are processed in short animation-frame batches (up to 64 dabs or roughly 4 ms per batch) so long pointer paths yield to the browser. When non-destructive effects are present, local edits invalidate only affected tiles plus filter padding; effect changes force a full invalidation. Effect tiles are rendered incrementally (up to eight tiles or about 6 ms per frame) so initial large filtered documents can appear progressively rather than monopolizing one frame. On a layer path with a transform/colorization mask that requires global recomposition, the filtered preview is recomputed after the pointer is released instead of restarting a full-canvas render during every dab. The engine reuses bounded read/write scratch buffers, the renderer avoids an extra GPU-upload copy for ordinary `ArrayBuffer` views, and pixel plus structural history share the configured memory budget. The editor still runs on the main thread; a Worker-based engine, streaming file I/O and fully asynchronous imports/exports remain future work.
 - **Text:** a text layer stores editable text and typography metadata along with a raster preview. The top tool bar contains font, style, size, and color; advanced options contain alignment, line height, letter spacing, stroke, and background controls.
-- **Vector layers:** editable shape metadata, object list, move/resize interactions, shape editing controls, and SVG export. The displayed compositor image is currently rasterized; this is not yet a feature-complete vector illustration package.
+- **Vector layers:** editable shape metadata, object list, move/resize interactions, shape editing controls, and SVG export. Selection bounds use the actual path/node geometry and Bézier handles, so the selection frame and rotation pivot stay aligned with the object. The displayed compositor image is currently rasterized; this is not yet a feature-complete vector illustration package.
 - **Filters and layer appearance:** 17 filters covering grayscale, invert, sepia, blur, brightness, contrast, saturation, hue rotation, sharpen, posterize, threshold, duotone, solarize, pixelation, edge detection, grain, and vignette. Filter layers render non-destructively in the current UI renderer path; layer opacity and blend modes are available as layer properties.
 - **Layer Styles status:** the panel exposes non-destructive Stroke, Outer Glow, Drop Shadow, and Bevel/Emboss controls. Their parameters are represented in the shared layer model and serialized in `.nvtsphoto`; visual regression, undo/redo, and full production-build verification remain pending. Color Overlay and Gradient Overlay are not part of this implementation slice. Jira is the source of truth for implementation tasks and statuses; the GDD defines product scope and the TDD records the technical design and verification strategy.
 - **Workspaces:** General, Digital Illustration, Vector Illustration, Image Manipulation, Comics, Storyboarding, and Animation, with a saved workspace choice.
-- **Panels and appearance:** modular Layers, History, Advanced Tool Options, Comic Manager, and supporting filter/vector/effects/plugin/preferences panels; light and dark themes; per-panel visibility under **View → Panels**; `Tab` toggles the panel zone. Dock panels can be reordered by dragging their headers, detached into floating windows, re-docked, resized individually, and the width of the whole panel zone can be dragged. Layouts are saved separately for each workspace.
+- **Panels and appearance:** modular Layers, History, Advanced Tool Options, Comic Manager, and supporting filter/vector/effects/plugin/preferences panels; light and dark themes; per-panel visibility under **View → Panels**; `Tab` toggles the panel zone. Dock panels can be reordered by dragging their headers, detached into floating windows, re-docked, resized individually, and the width of the whole panel zone can be dragged. Layouts are saved separately for each workspace. **View → Restore workspace defaults** clears saved layout overrides so each workspace returns to its code-defined panel arrangement.
 - **Projects:** create, open, Save, Save As, `.nvtsphoto` serialization, and optional recent-project snapshots persisted in IndexedDB according to Preferences.
 - **Linked image layers:** the image data is embedded in the project. Where the browser supports file handles, a local link ID and source metadata can also be retained so the application can offer a manual refresh/relink flow. The external file is not continuously watched.
 
@@ -243,15 +243,23 @@ NVTS-PhotoMania/
 │       │   │       ├── fill-layer.svg
 │       │   │       ├── fill.svg
 │       │   │       ├── filter-layer.svg
+│       │   │       ├── gradient.svg
 │       │   │       ├── group-layer-open.svg
 │       │   │       ├── group-layer.svg
 │       │   │       ├── hand.svg
 │       │   │       ├── layers.svg
 │       │   │       ├── line.svg
+│       │   │       ├── liquify.svg
 │       │   │       ├── lock.svg
 │       │   │       ├── move-down.svg
 │       │   │       ├── move-up.svg
 │       │   │       ├── paint-layer.svg
+│       │   │       ├── pixel-bezier.svg
+│       │   │       ├── pixel-polygon.svg
+│       │   │       ├── pixel-polyline.svg
+│       │   │       ├── pixel-rounded-rectangle.svg
+│       │   │       ├── pixel-spiral.svg
+│       │   │       ├── pixel-star.svg
 │       │   │       ├── plus.svg
 │       │   │       ├── rectangle.svg
 │       │   │       ├── shape-bezier.svg
@@ -265,12 +273,23 @@ NVTS-PhotoMania/
 │       │   │       ├── shape-spiral.svg
 │       │   │       ├── shape-star.svg
 │       │   │       ├── shape-text.svg
+│       │   │       ├── smudge.svg
 │       │   │       ├── style-mask.svg
 │       │   │       ├── text-layer.svg
 │       │   │       ├── text.svg
 │       │   │       ├── unlock.svg
+│       │   │       ├── vector-ellipse.svg
+│       │   │       ├── vector-freehand.svg
 │       │   │       ├── vector-layer.svg
+│       │   │       ├── vector-line.svg
+│       │   │       ├── vector-pen.svg
+│       │   │       ├── vector-polygon.svg
+│       │   │       ├── vector-polyline.svg
+│       │   │       ├── vector-rectangle.svg
+│       │   │       ├── vector-rounded-rectangle.svg
 │       │   │       ├── vector-select.svg
+│       │   │       ├── vector-spiral.svg
+│       │   │       ├── vector-star.svg
 │       │   │       ├── zoom-fit.svg
 │       │   │       ├── zoom-in.svg
 │       │   │       └── zoom-out.svg
@@ -321,8 +340,6 @@ NVTS-PhotoMania/
 │   ├── renderer/
 │   │   ├── shaders/
 │   │   │   └── layer.wgsl
-│   │   ├── src/
-│   │   │   └── adapters/
 │   │   ├── webgl2/
 │   │   │   └── WebGL2Renderer.ts
 │   │   ├── webgpu/
@@ -360,21 +377,34 @@ NVTS-PhotoMania/
 │   │   ├── src/
 │   │   │   ├── 4k-uhd.ts
 │   │   │   ├── a4.ts
+│   │   │   ├── aizoban.ts
 │   │   │   ├── animation-2d.ts
 │   │   │   ├── animation-vertical.ts
 │   │   │   ├── animation-web.ts
+│   │   │   ├── bunkoban.ts
+│   │   │   ├── comic-eu-album.ts
 │   │   │   ├── comic-eu.ts
 │   │   │   ├── comic-us.ts
+│   │   │   ├── doujinshi-b5.ts
 │   │   │   ├── facebook-post.ts
 │   │   │   ├── facebook-story.ts
 │   │   │   ├── full-hd.ts
+│   │   │   ├── graphic-novel.ts
 │   │   │   ├── index.ts
+│   │   │   ├── inheritance.ts
 │   │   │   ├── instagram-post.ts
 │   │   │   ├── instagram-story.ts
+│   │   │   ├── kanzenban.ts
+│   │   │   ├── manga-b5.ts
 │   │   │   ├── manga.ts
+│   │   │   ├── manhwa-print.ts
 │   │   │   ├── manhwa.ts
+│   │   │   ├── printProfile.ts
+│   │   │   ├── shinchoban.ts
+│   │   │   ├── soshuhen.ts
 │   │   │   ├── storyboard-horizontal.ts
 │   │   │   ├── storyboard-vertical.ts
+│   │   │   ├── tankobon.ts
 │   │   │   ├── texture-2d-wide.ts
 │   │   │   ├── texture-2d.ts
 │   │   │   ├── texture-uv-4k.ts
@@ -382,6 +412,8 @@ NVTS-PhotoMania/
 │   │   │   ├── tiktok-post.ts
 │   │   │   ├── tiktok-story.ts
 │   │   │   ├── types.ts
+│   │   │   ├── webtoon-vertical.ts
+│   │   │   ├── wideban.ts
 │   │   │   └── youtube-thumb.ts
 │   │   └── package.json
 │   ├── ui/
@@ -399,13 +431,16 @@ NVTS-PhotoMania/
 │   │   │   │   ├── AppUtilities.ts
 │   │   │   │   ├── AppVectorFeatures.ts
 │   │   │   │   ├── AppWorkspaceFeatures.ts
-│   │   │   │   └── EditorStrategies.ts
+│   │   │   │   ├── EditorStrategies.ts
+│   │   │   │   ├── RasterShapeRenderer.ts
+│   │   │   │   └── VectorSelectionGeometry.ts
 │   │   │   ├── components/
 │   │   │   │   ├── EditorTemplate.ts
 │   │   │   │   ├── ShellTemplates.ts
 │   │   │   │   └── Toolbar.ts
 │   │   │   ├── features/
 │   │   │   │   └── comics/
+│   │   │   │       ├── ComicGuideOverlay.ts
 │   │   │   │       ├── createComicSplitShapes.ts
 │   │   │   │       └── types.ts
 │   │   │   ├── managers/
@@ -414,10 +449,50 @@ NVTS-PhotoMania/
 │   │   │   │   ├── ComicProjectManager.ts
 │   │   │   │   ├── DockLayoutManager.ts
 │   │   │   │   ├── DocumentLifecycleManager.ts
+│   │   │   │   ├── SymmetryManager.ts
 │   │   │   │   ├── ToolManager.ts
 │   │   │   │   ├── UIManager.ts
 │   │   │   │   └── WorkspaceManager.ts
 │   │   │   ├── panels/
+│   │   │   │   ├── advanced-tool-options/
+│   │   │   │   │   ├── tools/
+│   │   │   │   │   │   ├── BrushToolOptions.ts
+│   │   │   │   │   │   ├── CloneStampToolOptions.ts
+│   │   │   │   │   │   ├── ComicPanelToolOptions.ts
+│   │   │   │   │   │   ├── EllipseToolOptions.ts
+│   │   │   │   │   │   ├── EraserToolOptions.ts
+│   │   │   │   │   │   ├── EyedropperToolOptions.ts
+│   │   │   │   │   │   ├── FillToolOptions.ts
+│   │   │   │   │   │   ├── GradientToolOptions.ts
+│   │   │   │   │   │   ├── HandToolOptions.ts
+│   │   │   │   │   │   ├── LineToolOptions.ts
+│   │   │   │   │   │   ├── LiquifyToolOptions.ts
+│   │   │   │   │   │   ├── PixelBezierToolOptions.ts
+│   │   │   │   │   │   ├── PixelPolygonToolOptions.ts
+│   │   │   │   │   │   ├── PixelPolylineToolOptions.ts
+│   │   │   │   │   │   ├── PixelRoundedRectangleToolOptions.ts
+│   │   │   │   │   │   ├── PixelSpiralToolOptions.ts
+│   │   │   │   │   │   ├── PixelStarToolOptions.ts
+│   │   │   │   │   │   ├── RasterShapeToolSettings.ts
+│   │   │   │   │   │   ├── RectangleToolOptions.ts
+│   │   │   │   │   │   ├── SmudgeToolOptions.ts
+│   │   │   │   │   │   ├── TextToolOptions.ts
+│   │   │   │   │   │   ├── VectorEllipseToolOptions.ts
+│   │   │   │   │   │   ├── VectorFreehandToolOptions.ts
+│   │   │   │   │   │   ├── VectorLineToolOptions.ts
+│   │   │   │   │   │   ├── VectorPenToolOptions.ts
+│   │   │   │   │   │   ├── VectorPolygonToolOptions.ts
+│   │   │   │   │   │   ├── VectorPolylineToolOptions.ts
+│   │   │   │   │   │   ├── VectorRectangleToolOptions.ts
+│   │   │   │   │   │   ├── VectorRoundedRectangleToolOptions.ts
+│   │   │   │   │   │   ├── VectorSelectToolOptions.ts
+│   │   │   │   │   │   ├── VectorShapeToolSettings.ts
+│   │   │   │   │   │   ├── VectorSpiralToolOptions.ts
+│   │   │   │   │   │   └── VectorStarToolOptions.ts
+│   │   │   │   │   ├── AdvancedToolOptionsController.ts
+│   │   │   │   │   ├── shared.ts
+│   │   │   │   │   ├── ToolOptionsRegistry.ts
+│   │   │   │   │   └── types.ts
 │   │   │   │   ├── AdvancedToolOptionsPanel.ts
 │   │   │   │   ├── AnimationTimelinePanel.ts
 │   │   │   │   ├── ComicManagerPanel.ts
@@ -481,9 +556,11 @@ NVTS-PhotoMania/
 ├── tests/
 │   ├── helpers/
 │   │   └── vite-test-server.mjs
+│   ├── advanced-tool-options.test.mjs
 │   ├── blend-mode.test.mjs
 │   ├── brush-stamp-processor.test.mjs
 │   ├── comic-split-geometry.test.mjs
+│   ├── comic-templates.test.mjs
 │   ├── dock-editor-panel-preservation.test.mjs
 │   ├── dock-layout-storage.test.mjs
 │   ├── document-format-adapters.test.mjs
@@ -492,11 +569,16 @@ NVTS-PhotoMania/
 │   ├── filter-tile-layout.test.mjs
 │   ├── history-and-format.test.mjs
 │   ├── layer-mask-cloning.test.mjs
+│   ├── layer-style-stacks.test.mjs
 │   ├── layer-styles-format.test.mjs
 │   ├── layer-tree-queries.test.mjs
 │   ├── mask-format.test.mjs
 │   ├── panel-base.test.mjs
 │   ├── plugin-storage.test.mjs
+│   ├── raster-shape-renderer.test.mjs
+│   ├── symmetry-manager.test.mjs
+│   ├── template-inheritance.test.mjs
+│   ├── vector-selection-geometry.test.mjs
 │   ├── vector-shape-cloning.test.mjs
 │   ├── vector-svg-export.test.mjs
 │   └── wasm-heap-export.test.mjs
@@ -661,3 +743,4 @@ The **Storyboarding** workspace exposes the storyboard panel and the **Animation
 
 
 Comic frame splitting creates straight dividers from the gesture start/end points, supports one or two parallel lines with adjustable spacing, and opens the full-page outer frame border where the dividers meet it when a matching frame rectangle exists. Run `pnpm audit:control-flow` to check maintained source files for nested control-flow statements; generated WebAssembly artifacts and installed dependencies are excluded.
+

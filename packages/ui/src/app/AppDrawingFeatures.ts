@@ -3,10 +3,15 @@ import { AppEventFeatures } from './AppEventFeatures';
 import { type StampOperation } from '@nvts/image-processing';
 import { CloneStampStrategy, ContiguousFillStrategy, EraserStrategy, EyedropperStrategy, GlobalFillStrategy, PaintBrushStrategy, TextCreationStrategy, VectorSelectionStrategy, type BrushStrategy, type CloneStampOperation, type ImmediateToolStrategy } from './EditorStrategies';
 import { containsLayerType, StrokeSession, runEdit, type LayerNode } from '@nvts/document-model';
-import { isPixelLayerType, type VectorShape } from '@nvts/shared';
+import { cloneVectorShapes, isPixelLayerType, type VectorShape } from '@nvts/shared';
+import { renderVectorShape } from '@nvts/vector';
+import { getDocumentDisplayTransform } from './VectorSelectionGeometry';
+import { isPixelShapeTool, isVectorDrawingTool, type PixelShapeToolId, type VectorDrawingToolId } from '../tools/ToolsBase';
+import { renderRasterShape, type RasterShapeSettings } from './RasterShapeRenderer';
 import { updateHistoryMemoryIndicator } from '../panels/HistoryPanel';
 import { createComicSplitShapes as buildComicSplitShapes } from '../features/comics/createComicSplitShapes';
 import type { Tool, FillOperation, FillResult, PixelRegion, StrokeLayerPixels } from './AppBase';
+import { symmetryManager } from '../managers/SymmetryManager';
 
 const MAX_CLONE_ORIGINAL_TILE_BYTES = 64 * 1024 * 1024;
 
@@ -14,6 +19,7 @@ type ToolPreviewContext = {
   ctx: CanvasRenderingContext2D;
   start: { x: number; y: number };
   end: { x: number; y: number };
+  scale: number;
 };
 
 function nextPowerOfTwo(value: number): number {
@@ -60,13 +66,29 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
     }
 
   protected stamp(x: number, y: number): void {
-      const layer = this.strokeLayer;
-      if (!layer || !this.stroke) return;
-      const operation = this.createStampOperation(x, y);
-      if (!operation || !this.prepareStampTarget(operation.region)) return;
-      const pixels = this.readStampPixels(layer, operation.region);
-      this.applyStampToLayer(layer, operation, pixels);
+      if (!this.strokeLayer || !this.stroke) return;
+      const points = this.shouldMirrorCurrentStroke()
+        ? symmetryManager.getSymmetryPoints({ x, y }, this.ctl.doc.width, this.ctl.doc.height)
+        : [{ x, y }];
+      points.forEach((point) => this.stampAt(point.x, point.y));
     }
+
+  private shouldMirrorCurrentStroke(): boolean {
+    if (!symmetryManager.isEnabled()) return false;
+    return this.strokeTool === 'brush'
+      || this.strokeTool === 'eraser'
+      || this.strokeTool === 'smudge'
+      || this.strokeTool === 'liquify';
+  }
+
+  private stampAt(x: number, y: number): void {
+    const layer = this.strokeLayer;
+    if (!layer || !this.stroke) return;
+    const operation = this.createStampOperation(x, y);
+    if (!operation || !this.prepareStampTarget(operation.region)) return;
+    const pixels = this.readStampPixels(layer, operation.region);
+    this.applyStampToLayer(layer, operation, pixels);
+  }
 
   protected prepareStampTarget(region: PixelRegion): boolean {
       if (this.strokeTool !== 'clone-stamp' || this.cacheCloneDestinationTiles(region)) return true;
@@ -355,44 +377,74 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
     }
 
   protected commitGradient(start: { x: number; y: number }, end: { x: number; y: number }): void {
-      const layer = this.strokeLayer; if (!layer) return;
-      const width = this.ctl.doc.width; const height = this.ctl.doc.height;
-      const dx = end.x - start.x; const dy = end.y - start.y;
-      const lengthSquared = Math.max(1, dx * dx + dy * dy); const [red, green, blue] = this.brush.rgb;
+      const layer = this.strokeLayer;
+      if (!layer) return;
+      const width = this.ctl.doc.width;
+      const height = this.ctl.doc.height;
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
+      const lengthSquared = Math.max(1, dx * dx + dy * dy);
+      const [red, green, blue] = this.brush.rgb;
       const chunkHeight = 64;
-      for (let top = 0; top < height; top += chunkHeight) this.applyGradientChunk(layer, start, dx, dy, lengthSquared, red, green, blue, width, height, top, chunkHeight);
+      for (let top = 0; top < height; top += chunkHeight) {
+        this.applyGradientChunk(layer, start, dx, dy, lengthSquared, red, green, blue, width, height, top, chunkHeight);
+      }
       this.scheduleRefreshForRegion({ left: 0, top: 0, width, height });
     }
 
   private applyGradientChunk(layer: NonNullable<StrokeLayerPixels>, start: { x: number; y: number }, dx: number, dy: number, lengthSquared: number, red: number, green: number, blue: number, width: number, height: number, top: number, chunkHeight: number): void {
-      const rows = Math.min(chunkHeight, height - top); const bytes = width * rows * 4;
-      const original = new Uint8Array(bytes); const pixels = new Uint8Array(bytes);
+      const rows = Math.min(chunkHeight, height - top);
+      const bytes = width * rows * 4;
+      const original = new Uint8Array(bytes);
+      const pixels = new Uint8Array(bytes);
       layer.readRectToJS(0, top, width, rows, original);
-      for (let localY = 0; localY < rows; localY++) this.applyGradientRow(pixels, original, start, dx, dy, lengthSquared, red, green, blue, width, top, localY);
+      for (let localY = 0; localY < rows; localY++) {
+        this.applyGradientRow(pixels, original, start, dx, dy, lengthSquared, red, green, blue, width, top, localY);
+      }
       layer.writeRectFromJS(0, top, width, rows, pixels);
     }
 
   private applyGradientRow(pixels: Uint8Array, original: Uint8Array, start: { x: number; y: number }, dx: number, dy: number, lengthSquared: number, red: number, green: number, blue: number, width: number, top: number, localY: number): void {
-      for (let x = 0; x < width; x++) this.applyGradientPixel(pixels, original, start, dx, dy, lengthSquared, red, green, blue, width, top, localY, x);
+      for (let x = 0; x < width; x++) {
+        this.applyGradientPixel(pixels, original, start, dx, dy, lengthSquared, red, green, blue, width, top, localY, x);
+      }
     }
 
   private applyGradientPixel(pixels: Uint8Array, original: Uint8Array, start: { x: number; y: number }, dx: number, dy: number, lengthSquared: number, red: number, green: number, blue: number, width: number, top: number, localY: number, x: number): void {
-      const index = (localY * width + x) * 4; const y = top + localY;
-      const t = Math.max(0, Math.min(1, ((x - start.x) * dx + (y - start.y) * dy) / lengthSquared));
-      const alpha = (1 - t) * (this.brush.opacity / 100); const oldAlpha = original[index + 3] / 255;
-      const outAlpha = alpha + oldAlpha * (1 - alpha); if (outAlpha <= 0) return;
+      const index = (localY * width + x) * 4;
+      const y = top + localY;
+      const t = this.getGradientPosition(x, y, start, dx, dy, lengthSquared);
+      const alpha = (1 - t) * (this.brush.opacity / 100);
+      const oldAlpha = original[index + 3] / 255;
+      const outAlpha = alpha + oldAlpha * (1 - alpha);
+      if (outAlpha <= 0) return;
       pixels[index] = Math.round((red * alpha + original[index] * oldAlpha * (1 - alpha)) / outAlpha);
       pixels[index + 1] = Math.round((green * alpha + original[index + 1] * oldAlpha * (1 - alpha)) / outAlpha);
       pixels[index + 2] = Math.round((blue * alpha + original[index + 2] * oldAlpha * (1 - alpha)) / outAlpha);
       pixels[index + 3] = Math.round(outAlpha * 255);
     }
 
-  protected commitShape(start: { x: number; y: number }, end: { x: number; y: number }, tool: Tool): void {
+  private getGradientPosition(x: number, y: number, start: { x: number; y: number }, dx: number, dy: number, lengthSquared: number): number {
+      const offsetX = x - start.x;
+      const offsetY = y - start.y;
+      const position = this.brush.gradientType === 'radial'
+        ? Math.sqrt(offsetX * offsetX + offsetY * offsetY) / Math.sqrt(lengthSquared)
+        : (offsetX * dx + offsetY * dy) / lengthSquared;
+      const clamped = Math.max(0, Math.min(1, position));
+      return this.brush.gradientReverse ? 1 - clamped : clamped;
+    }
+
+  protected commitShape(
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+    tool: Tool,
+    points: readonly { x: number; y: number }[] = this.pixelShapePoints,
+  ): void {
       const layer = this.strokeLayer;
       if (!layer) return;
-      const region = this.getShapeRegion(start, end);
+      const region = this.getShapeRegion(start, end, tool, points);
       if (!region) return;
-      const source = this.renderShapePixels(start, end, tool, region);
+      const source = this.renderShapePixels(start, end, tool, region, points);
       if (!source) return;
       const target = this.blendShapePixels(layer, region, source);
       if (!target) return;
@@ -411,12 +463,24 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
     this.scheduleRefreshForRegion(region);
   }
 
-  protected getShapeRegion(start: { x: number; y: number }, end: { x: number; y: number }): PixelRegion | null {
-      const padding = Math.ceil(this.brush.size / 2) + 2;
-      const left = Math.max(0, Math.floor(Math.min(start.x, end.x) - padding));
-      const top = Math.max(0, Math.floor(Math.min(start.y, end.y) - padding));
-      const right = Math.min(this.ctl.doc.width, Math.ceil(Math.max(start.x, end.x) + padding));
-      const bottom = Math.min(this.ctl.doc.height, Math.ceil(Math.max(start.y, end.y) + padding));
+  protected getShapeRegion(
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+    tool: Tool = 'rectangle',
+    points: readonly { x: number; y: number }[] = [],
+  ): PixelRegion | null {
+      const boundsPoints = tool === 'pixel-polyline' && points.length > 1 ? points : [start, end];
+      const xs = boundsPoints.map((point) => point.x);
+      const ys = boundsPoints.map((point) => point.y);
+      const strokePadding = Math.ceil(this.brush.size / 2) + 2;
+      const curvePadding = tool === 'pixel-bezier'
+        ? Math.ceil(Math.min(160, Math.hypot(end.x - start.x, end.y - start.y) * 0.24))
+        : 0;
+      const padding = strokePadding + curvePadding;
+      const left = Math.max(0, Math.floor(Math.min(...xs) - padding));
+      const top = Math.max(0, Math.floor(Math.min(...ys) - padding));
+      const right = Math.min(this.ctl.doc.width, Math.ceil(Math.max(...xs) + padding));
+      const bottom = Math.min(this.ctl.doc.height, Math.ceil(Math.max(...ys) + padding));
       const region = { left, top, width: right - left, height: bottom - top };
       return region.width > 0 && region.height > 0 ? region : null;
     }
@@ -426,13 +490,14 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       end: { x: number; y: number },
       tool: Tool,
       region: PixelRegion,
+      points: readonly { x: number; y: number }[] = [],
     ): Uint8ClampedArray | null {
       const scratch = document.createElement('canvas');
       scratch.width = region.width;
       scratch.height = region.height;
       const ctx = scratch.getContext('2d', { willReadFrequently: true });
       if (!ctx) return null;
-      this.drawShapeSource(ctx, start, end, tool, region);
+      this.drawShapeSource(ctx, start, end, tool, region, points);
       ctx.globalAlpha = 1;
       return ctx.getImageData(0, 0, region.width, region.height).data;
     }
@@ -443,6 +508,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       end: { x: number; y: number },
       tool: Tool,
       region: PixelRegion,
+      points: readonly { x: number; y: number }[] = [],
     ): void {
       ctx.clearRect(0, 0, region.width, region.height);
       ctx.globalAlpha = this.brush.opacity / 100;
@@ -455,6 +521,11 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       const y1 = start.y - region.top;
       const x2 = end.x - region.left;
       const y2 = end.y - region.top;
+      if (isPixelShapeTool(tool)) {
+        const localPoints = points.map((point) => ({ x: point.x - region.left, y: point.y - region.top }));
+        renderRasterShape(ctx, tool, { x: x1, y: y1 }, { x: x2, y: y2 }, this.getRasterShapeSettings(), localPoints);
+        return;
+      }
       if (tool === 'line') {
         ctx.beginPath();
         ctx.moveTo(x1, y1);
@@ -468,6 +539,21 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       }
       if (tool === 'ellipse') this.drawEllipseSource(ctx, x1, y1, x2, y2);
     }
+
+  private getRasterShapeSettings(): RasterShapeSettings {
+    return {
+      color: this.foregroundHex(),
+      opacity: this.brush.opacity,
+      size: this.brush.size,
+      lineCap: this.brush.lineCap,
+      lineJoin: this.brush.lineJoin,
+      shapeFill: this.brush.shapeFill,
+      shapeCornerRadius: this.brush.shapeCornerRadius,
+      polygonSides: this.brush.polygonSides,
+      starPoints: this.brush.starPoints,
+      spiralTurns: this.brush.spiralTurns,
+    };
+  }
 
   protected drawRectangleSource(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number): void {
       const x = Math.min(x1, x2);
@@ -525,6 +611,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       if (this.tool === 'clone-stamp' && event.altKey) { this.setCloneSource(point); return; }
       if (this.handleImmediateTool(point, event)) return;
       if (this.tool === 'comic-panel') { this.beginComicPanel(point, event); return; }
+      if (isVectorDrawingTool(this.tool)) { this.beginVectorDrawingGesture(point, event); return; }
       const activeLayer = this.active();
       if (activeLayer && isPixelLayerType(activeLayer.type)
         && this.ctl.isEffectivelyVisible(activeLayer.id)
@@ -924,6 +1011,92 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       : 'La capa o su grupo está oculto';
   }
 
+  private beginVectorDrawingGesture(point: { x: number; y: number }, event: PointerEvent): void {
+    const layer = this.active();
+    if (!layer || layer.type !== 'vector' || this.ctl.isEffectivelyLocked(layer.id) || !this.ctl.isEffectivelyVisible(layer.id)) {
+      this.reportVectorToolUnavailable();
+      return;
+    }
+    const startPoint = { ...point };
+    this.vectorDrawGesture = {
+      layerId: layer.id,
+      id: crypto.randomUUID(),
+      tool: this.tool as VectorDrawingToolId,
+      startPoint,
+      currentPoint: { ...startPoint },
+      points: [{ ...startPoint }],
+    };
+    this.canvas.setPointerCapture(event.pointerId);
+    this.drawVectorDrawingPreview();
+  }
+
+  private updateVectorDrawingGesture(point: { x: number; y: number }, finalPoint = false): void {
+    const gesture = this.vectorDrawGesture;
+    if (!gesture) return;
+    gesture.currentPoint = { ...point };
+    this.appendVectorFreehandPoint(gesture, point, finalPoint);
+    this.drawVectorDrawingPreview();
+  }
+
+  private appendVectorFreehandPoint(
+    gesture: NonNullable<AppDrawingFeatures['vectorDrawGesture']>,
+    point: { x: number; y: number },
+    finalPoint: boolean,
+  ): void {
+    if (gesture.tool !== 'vector-freehand' && gesture.tool !== 'vector-polyline') return;
+    const lastPoint = gesture.points[gesture.points.length - 1];
+    if (!lastPoint) { gesture.points.push({ ...point }); return; }
+    const distance = Math.hypot(point.x - lastPoint.x, point.y - lastPoint.y);
+    if (distance < 1 && !finalPoint) return;
+    gesture.points.push({ ...point });
+  }
+
+  private drawVectorDrawingPreview(): void {
+    const gesture = this.vectorDrawGesture;
+    if (!gesture) return;
+    this.updatePreviewCanvasSize();
+    const preview = this.q<HTMLCanvasElement>('#tool-preview');
+    const ctx = preview.getContext('2d');
+    if (!ctx) return;
+    this.resetPreviewContext(ctx, preview);
+    const stageRect = this.q<HTMLElement>('.canvas-stage').getBoundingClientRect();
+    const canvasRect = this.canvas.getBoundingClientRect();
+    const display = getDocumentDisplayTransform(stageRect, canvasRect, this.ctl.doc.width, this.ctl.doc.height);
+    const shape = this.createVectorShapeFromGesture(gesture.tool, gesture.startPoint, gesture.currentPoint, gesture.points, gesture.id);
+    ctx.save();
+    ctx.translate(display.left, display.top);
+    ctx.scale(display.scale, display.scale);
+    renderVectorShape(ctx, shape);
+    ctx.restore();
+  }
+
+  private finishVectorDrawingGesture(event?: PointerEvent): void {
+    const gesture = this.vectorDrawGesture;
+    if (!gesture) return;
+    if (event?.type === 'pointercancel') {
+      this.vectorDrawGesture = null;
+      this.clearToolPreview();
+      return;
+    }
+    if (event) this.updateVectorDrawingGesture(this.toDoc(event), true);
+    this.vectorDrawGesture = null;
+    this.clearToolPreview();
+    if (!this.hasMeaningfulVectorGesture(gesture)) return;
+    const layer = this.ctl.find(gesture.layerId);
+    if (!layer || layer.type !== 'vector') return;
+    const shape = this.createVectorShapeFromGesture(gesture.tool, gesture.startPoint, gesture.currentPoint, gesture.points, gesture.id);
+    const shapes = cloneVectorShapes(layer.vectorShapes);
+    shapes.push(shape);
+    this.vectorDirectSelectedId = shape.id;
+    this.commitVectorShapes(layer, shapes);
+    this.drawVectorSelectionOverlay(shape);
+    this.q<HTMLElement>('#status').textContent = `${this.vectorKindLabel(shape.kind)} vectorial creado.`;
+  }
+
+  private hasMeaningfulVectorGesture(gesture: NonNullable<AppDrawingFeatures['vectorDrawGesture']>): boolean {
+    return Math.hypot(gesture.currentPoint.x - gesture.startPoint.x, gesture.currentPoint.y - gesture.startPoint.y) > 1;
+  }
+
   protected beginPaintStroke(event: PointerEvent, point: { x: number; y: number }, layer: LayerNode): void {
       this.canvas.setPointerCapture(event.pointerId);
       this.stroke = new StrokeSession(this.ctx, layer.engineId);
@@ -936,8 +1109,9 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
         this.prepareInitialBrushDab(point);
         return;
       }
-      if (this.tool !== 'line' && this.tool !== 'rectangle' && this.tool !== 'ellipse' && this.tool !== 'gradient') return;
+      if (this.tool !== 'line' && this.tool !== 'rectangle' && this.tool !== 'ellipse' && this.tool !== 'gradient' && !isPixelShapeTool(this.tool)) return;
       this.shapeStart = { ...point, clientX: event.clientX, clientY: event.clientY };
+      this.pixelShapePoints = this.tool === 'pixel-polyline' ? [{ ...point }] : [];
       this.drawToolPreview(event);
     }
 
@@ -997,11 +1171,13 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
     }
 
   protected onPointerMove(e: PointerEvent, finalPoint = false): void {
+      if (this.vectorDrawGesture) { this.updateVectorDrawingGesture(this.toDoc(e), finalPoint); return; }
       if (this.vectorGesture) { this.updateVectorGesture(this.toDoc(e)); return; }
       if (this.comicPanelStart) { this.drawComicPanelPreview(e); return; }
       if (this.isPanning && this.panStart) {
-        this.panX = this.panStart.x + e.clientX - this.panStart.clientX;
-        this.panY = this.panStart.y + e.clientY - this.panStart.clientY;
+        const sensitivity = this.brush.panSensitivity / 100;
+        this.panX = this.panStart.x + (e.clientX - this.panStart.clientX) * sensitivity;
+        this.panY = this.panStart.y + (e.clientY - this.panStart.clientY) * sensitivity;
         this.applyCanvasView();
         return;
       }
@@ -1010,7 +1186,8 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
         return;
       }
       if (!this.stroke || !this.last || !this.strokeTool) return;
-      if (this.strokeTool === 'line' || this.strokeTool === 'rectangle' || this.strokeTool === 'ellipse' || this.strokeTool === 'gradient') {
+      if (this.strokeTool === 'pixel-polyline') this.appendPixelShapePoint(this.toDoc(e), finalPoint);
+      if (this.strokeTool === 'line' || this.strokeTool === 'rectangle' || this.strokeTool === 'ellipse' || this.strokeTool === 'gradient' || isPixelShapeTool(this.strokeTool)) {
         this.drawToolPreview(e);
         return;
       }
@@ -1131,11 +1308,11 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
     this.resetPreviewContext(ctx, preview);
     const stage = this.q<HTMLElement>('.canvas-stage').getBoundingClientRect();
     const rect = this.canvas.getBoundingClientRect();
-    const scale = Math.min(rect.width / this.ctl.doc.width, rect.height / this.ctl.doc.height);
+    const display = getDocumentDisplayTransform(stage, rect, this.ctl.doc.width, this.ctl.doc.height);
     const start = { x: this.shapeStart.clientX - stage.left, y: this.shapeStart.clientY - stage.top };
     const end = { x: e.clientX - stage.left, y: e.clientY - stage.top };
-    this.configurePreviewStroke(ctx, scale);
-    return { ctx, start, end };
+    this.configurePreviewStroke(ctx, display.scale);
+    return { ctx, start, end, scale: display.scale };
   }
 
   private resetPreviewContext(ctx: CanvasRenderingContext2D, preview: HTMLCanvasElement): void {
@@ -1158,7 +1335,40 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
     if (this.strokeTool === 'line') return this.drawLinePreview(preview);
     if (this.strokeTool === 'rectangle') return this.drawRectanglePreview(preview);
     if (this.strokeTool === 'ellipse') return this.drawEllipsePreview(preview);
-    if (this.strokeTool === 'gradient') return this.drawLinePreview(preview);
+    if (this.strokeTool === 'gradient') return this.drawGradientPreview(preview);
+    if (isPixelShapeTool(this.strokeTool)) return this.drawPixelShapePreview(preview, this.strokeTool);
+  }
+
+  private drawPixelShapePreview(preview: ToolPreviewContext, tool: PixelShapeToolId): void {
+    const stageRect = this.q<HTMLElement>('.canvas-stage').getBoundingClientRect();
+    const canvasRect = this.canvas.getBoundingClientRect();
+    const display = getDocumentDisplayTransform(stageRect, canvasRect, this.ctl.doc.width, this.ctl.doc.height);
+    const points = this.pixelShapePoints.map((point) => ({
+      x: display.left + point.x * display.scale,
+      y: display.top + point.y * display.scale,
+    }));
+    renderRasterShape(preview.ctx, tool, preview.start, preview.end, this.getRasterShapeSettings(), points, preview.scale);
+  }
+
+  private appendPixelShapePoint(point: { x: number; y: number }, finalPoint: boolean): void {
+    const lastPoint = this.pixelShapePoints[this.pixelShapePoints.length - 1];
+    if (!lastPoint) { this.pixelShapePoints.push({ ...point }); return; }
+    const distance = Math.hypot(point.x - lastPoint.x, point.y - lastPoint.y);
+    if (distance < Math.max(1, this.brush.spacing / 20) && !finalPoint) return;
+    if (distance < 0.1) return;
+    this.pixelShapePoints.push({ ...point });
+  }
+
+  private drawGradientPreview(preview: ToolPreviewContext): void {
+    if (this.brush.gradientType !== 'radial') return this.drawLinePreview(preview);
+    const { ctx, start, end } = preview;
+    const radius = Math.max(1, Math.hypot(end.x - start.x, end.y - start.y));
+    ctx.beginPath();
+    ctx.arc(start.x, start.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(start.x, start.y, 2, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   private drawLinePreview({ ctx, start, end }: ToolPreviewContext): void {
@@ -1189,6 +1399,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
   }
 
   protected up(e?: PointerEvent): void {
+      if (this.vectorDrawGesture) return this.finishVectorDrawingGesture(e);
       if (this.vectorGesture) return this.finishVectorGestureAtPointer(e);
       if (this.comicPanelStart) { this.finishComicPanel(e); return; }
       if (this.isPanning) {
@@ -1229,7 +1440,13 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       const label: Record<Tool, string> = {
         brush: 'Pincel', eraser: 'Borrador', eyedropper: 'Cuentagotas', line: 'Línea',
         rectangle: 'Rectángulo', ellipse: 'Elipse', fill: 'Relleno', hand: 'Mover lienzo',
-        text: 'Texto', 'vector-select': 'Selección vectorial', 'clone-stamp': 'Tampón de clonar', 'comic-panel': 'Marco y viñetas', gradient: 'Degradado', smudge: 'Dedo', liquify: 'Licuar',
+        text: 'Texto', 'vector-select': 'Selección vectorial', 'vector-rectangle': 'Rectángulo vectorial',
+        'vector-rounded-rectangle': 'Rectángulo redondeado vectorial', 'vector-ellipse': 'Elipse vectorial', 'vector-line': 'Línea vectorial',
+        'vector-polyline': 'Polilínea vectorial', 'vector-pen': 'Pluma vectorial', 'vector-polygon': 'Polígono vectorial',
+        'vector-star': 'Estrella vectorial', 'vector-freehand': 'Trazo vectorial libre', 'vector-spiral': 'Espiral vectorial',
+        'pixel-rounded-rectangle': 'Rectángulo redondeado de píxeles', 'pixel-polyline': 'Polilínea de píxeles',
+        'pixel-bezier': 'Curva Bézier de píxeles', 'pixel-polygon': 'Polígono de píxeles', 'pixel-star': 'Estrella de píxeles', 'pixel-spiral': 'Espiral de píxeles',
+        'clone-stamp': 'Tampón de clonar', 'comic-panel': 'Marco y viñetas', gradient: 'Degradado', smudge: 'Dedo', liquify: 'Licuar',
       };
       try {
         stroke.end(label[tool ?? 'brush']);
@@ -1261,6 +1478,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       this.strokeTool = null;
       this.last = null;
       this.shapeStart = null;
+      this.pixelShapePoints = [];
       this.clearCloneOriginalTiles();
       this.cloneDestinationStart = null;
       this.clearToolPreview();
