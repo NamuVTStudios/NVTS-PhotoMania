@@ -147,6 +147,8 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       ], !canUseVector);
       const swatch = this.root.querySelector<HTMLElement>('#foreground-swatch');
       if (swatch) swatch.style.background = this.foregroundHex();
+      const secondarySwatch = this.root.querySelector<HTMLElement>('#secondary-swatch');
+      if (secondarySwatch) secondarySwatch.style.background = '#ffffff';
     }
 
   protected setToolButtonsDisabled(selectors: string[], disabled: boolean): void {
@@ -208,7 +210,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
   }
 
   private createCommonToolFields(): { color: string; size: string; opacity: string } {
-    const color = `<label class="tool-setting">Color <input id="tool-color" type="color" value="${this.foregroundHex()}" /></label>`;
+    const color = `<label class="tool-setting">Color <input id="tool-color" type="color" value="${this.foregroundHex()}" /></label><button id="reset-colors" type="button" title="Restablecer color de dibujo y color de relleno">Restablecer colores</button>`;
     const sizeLabel = this.isRasterShapeTool(this.tool) ? 'Grosor' : 'Tamaño';
     const size = `<label class="tool-setting">${sizeLabel} <input id="tool-size" type="range" min="1" max="256" value="${this.brush.size}" /><output id="tool-size-value">${this.brush.size}px</output></label>`;
     const opacity = `<label class="tool-setting">Opacidad <input id="tool-opacity" type="range" min="1" max="100" value="${this.brush.opacity}" /><output id="tool-opacity-value">${this.brush.opacity}%</output></label>`;
@@ -292,6 +294,8 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
   protected bindBrushToolControls(host: HTMLElement): void {
       const color = host.querySelector<HTMLInputElement>('#tool-color');
       if (color) color.oninput = () => this.setForegroundHex(color.value);
+      const resetColors = host.querySelector<HTMLButtonElement>('#reset-colors');
+      if (resetColors) resetColors.onclick = () => this.resetDefaultColors();
       const size = host.querySelector<HTMLInputElement>('#tool-size');
       if (size) size.oninput = () => {
         this.brush.size = Number(size.value);
@@ -306,6 +310,14 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
         const advancedOpacityOutput = this.root.querySelector<HTMLOutputElement>('#advanced-gradient-opacity-value');
         if (advancedOpacityOutput && this.tool === 'gradient') advancedOpacityOutput.value = `${opacity.value}%`;
       };
+    }
+
+  protected resetDefaultColors(): void {
+      this.setForegroundHex('#000000');
+      const toolbarColor = this.root.querySelector<HTMLInputElement>('#tb-color');
+      if (toolbarColor) toolbarColor.value = '#000000';
+      const secondarySwatch = this.root.querySelector<HTMLElement>('#secondary-swatch');
+      if (secondarySwatch) secondarySwatch.style.background = '#ffffff';
     }
 
   protected bindFillToolControls(host: HTMLElement): void {

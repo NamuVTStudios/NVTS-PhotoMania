@@ -64,7 +64,7 @@ export abstract class AppBase {
   protected vectorDrawGesture: { layerId: string; id: string; tool: VectorDrawingToolId; startPoint: { x: number; y: number }; currentPoint: { x: number; y: number }; points: Array<{ x: number; y: number }> } | null = null;
   protected pixelShapePoints: Array<{ x: number; y: number }> = [];
   protected vectorGesture: { layerId: string; shapeId: string; mode: 'move' | 'resize'; startPoint: { x: number; y: number }; original: VectorShape; latest: VectorShape; moved: boolean } | null = null;
-  protected brush: ToolSettings & { rgb: [number, number, number] } = { rgb: [224, 48, 48], size: 24, opacity: 100, hardness: 80, spacing: 15, smoothing: 0, tolerance: 24, contiguous: true, sampleMerged: false, sampleRadius: 1, shapeFill: false, shapeCornerRadius: 20, polygonSides: 6, starPoints: 5, spiralTurns: 4, lineCap: 'round', lineJoin: 'round', gradientType: 'linear', gradientReverse: false, panSensitivity: 100, zoomIncrement: 1.1, vectorKeepAspectRatio: false };
+  protected brush: ToolSettings & { rgb: [number, number, number] } = { rgb: [0, 0, 0], size: 24, opacity: 100, hardness: 80, spacing: 15, smoothing: 0, tolerance: 24, contiguous: true, sampleMerged: false, sampleRadius: 1, shapeFill: false, shapeCornerRadius: 20, polygonSides: 6, starPoints: 5, spiralTurns: 4, lineCap: 'round', lineJoin: 'round', gradientType: 'linear', gradientReverse: false, panSensitivity: 100, zoomIncrement: 1.1, vectorKeepAspectRatio: false };
   protected stroke: StrokeSession | null = null;
   protected strokeLayer: ReturnType<DocumentController['layerPixels']> = null;
   protected strokeTool: Tool | null = null;
