@@ -12,7 +12,7 @@ export const rendererProviders: readonly RendererProvider[] = [
   {
     id: 'webgl2',
     isSupported: () => true,
-    create: (canvas: HTMLCanvasElement) => WebGL2Renderer.create(canvas),
+    create: async (canvas: HTMLCanvasElement) => WebGL2Renderer.create(canvas),
   },
 ];
 

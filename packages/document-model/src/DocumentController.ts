@@ -578,8 +578,16 @@ export class DocumentController {
 
   get canUndo(): boolean { this.syncPixelHistory(); return this.undoStack.length > 0; }
   get canRedo(): boolean { this.syncPixelHistory(); return this.redoStack.length > 0; }
-  get undoLabel(): string { this.syncPixelHistory(); return this.undoStack.at(-1)?.label ?? ''; }
-  get redoLabel(): string { this.syncPixelHistory(); return this.redoStack.at(-1)?.label ?? ''; }
+  get undoLabel(): string {
+    this.syncPixelHistory();
+    const action = this.undoStack.at(-1);
+    return action?.kind === 'pixels' ? action.label : action?.command.label ?? '';
+  }
+  get redoLabel(): string {
+    this.syncPixelHistory();
+    const action = this.redoStack.at(-1);
+    return action?.kind === 'pixels' ? action.label : action?.command.label ?? '';
+  }
   get historyEntries(): Array<{ label: string; current: boolean }> {
     this.syncPixelHistory();
     return [...this.undoStack].reverse().map((action, i) => ({ label: action.kind === 'pixels' ? action.label : action.command.label, current: i === 0 }));
