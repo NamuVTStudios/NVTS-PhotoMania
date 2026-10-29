@@ -50,7 +50,7 @@ test('layer styles survive a native .nvtsphoto round trip', () => {
   };
   const packed = packNvtsPhoto(makeDocument(styles), () => null);
   const restored = unpackNvtsPhoto(packed).doc.layers[0].layerStyles;
-  assert.deepEqual(restored, styles);
+  assert.deepEqual(restored, normalizeLayerStyles(styles));
 });
 
 test('legacy native projects without layer styles remain valid', () => {

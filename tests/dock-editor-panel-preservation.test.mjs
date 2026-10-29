@@ -7,7 +7,7 @@ let preserveEditorPanels;
 
 before(async () => {
   vite = await createViteTestServer();
-  ({ preserveEditorPanels } = await vite.ssrLoadModule('/packages/ui/src/panels/DockLayoutManager.ts'));
+  ({ preserveEditorPanels } = await vite.ssrLoadModule('/packages/ui/src/managers/DockLayoutManager.ts'));
 });
 
 after(async () => {

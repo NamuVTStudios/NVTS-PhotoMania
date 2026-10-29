@@ -23,7 +23,7 @@ test('clona cada tipo de máscara y sus datos editables sin compartir referencia
     { id: 'transform', type: 'transform', enabled: true, offsetX: 0, offsetY: 0, scaleX: 1, scaleY: 1, rotation: 0, shearX: 0, shearY: 0 },
     { id: 'colorize', type: 'colorize', enabled: true, editStrokes: false, showOutput: true, limitToLayerBounds: true, gapClose: 0, threshold: 0.5, transparentColors: ['#ffffff'], strokes: [{ color: '#ff0000', radius: 3, points: [{ x: 1, y: 2 }] }] },
     { id: 'filter', type: 'filter', enabled: true, filters: [{ kind: 'blur', strength: 0.4 }] },
-    { id: 'styles', type: 'styles', enabled: true, styles: { stroke: { enabled: true, color: '#ff0000', size: 4, opacity: 1 }, outerGlow: { enabled: false, color: '#fff2a8', size: 12, opacity: 0.75 }, dropShadow: { enabled: false, color: '#000000', size: 8, distance: 6, angle: 45, opacity: 0.55 }, bevelEmboss: { enabled: false, size: 4, depth: 5, angle: 45, altitude: 45, highlightColor: '#ffffff', shadowColor: '#000000', opacity: 0.7 } } },
+    { id: 'styles', type: 'styles', enabled: true, styles: { stroke: { enabled: true, color: '#ff0000', size: 4, opacity: 1 }, outerGlow: { enabled: false, color: '#fff2a8', size: 12, opacity: 0.75 }, dropShadow: { enabled: false, color: '#000000', size: 8, distance: 6, angle: 45, opacity: 0.55 }, bevelEmboss: { enabled: false, size: 4, depth: 5, angle: 45, altitude: 45, highlightColor: '#ffffff', shadowColor: '#000000', opacity: 0.7 }, gradientOverlay: { enabled: false, startColor: '#ff5e62', endColor: '#6a5af9', angle: 90, opacity: 1 }, innerShadow: { enabled: false, color: '#000000', size: 8, distance: 4, angle: 45, opacity: 0.55 } } },
   ];
 
   const clones = cloneLayerMasks(masks);
@@ -60,5 +60,5 @@ test('crea cada máscara con sus valores iniciales explícitos', () => {
   assert.equal(styles.id, 's');
   assert.equal(styles.type, 'styles');
   assert.equal(styles.enabled, true);
-  assert.deepEqual(Object.keys(styles.styles), ['stroke', 'outerGlow', 'dropShadow', 'bevelEmboss']);
+  assert.deepEqual(Object.keys(styles.styles), ['stroke', 'outerGlow', 'dropShadow', 'bevelEmboss', 'gradientOverlay', 'innerShadow']);
 });

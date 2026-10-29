@@ -14,6 +14,7 @@ let engine;
 let DocumentController;
 let packNvtsPhoto;
 let unpackNvtsPhoto;
+let normalizeLayerStyles;
 const controllers = [];
 
 before(async () => {
@@ -21,6 +22,7 @@ before(async () => {
 
   ({ DocumentController } = await vite.ssrLoadModule('/packages/document-model/src/DocumentController.ts'));
   ({ packNvtsPhoto, unpackNvtsPhoto } = await vite.ssrLoadModule('/packages/storage/src/NvtsPhotoIO.ts'));
+  ({ normalizeLayerStyles } = await vite.ssrLoadModule('/packages/shared/src/nvtsphoto.ts'));
 
   const wasmPath = fileURLToPath(new URL('../packages/wasm-bindings/build/engine.wasm', import.meta.url));
   engine = await createEngine({ wasmBinary: readFileSync(wasmPath), locateFile: () => wasmPath });
@@ -133,7 +135,7 @@ test('applying layer appearance creates a style mask and is one undoable action'
   const styleMask = applied.masks.find((mask) => mask.type === 'styles');
   assert.ok(styleMask);
   assert.equal(styleMask.enabled, true);
-  assert.deepEqual(styleMask.styles, styles);
+  assert.deepEqual(styleMask.styles, normalizeLayerStyles(styles));
   assert.equal(applied.layerStyles, undefined);
   assert.equal(applied.opacity, 0.75);
   assert.equal(applied.blendMode, 'multiply');
@@ -144,7 +146,7 @@ test('applying layer appearance creates a style mask and is one undoable action'
   assert.equal(controller.find(layer.id).opacity, 1);
   assert.equal(controller.find(layer.id).blendMode, 'normal');
   assert.equal(controller.redo(), 'structure');
-  assert.deepEqual(controller.find(layer.id).masks.find((mask) => mask.type === 'styles').styles, styles);
+  assert.deepEqual(controller.find(layer.id).masks.find((mask) => mask.type === 'styles').styles, normalizeLayerStyles(styles));
   assert.equal(controller.find(layer.id).opacity, 0.75);
 });
 
@@ -161,7 +163,7 @@ test('layer styles survive the complete native-file and controller restoration p
   const archive = packNvtsPhoto(source.doc, (candidate) => source.readPixels(candidate));
   const restored = DocumentController.fromUnpacked(engine, unpackNvtsPhoto(archive));
   controllers.push(restored);
-  assert.deepEqual(restored.find(layer.id)?.layerStyles, styles);
+  assert.deepEqual(restored.find(layer.id)?.layerStyles, normalizeLayerStyles(styles));
 });
 
 test('property changes publish a properties event and listeners can unsubscribe', () => {

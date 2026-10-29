@@ -51,7 +51,7 @@ export function cloneLayerStyles(styles?: LayerStyles): LayerStyles {
     bevelEmboss: { ...defaults.bevelEmboss, ...styles.bevelEmboss },
     gradientOverlay: { ...defaults.gradientOverlay, ...styles.gradientOverlay },
     innerShadow: { ...defaults.innerShadow, ...styles.innerShadow },
-    ...(Array.isArray(styles.strokes) ? { strokes: normalizeStrokeStack(styles.strokes, styles.stroke) } : {}),
+    ...(Array.isArray(styles.strokes) ? { strokes: normalizeStrokeStack(styles.strokes, styles.stroke ?? defaults.stroke) } : {}),
     ...(Array.isArray(styles.outerGlows) ? { outerGlows: styles.outerGlows.map((effect) => ({ ...defaults.outerGlow, ...effect })) } : {}),
     ...(Array.isArray(styles.dropShadows) ? { dropShadows: styles.dropShadows.map((effect) => ({ ...defaults.dropShadow, ...effect })) } : {}),
     ...(Array.isArray(styles.bevelEmbosses) ? { bevelEmbosses: styles.bevelEmbosses.map((effect) => ({ ...defaults.bevelEmboss, ...effect })) } : {}),
