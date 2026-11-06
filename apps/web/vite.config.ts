@@ -22,6 +22,32 @@ export default defineConfig({
       '@nvts/wasm-bindings': fileURLToPath(
         new URL('../../packages/wasm-bindings/index.ts', import.meta.url)
       ),
+      // Resolve Shared Core runtimes to their real ESM entrypoints. The package
+      // exports expose both short public names and physical-layout compatibility paths.
+      '@nvts/shared-core/libraries/pixijs': fileURLToPath(
+        new URL('../../../NVTS-Shared-Core/libraries/rendering/pixijs/index.mjs', import.meta.url)
+      ),
+      '@nvts/shared-core/libraries/rendering/pixijs': fileURLToPath(
+        new URL('../../../NVTS-Shared-Core/libraries/rendering/pixijs/index.mjs', import.meta.url)
+      ),
+      '@nvts/shared-core/libraries/canvaskit': fileURLToPath(
+        new URL('../../../NVTS-Shared-Core/libraries/rendering/canvaskit/index.mjs', import.meta.url)
+      ),
+      '@nvts/shared-core/libraries/rendering/canvaskit': fileURLToPath(
+        new URL('../../../NVTS-Shared-Core/libraries/rendering/canvaskit/index.mjs', import.meta.url)
+      ),
+      '@nvts/shared-core/libraries/openimageio': fileURLToPath(
+        new URL('../../../NVTS-Shared-Core/libraries/imaging/openimageio/index.mjs', import.meta.url)
+      ),
+      '@nvts/shared-core/libraries/imaging/openimageio': fileURLToPath(
+        new URL('../../../NVTS-Shared-Core/libraries/imaging/openimageio/index.mjs', import.meta.url)
+      ),
+      '@nvts/shared-core/libraries/opencolorio': fileURLToPath(
+        new URL('../../../NVTS-Shared-Core/libraries/imaging/opencolorio/index.mjs', import.meta.url)
+      ),
+      '@nvts/shared-core/libraries/imaging/opencolorio': fileURLToPath(
+        new URL('../../../NVTS-Shared-Core/libraries/imaging/opencolorio/index.mjs', import.meta.url)
+      ),
       '@nvts/renderer': fileURLToPath(
         new URL('../../packages/renderer/index.ts', import.meta.url)
       ),

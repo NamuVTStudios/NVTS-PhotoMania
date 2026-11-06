@@ -20,6 +20,7 @@
     "vite": "^5.4.0"
   },
   "dependencies": {
-    "@nvts/app-object": "link:../NVTS-Shared-Core/packages/app-object"
+    "@nvts/app-object": "link:../NVTS-Shared-Core/packages/app-object",
+    "@nvts/shared-core": "link:../NVTS-Shared-Core"
   }
 }

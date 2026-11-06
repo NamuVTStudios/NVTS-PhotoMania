@@ -25,6 +25,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       this.wireComicManager();
       this.initializeToolPanels();
       this.bindMenuDropdowns();
+      this.bindEditMenuActions();
       this.bindWorkspaceSelector();
       this.bindPanelVisibilityMenu();
       this.bindToolAndViewControls();
@@ -139,6 +140,11 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
   protected closeMenu(menu: { button: HTMLButtonElement; dropdown: HTMLElement }): void {
       menu.dropdown.hidden = true;
       menu.button.setAttribute('aria-expanded', 'false');
+    }
+
+  protected bindEditMenuActions(): void {
+      this.q<HTMLButtonElement>('#edit-undo')?.addEventListener('click', () => this.doUndo());
+      this.q<HTMLButtonElement>('#edit-redo')?.addEventListener('click', () => this.doRedo());
     }
 
   protected bindMenuDropdowns(): void {

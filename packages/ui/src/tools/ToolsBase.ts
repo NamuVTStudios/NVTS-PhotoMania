@@ -46,6 +46,8 @@ export type ToolTarget = 'any' | 'raster' | 'vector';
 
 /** Common metadata and layer-compatibility contract for every editor tool. */
 export abstract class ToolsBase extends ToolObject {
+  declare readonly id: ToolId;
+
   protected constructor(
     id: ToolId,
     readonly label: string,

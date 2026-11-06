@@ -54,8 +54,8 @@ The new-project selector currently offers 36 presets for social media content, s
 - Light and dark themes; a Preferences setting controls whether recent-project data is kept.
 - Modular panels include Layers, History, Advanced Tool Options, Comic Manager, and supporting filter, vector, layer-effects, plugin, and preferences UI.
 - `View → Panels` controls panel visibility. `Tab` toggles the whole panel zone while avoiding normal text-field and menu interaction.
-- Panel headers can be dragged to reorder docked panels or pulled out into floating windows; each panel can be re-docked with its header control. Drag dividers to resize individual panel heights and the overall right-side panel zone. Layouts are persisted independently per workspace.
-- Main file operations are available from the File menu with keyboard shortcuts.
+- Workspace panels are docked in the editor. Preferences and plugin management open as right-side panels rather than modal windows. Panel headers can be dragged to reorder docked panels; drag dividers to resize individual panel heights and the overall right-side panel zone. Layouts are persisted independently per workspace.
+- Main file operations are available from the File menu with keyboard shortcuts. The Edit menu exposes history commands (Undo and Redo) and Preferences. Layer-specific commands such as Duplicate Layer and Rename Layer are available only from the Layer menu. Preferences are organized into General, Appearance, Editing, and Layers & Masks sections.
 
 ### Comic Manager
 
@@ -259,4 +259,20 @@ The visual ruler overlay supports linear, curved, two-point perspective, fisheye
 
 ## Shared Application Object Model
 
-NVTS applications may reuse the framework-independent `@nvts/app-object` model from NVTS-Shared-Core. The model provides a minimal lifecycle and metadata base plus specialized application, tool, panel, document, layer, plugin, and command abstractions. Applications must not force every class to inherit from `AppObject`; data records, pure functions, services, adapters, and framework components remain independent when inheritance does not add value.
+NVTS applications may reuse the framework-independent `@nvts/app-object` model from NVTS-Shared-Core. The model provides a minimal lifecycle and metadata base plus specialized application, tool, panel, document, layer, plugin, and command abstractions. PhotoMania applies the shared model to its editor application, registered tools, panels, runtime document controller, and reversible structural commands. Data records, pure functions, service managers, adapters, and renderer backends remain independent when inheritance does not add value.
+
+
+## Shared Core runtime integration
+
+- Use the Shared Core CanvasKit runtime as the software rendering fallback after WebGPU and before the legacy WebGL2 backend.
+- Use Shared Core OpenImageIO only as a guarded fallback for its verified limited read-format subset when native browser decoding fails.
+- Expose explicit OpenColorIO color-space conversion without silently changing imported or existing document pixels.
+
+
+## Tool icon identity
+
+Each registered editor tool shall display a dedicated, recognizable SVG icon. Selection modes must not reuse generic drawing icons: rectangular, elliptical, lasso, polygon, selection-brush, selection-erase, magic-wand, and clear-selection tools each have distinct iconography. Tool icons retain a consistent 24×24 line-art visual language and adapt to the current UI color through CSS masks.
+
+### Shared Core integration reliability
+
+PhotoMania integrates the verified CanvasKit renderer fallback and the OpenImageIO/OpenColorIO services through stable Shared Core package entrypoints. Both canonical and physical-layout-compatible import paths are supported so tooling resolves the same runtime modules consistently.

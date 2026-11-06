@@ -8,6 +8,9 @@ importers:
       '@nvts/app-object':
         specifier: link:../NVTS-Shared-Core/packages/app-object
         version: link:../NVTS-Shared-Core/packages/app-object
+      '@nvts/shared-core':
+        specifier: link:../NVTS-Shared-Core
+        version: link:../NVTS-Shared-Core
     configDependencies: {}
     packageManagerDependencies:
       pnpm:

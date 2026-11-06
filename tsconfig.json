@@ -46,6 +46,36 @@
       ],
       "@nvts/vector": [
         "./packages/vector/src/index.ts"
+      ],
+      "@nvts/app-object": [
+        "../NVTS-Shared-Core/packages/app-object/src/index.ts"
+      ],
+      "@nvts/shared-core/*": [
+        "../NVTS-Shared-Core/*"
+      ],
+      "@nvts/shared-core/libraries/pixijs": [
+        "../NVTS-Shared-Core/libraries/rendering/pixijs/index.d.ts"
+      ],
+      "@nvts/shared-core/libraries/rendering/pixijs": [
+        "../NVTS-Shared-Core/libraries/rendering/pixijs/index.d.ts"
+      ],
+      "@nvts/shared-core/libraries/canvaskit": [
+        "../NVTS-Shared-Core/libraries/rendering/canvaskit/index.d.ts"
+      ],
+      "@nvts/shared-core/libraries/opencolorio": [
+        "../NVTS-Shared-Core/libraries/imaging/opencolorio/index.d.ts"
+      ],
+      "@nvts/shared-core/libraries/openimageio": [
+        "../NVTS-Shared-Core/libraries/imaging/openimageio/index.d.ts"
+      ],
+      "@nvts/shared-core/libraries/rendering/canvaskit": [
+        "../NVTS-Shared-Core/libraries/rendering/canvaskit/index.d.ts"
+      ],
+      "@nvts/shared-core/libraries/imaging/openimageio": [
+        "../NVTS-Shared-Core/libraries/imaging/openimageio/index.d.ts"
+      ],
+      "@nvts/shared-core/libraries/imaging/opencolorio": [
+        "../NVTS-Shared-Core/libraries/imaging/opencolorio/index.d.ts"
       ]
     }
   },

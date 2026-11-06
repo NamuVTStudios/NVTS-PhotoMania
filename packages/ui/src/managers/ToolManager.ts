@@ -11,8 +11,9 @@ export class ToolManager {
   private readonly tools = createToolCatalog();
 
   constructor(initialTool: ToolId = 'brush') {
+    for (const tool of this.tools.values()) tool.initialize();
     this.currentTool = initialTool;
-    this.getDefinition(initialTool);
+    this.getDefinition(initialTool).activate();
   }
 
   get activeTool(): ToolId {
@@ -30,7 +31,10 @@ export class ToolManager {
   }
 
   setActiveTool(tool: ToolId): void {
-    this.getDefinition(tool);
+    if (tool === this.currentTool) return;
+    const nextTool = this.getDefinition(tool);
+    this.getDefinition(this.currentTool).deactivate();
+    nextTool.activate();
     this.currentTool = tool;
   }
 }

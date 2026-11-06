@@ -4,6 +4,10 @@ NVTS-PhotoMania is a browser-based, layer-oriented image editor developed by Nam
 
 > **Project status:** active prototype. The documentation below describes the implementation in this repository, including its current limitations. See [GDD](docs/GDD.md) for product scope and [TDD](docs/TDD.md) for the technical design.
 
+## Shared Core architecture
+
+The editor application, tool definitions, panels, runtime document controller, and reversible structural document commands reuse the `@nvts/app-object` package from the sibling `NVTS-Shared-Core` repository. Service managers, data-transfer records, adapters, renderer backends, and pure processing functions remain independent when the shared lifecycle model does not add value.
+
 ## Requirements
 
 - Node.js 20 or newer.
@@ -784,3 +788,19 @@ Extracting shared components into `NVTS-Shared-Core` (Rust) and `NVTS-Shared-UI`
 - Drag and drop reorders layers and masks.
 - Move shifts layer content directly; non-destructive transform masks are created only by the explicit Layer transform command.
 - Brush presets are grouped into Sketch, Inking, Decoration, Texture, and Painting. All tools have keyboard shortcuts.
+## Shared Core Runtime Integration
+
+PhotoMania consumes the public `@nvts/shared-core` library entry points for its CanvasKit rendering fallback, OpenColorIO color transforms, and guarded OpenImageIO image-decoding fallback. WebGPU remains the preferred renderer; CanvasKit is selected before the legacy WebGL2 fallback when WebGPU is unavailable. OpenImageIO is used only when the browser decoder fails and the file extension is within the adapter's explicitly supported subset. PNG remains outside that subset.
+
+OpenColorIO is exposed through `transformPixelsColorSpace` for explicit, caller-selected color-space conversions; PhotoMania does not silently reinterpret or transform document pixels.
+
+
+
+## Dedicated tool icons
+
+Every registered PhotoMania tool has its own SVG asset under `apps/web/src/icons/tools/`. The 51 tool IDs in `ToolCatalog.ts` each map to a matching `tool-icon--<tool-id>` CSS mask and a dedicated toolbar icon. Selection modes are individually illustrated (rectangle, ellipse, lasso, polygon, selection brush, selection erase, magic wand, and clear selection); correction, raster, vector, comic, and canvas tools also use their own icon assets. Existing non-tool action icons remain separate.
+
+### Shared Core runtime imports
+
+PhotoMania consumes CanvasKit, OpenImageIO, and OpenColorIO through the executable ESM entrypoints exported by `@nvts/shared-core`. The canonical imports are `@nvts/shared-core/libraries/canvaskit`, `@nvts/shared-core/libraries/openimageio`, and `@nvts/shared-core/libraries/opencolorio`. Vite aliases resolve these entrypoints directly to their Shared Core `index.mjs` files, while TypeScript paths resolve to the matching `index.d.ts` declarations. Physical-layout compatibility subpaths under `libraries/rendering/` and `libraries/imaging/` are also exported.
+

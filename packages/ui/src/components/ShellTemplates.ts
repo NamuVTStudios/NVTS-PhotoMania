@@ -35,6 +35,10 @@ export const MAIN_MENU = `<nav class="menus" aria-label="Menú principal">
     <div class="menu-wrap">
       <button id="menu-edit" aria-haspopup="menu" aria-expanded="false" aria-controls="edit-menu-dropdown">${uiIcon('edit')}<span>Editar</span></button>
       <div id="edit-menu-dropdown" class="file-menu-dropdown" role="menu" aria-label="Editar" hidden>
+        <button id="edit-undo" class="menu-item" role="menuitem" type="button">${menuLabel('history', 'Deshacer')}<kbd>Ctrl+Z</kbd></button>
+        <button id="edit-redo" class="menu-item" role="menuitem" type="button">${menuLabel('history', 'Rehacer')}<kbd>Ctrl+Y</kbd></button>
+        <div class="menu-divider" role="separator"></div>
+        <div class="menu-divider" role="separator"></div>
         <button id="b-preferences" class="menu-item" role="menuitem" type="button">${menuLabel('preferences', 'Preferencias…')}<kbd>Ctrl+,</kbd></button>
       </div>
     </div>
@@ -143,7 +147,7 @@ export const HOME_TEMPLATE = `
         </section>
         <section data-home-view="open" class="home-view" hidden>
           <div class="home-section-head"><h2>Abrir archivo</h2><span>Continuá trabajando en una imagen</span></div>
-          <div id="home-dropzone" class="home-dropzone"><div class="home-download-icon">${uiIcon('open-file')}</div><h3>Arrastrá una imagen o <span>seleccioná un archivo</span></h3><p>También podés examinar tu dispositivo</p><button id="home-browse" class="home-secondary">${uiIcon('browse')}<span>Examinar archivos</span></button><div class="home-filetypes"><span>.nvtsphoto</span><span>.png</span><span>.jpg</span><span>.webp</span><span>.gif</span></div><input id="home-file-input" type="file" accept="image/*,.nvtsphoto" hidden /></div>
+          <div id="home-dropzone" class="home-dropzone"><div class="home-download-icon">${uiIcon('open-file')}</div><h3>Arrastrá una imagen o <span>seleccioná un archivo</span></h3><p>También podés examinar tu dispositivo</p><button id="home-browse" class="home-secondary">${uiIcon('browse')}<span>Examinar archivos</span></button><div class="home-filetypes"><span>.nvtsphoto</span><span>.png</span><span>.jpg</span><span>.webp</span><span>.gif</span><span>.tif</span><span>.bmp</span><span>.tga</span><span>.ppm</span></div><input id="home-file-input" type="file" accept="image/*,.nvtsphoto,.tga,.ppm" hidden /></div>
         </section>
         <section data-home-view="recent" class="home-view" hidden><div class="home-section-head"><h2>Proyectos recientes</h2><span>Seguí donde lo dejaste</span></div><div id="home-recents" class="home-recent-grid"></div></section>
         <p id="home-status" class="home-status" role="status"></p>

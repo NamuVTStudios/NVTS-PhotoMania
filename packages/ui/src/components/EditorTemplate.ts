@@ -23,29 +23,29 @@ export const EDITOR_TEMPLATE = `
     <button id="rail-hand" aria-label="Mover lienzo" title="Mover lienzo (H / barra espaciadora)"><span class="tool-icon tool-icon--hand" aria-hidden="true"></span></button>
     <button id="rail-move" aria-label="Mover elementos" title="Mover elementos de píxeles o vectoriales (M)"><span class="tool-icon tool-icon--move" aria-hidden="true"></span></button>
     <details class="tools-rail-group" id="direct-drawing-group" open>
-      <summary aria-label="Herramientas de dibujo directo" title="Dibujo directo"><span class="tool-icon tool-icon--brush" aria-hidden="true"></span></summary>
+      <summary aria-label="Herramientas de dibujo directo" title="Dibujo directo"><span class="tool-icon tool-icon--pencil" aria-hidden="true"></span></summary>
       <div class="tools-rail-group-items">
         <button id="rail-brush" class="selected" aria-label="Pincel" title="Pincel (B)"><span class="tool-icon tool-icon--brush" aria-hidden="true"></span></button>
-        <button id="rail-pen" aria-label="Plumilla" title="Plumilla (Q)"><span class="tool-icon tool-icon--vector-pen" aria-hidden="true"></span></button>
-        <button id="rail-pencil" aria-label="Lápiz" title="Lápiz (Y)"><span class="tool-icon tool-icon--brush" aria-hidden="true"></span></button>
-        <button id="rail-airbrush" aria-label="Aerógrafo" title="Aerógrafo (A)"><span class="tool-icon tool-icon--gradient" aria-hidden="true"></span></button>
-        <button id="rail-decoration" aria-label="Decoración" title="Decoración (X)"><span class="tool-icon tool-icon--vector-star" aria-hidden="true"></span></button>
+        <button id="rail-pen" aria-label="Plumilla" title="Plumilla (Q)"><span class="tool-icon tool-icon--pen" aria-hidden="true"></span></button>
+        <button id="rail-pencil" aria-label="Lápiz" title="Lápiz (Y)"><span class="tool-icon tool-icon--pencil" aria-hidden="true"></span></button>
+        <button id="rail-airbrush" aria-label="Aerógrafo" title="Aerógrafo (A)"><span class="tool-icon tool-icon--airbrush" aria-hidden="true"></span></button>
+        <button id="rail-decoration" aria-label="Decoración" title="Decoración (X)"><span class="tool-icon tool-icon--decoration" aria-hidden="true"></span></button>
       </div>
     </details>
     <details class="tools-rail-group" id="correction-tools-group">
-      <summary aria-label="Corrección y borrado" title="Corrección y borrado"><span class="tool-icon tool-icon--eraser" aria-hidden="true"></span></summary>
+      <summary aria-label="Corrección y borrado" title="Corrección y borrado"><span class="tool-icon tool-icon--vector-eraser" aria-hidden="true"></span></summary>
       <div class="tools-rail-group-items">
         <button id="rail-eraser" aria-label="Borrador" title="Borrador (E)"><span class="tool-icon tool-icon--eraser" aria-hidden="true"></span></button>
         <button id="rail-smudge" aria-label="Mezcla de color" title="Mezcla de color (J)"><span class="tool-icon tool-icon--smudge" aria-hidden="true"></span></button>
         <button id="rail-liquify" aria-label="Licuar" title="Licuar (K)"><span class="tool-icon tool-icon--liquify" aria-hidden="true"></span></button>
         <button id="rail-clone-stamp" aria-label="Tampón de copia" title="Tampón de copia (C) · Alt + clic define el origen"><span class="tool-icon tool-icon--clone-stamp" aria-hidden="true"></span></button>
-        <button id="rail-vector-eraser" aria-label="Goma vectorial" title="Goma vectorial (Shift + E) · elimina el objeto vectorial completo"><span class="tool-icon tool-icon--eraser" aria-hidden="true"></span></button>
-        <button id="rail-vector-line-correction" aria-label="Corrección de línea" title="Corrección de línea (Shift + T) · simplifica trazos vectoriales sin modificar curvas Bézier"><span class="tool-icon tool-icon--vector-pen" aria-hidden="true"></span></button>
-        <button id="rail-dust-removal" aria-label="Eliminar polvo" title="Eliminar polvo (Shift + U) · suaviza puntos aislados del escaneo"><span class="tool-icon tool-icon--smudge" aria-hidden="true"></span></button>
+        <button id="rail-vector-eraser" aria-label="Goma vectorial" title="Goma vectorial (Shift + E) · elimina el objeto vectorial completo"><span class="tool-icon tool-icon--vector-eraser" aria-hidden="true"></span></button>
+        <button id="rail-vector-line-correction" aria-label="Corrección de línea" title="Corrección de línea (Shift + T) · simplifica trazos vectoriales sin modificar curvas Bézier"><span class="tool-icon tool-icon--vector-line-correction" aria-hidden="true"></span></button>
+        <button id="rail-dust-removal" aria-label="Eliminar polvo" title="Eliminar polvo (Shift + U) · suaviza puntos aislados del escaneo"><span class="tool-icon tool-icon--dust-removal" aria-hidden="true"></span></button>
       </div>
     </details>
     <details class="tools-rail-group" id="pixel-shapes-group">
-      <summary aria-label="Formas de píxeles" title="Herramientas de formas de píxeles"><span class="tool-icon tool-icon--rectangle" aria-hidden="true"></span></summary>
+      <summary aria-label="Formas de píxeles" title="Herramientas de formas de píxeles"><span class="tool-icon tool-icon--select-rectangle" aria-hidden="true"></span></summary>
       <div class="tools-rail-group-items">
     <button id="rail-line" aria-label="Línea" title="Línea (L)"><span class="tool-icon tool-icon--line" aria-hidden="true"></span></button>
     <button id="rail-rectangle" aria-label="Rectángulo" title="Rectángulo (R)"><span class="tool-icon tool-icon--rectangle" aria-hidden="true"></span></button>
@@ -69,14 +69,14 @@ export const EDITOR_TEMPLATE = `
     <details class="tools-rail-group" id="selection-tools-group">
       <summary aria-label="Selección de áreas" title="Selección de áreas"><span class="tool-icon tool-icon--vector-select" aria-hidden="true"></span></summary>
       <div class="tools-rail-group-items">
-        <button id="rail-select-rectangle" aria-label="Selección rectangular" title="Selección rectangular (Shift + R)"><span class="tool-icon tool-icon--rectangle" aria-hidden="true"></span></button>
-        <button id="rail-select-ellipse" aria-label="Selección elíptica" title="Selección elíptica (Shift + Q)"><span class="tool-icon tool-icon--ellipse" aria-hidden="true"></span></button>
-        <button id="rail-select-lasso" aria-label="Lazo" title="Lazo (Shift + L)"><span class="tool-icon tool-icon--vector-freehand" aria-hidden="true"></span></button>
-        <button id="rail-select-polygon" aria-label="Selección poligonal" title="Selección poligonal (Shift + 1)"><span class="tool-icon tool-icon--vector-polygon" aria-hidden="true"></span></button>
-        <button id="rail-selection-brush" aria-label="Pincel de selección" title="Pincel de selección (Shift + 2)"><span class="tool-icon tool-icon--brush" aria-hidden="true"></span></button>
-        <button id="rail-selection-erase" aria-label="Borrador de selección" title="Borrador de selección (Shift + 3)"><span class="tool-icon tool-icon--eraser" aria-hidden="true"></span></button>
-        <button id="rail-magic-wand" aria-label="Varita mágica" title="Varita mágica (Shift + M)"><span class="tool-icon tool-icon--eyedropper" aria-hidden="true"></span></button>
-        <button id="rail-selection-clear" aria-label="Borrar selección" title="Borrar selección (Shift + X)"><span class="tool-icon tool-icon--eraser" aria-hidden="true"></span></button>
+        <button id="rail-select-rectangle" aria-label="Selección rectangular" title="Selección rectangular (Shift + R)"><span class="tool-icon tool-icon--select-rectangle" aria-hidden="true"></span></button>
+        <button id="rail-select-ellipse" aria-label="Selección elíptica" title="Selección elíptica (Shift + Q)"><span class="tool-icon tool-icon--select-ellipse" aria-hidden="true"></span></button>
+        <button id="rail-select-lasso" aria-label="Lazo" title="Lazo (Shift + L)"><span class="tool-icon tool-icon--select-lasso" aria-hidden="true"></span></button>
+        <button id="rail-select-polygon" aria-label="Selección poligonal" title="Selección poligonal (Shift + 1)"><span class="tool-icon tool-icon--select-polygon" aria-hidden="true"></span></button>
+        <button id="rail-selection-brush" aria-label="Pincel de selección" title="Pincel de selección (Shift + 2)"><span class="tool-icon tool-icon--selection-brush" aria-hidden="true"></span></button>
+        <button id="rail-selection-erase" aria-label="Borrador de selección" title="Borrador de selección (Shift + 3)"><span class="tool-icon tool-icon--selection-erase" aria-hidden="true"></span></button>
+        <button id="rail-magic-wand" aria-label="Varita mágica" title="Varita mágica (Shift + M)"><span class="tool-icon tool-icon--magic-wand" aria-hidden="true"></span></button>
+        <button id="rail-selection-clear" aria-label="Borrar selección" title="Borrar selección (Shift + X)"><span class="tool-icon tool-icon--selection-clear" aria-hidden="true"></span></button>
       </div>
     </details>
     <button id="rail-text" aria-label="Texto" title="Texto (T)"><span class="tool-icon tool-icon--text" aria-hidden="true"></span></button>
@@ -102,10 +102,10 @@ export const EDITOR_TEMPLATE = `
       <summary aria-label="Cómic y guías" title="Cómic y guías"><span class="tool-icon tool-icon--comic-panel" aria-hidden="true"></span></summary>
       <div class="tools-rail-group-items">
         <button id="rail-comic-panel" aria-label="Marco y viñetas de cómic" title="Marco y viñetas (P) · requiere una capa vectorial"><span class="tool-icon tool-icon--comic-panel" aria-hidden="true"></span></button>
-        <button id="rail-speech-bubble" aria-label="Bocadillo" title="Bocadillo (Shift + W) · crea un globo vectorial"><span class="tool-icon tool-icon--text" aria-hidden="true"></span></button>
-        <button id="rail-flash" aria-label="Flash" title="Flash (Shift + F) · crea un efecto gráfico vectorial"><span class="tool-icon tool-icon--vector-star" aria-hidden="true"></span></button>
-        <button id="rail-vector-parallel-lines" aria-label="Líneas paralelas" title="Líneas paralelas (Shift + O)"><span class="tool-icon tool-icon--vector-line" aria-hidden="true"></span></button>
-        <button id="rail-vector-radial-lines" aria-label="Líneas radiales" title="Líneas radiales (Shift + P)"><span class="tool-icon tool-icon--vector-line" aria-hidden="true"></span></button>
+        <button id="rail-speech-bubble" aria-label="Bocadillo" title="Bocadillo (Shift + W) · crea un globo vectorial"><span class="tool-icon tool-icon--speech-bubble" aria-hidden="true"></span></button>
+        <button id="rail-flash" aria-label="Flash" title="Flash (Shift + F) · crea un efecto gráfico vectorial"><span class="tool-icon tool-icon--flash" aria-hidden="true"></span></button>
+        <button id="rail-vector-parallel-lines" aria-label="Líneas paralelas" title="Líneas paralelas (Shift + O)"><span class="tool-icon tool-icon--vector-parallel-lines" aria-hidden="true"></span></button>
+        <button id="rail-vector-radial-lines" aria-label="Líneas radiales" title="Líneas radiales (Shift + P)"><span class="tool-icon tool-icon--vector-radial-lines" aria-hidden="true"></span></button>
       </div>
     </details>
     <div class="swatches"><span id="foreground-swatch"></span><span id="secondary-swatch"></span></div>

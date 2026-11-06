@@ -1,6 +1,6 @@
 // Layer operations and linked image management.
 import { AppLayerStateFeatures } from './AppLayerStateFeatures';
-import { renderFilteredImage } from '@nvts/image-processing';
+import { decodeImageWithSharedCore, renderFilteredImage } from '@nvts/image-processing';
 import { runEdit, type LayerNode } from '@nvts/document-model';
 import { cloneLayerMasks, cloneLayerStyles, createLayerMask, FILTER_KINDS, getLayerMaskLabel, isPixelLayerType, type FilterKind, type LayerMask, type LayerStyles, type LayerType } from '@nvts/shared';
 import { renderLayersPanel } from '../panels/LayersPanel';
@@ -1209,7 +1209,8 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
           multiple: false,
           types: [{ description: 'Archivos de imagen', accept: {
             'image/png': ['.png'], 'image/jpeg': ['.jpg', '.jpeg'], 'image/webp': ['.webp'],
-            'image/gif': ['.gif'], 'image/bmp': ['.bmp'], 'image/tiff': ['.tif', '.tiff'], 'image/svg+xml': ['.svg'],
+            'image/gif': ['.gif'], 'image/bmp': ['.bmp'], 'image/tiff': ['.tif', '.tiff'],
+            'image/x-tga': ['.tga'], 'image/x-portable-pixmap': ['.ppm'], 'image/svg+xml': ['.svg'],
           } }],
         });
         return this.readPickedImage(handle);
@@ -1225,7 +1226,7 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
     }
 
   protected validatePickedImage(file: File, handle: FileSystemFileHandle): { file: File; handle: FileSystemFileHandle } {
-      if (!file.type.startsWith('image/') && !/\.(png|jpe?g|webp|gif|bmp|tiff?|svg)$/i.test(file.name)) {
+      if (!file.type.startsWith('image/') && !/\.(png|jpe?g|webp|gif|bmp|tiff?|tga|ppm|svg)$/i.test(file.name)) {
         throw new Error('El archivo seleccionado no parece ser una imagen compatible.');
       }
       return { file, handle };
@@ -1237,28 +1238,56 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
     }
 
   protected async imageFileToDocumentPixels(file: File): Promise<Uint8Array> {
-      const bitmap = await createImageBitmap(file);
       try {
-        return this.renderBitmapToDocumentPixels(bitmap);
-      } finally {
-        bitmap.close();
+        const bitmap = await createImageBitmap(file);
+        try {
+          return this.renderBitmapToDocumentPixels(bitmap);
+        } finally {
+          bitmap.close();
+        }
+      } catch (browserDecodeError) {
+        const decoded = await decodeImageWithSharedCore(file);
+        if (!decoded) throw browserDecodeError;
+        return this.renderDecodedImageToDocumentPixels(decoded.width, decoded.height, decoded.pixels);
       }
     }
 
+  private renderDecodedImageToDocumentPixels(sourceWidth: number, sourceHeight: number, pixels: Uint8Array): Uint8Array {
+    const bitmapCanvas = document.createElement('canvas');
+    bitmapCanvas.width = sourceWidth;
+    bitmapCanvas.height = sourceHeight;
+    const bitmapContext = bitmapCanvas.getContext('2d', { willReadFrequently: true });
+    if (!bitmapContext) throw new Error('Could not prepare the Shared Core decoded image.');
+    const source = bitmapContext.createImageData(sourceWidth, sourceHeight);
+    source.data.set(pixels);
+    bitmapContext.putImageData(source, 0, 0);
+    return this.renderSourceCanvasToDocumentPixels(bitmapCanvas);
+  }
+
   private renderBitmapToDocumentPixels(bitmap: ImageBitmap): Uint8Array {
+    const source = document.createElement('canvas');
+    source.width = bitmap.width;
+    source.height = bitmap.height;
+    const context = source.getContext('2d');
+    if (!context) throw new Error('Could not prepare the imported image.');
+    context.drawImage(bitmap, 0, 0);
+    return this.renderSourceCanvasToDocumentPixels(source);
+  }
+
+  private renderSourceCanvasToDocumentPixels(source: HTMLCanvasElement): Uint8Array {
     const { width, height } = this.ctl.doc;
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
     const context = canvas.getContext('2d', { willReadFrequently: true });
-    if (!context) throw new Error('No se pudo preparar la imagen para la capa de archivo.');
-    const scale = Math.min(1, width / bitmap.width, height / bitmap.height);
-    const drawWidth = Math.max(1, Math.round(bitmap.width * scale));
-    const drawHeight = Math.max(1, Math.round(bitmap.height * scale));
+    if (!context) throw new Error('Could not prepare the image for the file layer.');
+    const scale = Math.min(1, width / source.width, height / source.height);
+    const drawWidth = Math.max(1, Math.round(source.width * scale));
+    const drawHeight = Math.max(1, Math.round(source.height * scale));
     const x = Math.round((width - drawWidth) / 2);
     const y = Math.round((height - drawHeight) / 2);
     context.clearRect(0, 0, width, height);
-    context.drawImage(bitmap, x, y, drawWidth, drawHeight);
+    context.drawImage(source, x, y, drawWidth, drawHeight);
     return new Uint8Array(context.getImageData(0, 0, width, height).data);
   }
 

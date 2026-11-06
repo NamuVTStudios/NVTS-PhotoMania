@@ -9,6 +9,13 @@ import { documentFormats, rememberRecentProject } from '@nvts/storage';
 import type { Tool, TextToolSettings } from './AppBase';
 import { BRUSH_PRESETS, BRUSH_CATEGORY_LABELS, findBrushPreset } from '../tools/BrushPresetCatalog';
 import { getCanvasFitSize } from '../tools/CanvasViewGeometry';
+import type { RendererBackend } from '@nvts/renderer';
+
+function getRendererLabel(kind: RendererBackend['kind']): string {
+  if (kind === 'webgpu') return 'WebGPU';
+  if (kind === 'canvaskit') return 'CanvasKit';
+  return 'WebGL2';
+}
 
 export abstract class AppLayerStateFeatures extends AppComicFeatures {
   protected syncUI(): void {
@@ -16,8 +23,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       this.renderLayers();
       this.syncToolbarProps();
       this.updateHistoryUI();
-      this.q('#status').textContent =
-        `${this.renderer.kind === 'webgpu' ? 'WebGPU' : 'WebGL2'} · ${this.ctl.doc.width}×${this.ctl.doc.height}`;
+      this.q('#status').textContent = `${getRendererLabel(this.renderer.kind)} · ${this.ctl.doc.width}×${this.ctl.doc.height}`;
     }
 
   protected syncDocumentHeader(): void {

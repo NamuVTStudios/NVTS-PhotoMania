@@ -7,6 +7,7 @@ import { PREFERENCES_PANEL_TEMPLATE } from '../panels/PreferencesPanel';
 import { UIManager } from './UIManager';
 
 export interface StartupApplication {
+  initialize(): void;
   bindEditorPreferences(root: HTMLElement): void;
   initializeEditor(width: number, height: number, name: string, file?: File): Promise<void>;
 }
@@ -38,6 +39,7 @@ export class AppStartupManager {
       const canvas = this.mountEditorShell(root, uiManager);
       const runtime = await this.initializeRuntime(canvas, wasmBase);
       const app = this.createApp(root, canvas, runtime.engine, runtime.renderer);
+      app.initialize();
       uiManager.bindSharedPanels(root);
       app.bindEditorPreferences(root);
       await app.initializeEditor(width, height, name, file);

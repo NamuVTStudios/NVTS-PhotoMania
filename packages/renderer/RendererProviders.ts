@@ -2,12 +2,18 @@ import type { RendererProvider } from './RendererProvider';
 import type { RendererBackend } from './RendererBackend';
 import { WebGPURenderer } from './webgpu/WebGPURenderer';
 import { WebGL2Renderer } from './webgl2/WebGL2Renderer';
+import { CanvasKitRenderer } from './canvaskit/CanvasKitRenderer';
 
 export const rendererProviders: readonly RendererProvider[] = [
   {
     id: 'webgpu',
     isSupported: () => typeof navigator !== 'undefined' && 'gpu' in navigator,
     create: (canvas: HTMLCanvasElement) => WebGPURenderer.create(canvas),
+  },
+  {
+    id: 'canvaskit',
+    isSupported: () => typeof document !== 'undefined',
+    create: (canvas: HTMLCanvasElement) => CanvasKitRenderer.create(canvas),
   },
   {
     id: 'webgl2',

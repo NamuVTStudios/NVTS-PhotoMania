@@ -3,7 +3,7 @@
 export type RendererSnapshot = { width: number; height: number; pixels: Uint8Array };
 
 export interface RendererBackend {
-  readonly kind: 'webgpu' | 'webgl2';
+  readonly kind: 'webgpu' | 'webgl2' | 'canvaskit';
   /** Crea (o recrea) la textura del lienzo. Si recrea, el contenido se pierde: re-subir todo. */
   ensureSize(width: number, height: number): void;
   /**

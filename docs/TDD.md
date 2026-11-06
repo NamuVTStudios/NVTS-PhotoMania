@@ -12,6 +12,7 @@ This document describes the current repository implementation. It is not a promi
 - **Rendering is backend-agnostic at the UI boundary.** `RendererBackend` is implemented by WebGPU and WebGL2 renderers. WebGPU is attempted first; WebGL2 is used as a fallback where setup allows.
 - **Some features have UI-level rendering paths.** When a document contains filter layers, supported masks, or enabled layer styles, `AppDocumentFeatures.ts` composes those effects by tile using Canvas 2D. Local brush edits invalidate only affected tiles plus effect padding; layer/property changes trigger a full invalidation. The presence of non-destructive effects and filter padding are cached until a general invalidation, avoiding a full layer-tree scan for every brush dab. Layer style bounds are included in tile padding so outer effects have room to render beyond the alpha bounds. Filter tiles are processed across animation frames (up to eight tiles or roughly 6 ms per frame); a single expensive tile can exceed that budget, but a full-canvas invalidation no longer loops through every tile in one frame. While drawing through an enabled transform/colorization mask dependency, full filtered recomposition is deferred until the stroke ends so every dab does not restart the full-document tile queue. Otherwise it uses the Wasm compositor refresh path.
 - **Panel modules do not own independent engines.** Each panel module defines/renderers its UI and forwards document mutations through callbacks to the `App` coordinator.
+- **Preferences and plugin management are dock-style panels.** They are mounted in the application root and shown/hidden without a modal backdrop. Preferences sections are switched within the panel; settings continue to use the existing versioned local-storage key and save callback. The Edit menu binds directly to the existing history and layer operations rather than duplicating document logic.
 - **Layer Styles remain non-destructive document metadata.** The shared `LayerStyles` model stores the standard effect families plus repeatable ordered arrays for additional instances. `normalizeLayerStyles` clamps/validates persisted inputs; `LayerStyleRenderer` composes visual results on temporary Canvas 2D surfaces and leaves the source layer buffer untouched. The Effects panel owns the editable draft; style masks are the canonical per-layer source when present.
 
 ## Monorepo packages
@@ -446,5 +447,26 @@ The document canvas is the only non-overlay flex item inside `.canvas-stage`. To
 - Use optional capability interfaces (`Updatable`, `Renderable`, `Serializable`, and `Selectable`) instead of adding unrelated methods to the base class.
 - Prefer composition and narrow interfaces over deep inheritance.
 - Consumer repositories must depend on the versioned `@nvts/app-object` package from NVTS-Shared-Core; do not copy its source into application repositories.
-- PhotoMania currently adapts `Panel`, `ToolsBase`, and `AppBase` to `PanelObject`, `ToolObject`, and `ApplicationObject`. Controllers, managers, DTOs, and pure processing functions are not forced into the hierarchy.
+- PhotoMania uses `ApplicationObject` for the editor application, `ToolObject` for every registered editor tool, `PanelObject` for DOM-backed panels, `DocumentObject` for the runtime document controller, and `CommandObject` for reversible structural document commands. The application and document are initialized through the shared lifecycle; the tool manager initializes tools and maintains their active state. Managers, controllers that only coordinate services, DTOs, renderer backends, adapters, and pure processing functions remain independent unless they represent a genuine application object.
 - In the combined ecosystem archive, PhotoMania resolves the package through a sibling `link:` dependency. For standalone repository releases, publish the package and replace the local link with its published semver version.
+
+
+## Shared Core runtime integration
+
+- Depend on `@nvts/shared-core` through its public package exports; do not import vendor bundle paths directly.
+- CanvasKit renderer fallback owns an offscreen raster surface and only acquires the display canvas 2D context when rendering.
+- OpenImageIO decoding is lazy and restricted to the declared supported extension set (`jpg`, `jpeg`, `tif`, `tiff`, `bmp`, `tga`, `ppm`). Unsupported formats continue through the native browser decoder path and are not routed to OpenImageIO.
+- OpenColorIO transforms require explicit input/output color-space names and RGBA dimensions; they are not applied implicitly.
+
+
+## Tool SVG registry and toolbar mapping
+
+- Store dedicated tool artwork in `apps/web/src/icons/tools/<tool-id>.svg`.
+- Map every `ToolId` declared by `packages/ui/src/tools/ToolCatalog.ts` to `.tool-icon--<tool-id>` in `apps/web/src/styles.css`.
+- Each tool button in `packages/ui/src/components/EditorTemplate.ts` must use the matching tool ID class; do not borrow another tool's icon class.
+- Keep selection tools distinct and validate SVG XML, asset existence, CSS mask mapping, and toolbar references whenever the catalog changes.
+- UI action icons that are not editor tools may continue using their own separately named assets.
+
+### Shared Core module resolution
+
+CanvasKit, OpenImageIO, and OpenColorIO are exposed through explicit package export maps in `NVTS-Shared-Core/package.json`. Vite aliases map both canonical public specifiers and physical-layout compatibility specifiers to the executable `index.mjs` entrypoints. TypeScript paths map the same specifiers to their corresponding `index.d.ts` declarations. This keeps runtime resolution and static typing aligned and avoids relying on declaration files as runtime modules.

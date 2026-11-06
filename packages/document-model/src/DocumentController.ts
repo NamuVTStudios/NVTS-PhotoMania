@@ -1,3 +1,4 @@
+import { DocumentObject } from '@nvts/app-object';
 // Dueño del documento: árbol de capas + compositor/historial Wasm.
 // Las capas filter se representan como nodos transparentes en Wasm y se componen de forma no destructiva en UI.
 import type { NvtsEngineModule, Compositor, HistoryManager, TiledLayer } from '@nvts/wasm-bindings';
@@ -72,7 +73,7 @@ type LayerAppearanceSnapshot = {
   masks: LayerMask[];
 };
 
-export class DocumentController {
+export class DocumentController extends DocumentObject {
   readonly comp: Compositor;
   readonly history: HistoryManager;
   private nextEngineId = 1;
@@ -85,6 +86,7 @@ export class DocumentController {
   private revision = 0;
 
   private constructor(readonly mod: NvtsEngineModule, readonly doc: DocumentState, historyMB: number) {
+    super(doc.id, doc.name);
     this.comp = new mod.Compositor(doc.width, doc.height);
     this.history = new mod.HistoryManager(this.comp, historyMB);
     this.maxHistoryBytes = Math.max(0, historyMB) * 1024 * 1024;
@@ -92,13 +94,16 @@ export class DocumentController {
 
   static create(mod: NvtsEngineModule, width: number, height: number, name = 'Sin título', historyMB = 512) {
     const doc: DocumentState = { id: crypto.randomUUID(), name, width, height, layers: [] };
-    return new DocumentController(mod, doc, historyMB);
+    const controller = new DocumentController(mod, doc, historyMB);
+    controller.initialize();
+    return controller;
   }
 
   static fromUnpacked(mod: NvtsEngineModule, u: UnpackedDocument, historyMB = 512) {
     const ctl = new DocumentController(mod, { ...u.doc, layers: [] }, historyMB);
     for (const layer of u.doc.layers) ctl.adopt(layer, null, u.pixels);
     ctl.undoStack = []; ctl.redoStack = [];
+    ctl.initialize();
     return ctl;
   }
 
@@ -169,7 +174,7 @@ export class DocumentController {
     const node = this.add(type, label, parentId, index, defaults);
     if (type === 'fill') this.fillLayerPixelsRaw(node, node.fillColor ?? '#ffffff');
     if (!this.replaying) {
-      const snapshot = this.snapshot(node);
+      const snapshot = this.createLayerSnapshot(node);
       this.recordStructure(`Crear ${this.typeLabel(type)} «${label}»`, () => this.removeRaw(node.id), () => this.restoreRaw(snapshot), snapshot.memoryBytes);
     }
     return node;
@@ -192,7 +197,7 @@ export class DocumentController {
       this.removeRaw(node.id);
       throw new Error('No se pudo cargar la imagen en la capa de archivo.');
     }
-    const snapshot = this.snapshot(node);
+    const snapshot = this.createLayerSnapshot(node);
     if (!this.replaying) this.recordStructure(`Crear capa de archivo «${name}»`, () => this.removeRaw(node.id), () => this.restoreRaw(snapshot), snapshot.memoryBytes);
     return node;
   }
@@ -200,7 +205,7 @@ export class DocumentController {
   addGroup(name = 'Grupo', parentId?: string, index = -1): LayerNode {
     const node = this.add('group', name, parentId, index);
     if (!this.replaying) {
-      const snapshot = this.snapshot(node);
+      const snapshot = this.createLayerSnapshot(node);
       this.recordStructure(`Crear grupo «${name}»`, () => this.removeRaw(node.id), () => this.restoreRaw(snapshot), snapshot.memoryBytes);
     }
     return node;
@@ -228,7 +233,7 @@ export class DocumentController {
       this.removeRaw(group.id);
       return null;
     }
-    const snapshot = this.snapshot(group);
+    const snapshot = this.createLayerSnapshot(group);
     if (!this.replaying) {
       this.recordStructure(
         `Agrupar «${node.name}»`,
@@ -370,7 +375,7 @@ export class DocumentController {
   private recordDuplicateHistory(original: LayerNode, duplicated: LayerNode): void {
     if (this.replaying) return;
     // El historial de píxeles del motor Wasm referencia los IDs que realmente se asignaron.
-    const stableSnapshot = this.snapshot(duplicated);
+    const stableSnapshot = this.createLayerSnapshot(duplicated);
     this.recordStructure(
       `Duplicar «${original.name}»`,
       () => this.removeRaw(duplicated.id),
@@ -411,7 +416,7 @@ export class DocumentController {
     if (this.getLayerDeletionBlockReason(id)) return false;
     const node = this.nodes.get(id);
     if (!node) return false;
-    const snapshot = this.snapshot(node);
+    const snapshot = this.createLayerSnapshot(node);
     if (!this.removeRaw(id)) return false;
     if (!this.replaying) this.recordStructure(`Eliminar «${node.name}»`, () => this.restoreRaw(snapshot), () => this.removeRaw(id), snapshot.memoryBytes);
     return true;
@@ -857,7 +862,12 @@ export class DocumentController {
     this.comp.invalidateAll();
   }
   clearHistory(): void { this.history.clear(); this.undoStack = []; this.redoStack = []; }
-  dispose(): void { this.history.delete(); this.comp.delete(); this.nodes.clear(); this.changeListeners.clear(); }
+  protected override onDispose(): void {
+    this.history.delete();
+    this.comp.delete();
+    this.nodes.clear();
+    this.changeListeners.clear();
+  }
 
   // ── Internos ──
   private typeLabel(type: LayerType): string {
@@ -982,7 +992,7 @@ export class DocumentController {
   private cloneNodeWithNewIds(n: LayerNode): LayerNode {
     return { ...n, id: crypto.randomUUID(), engineId: 0, vectorShapes: cloneVectorShapes(n.vectorShapes), layerStyles: n.layerStyles ? cloneLayerStyles(n.layerStyles) : undefined, comicClipBounds: n.comicClipBounds ? { ...n.comicClipBounds } : undefined, masks: cloneLayerMasks(n.masks), children: n.children.map((c) => this.cloneNodeWithNewIds(c)) };
   }
-  private snapshot(node: LayerNode): LayerSnapshot {
+  private createLayerSnapshot(node: LayerNode): LayerSnapshot {
     const parent = this.parentOf(node);
     const pixels = new Map<string, Uint8Array>();
     const capture = (n: LayerNode) => { const px = this.readPixels(n); if (px) pixels.set(n.id, px); n.children.forEach(capture); };
