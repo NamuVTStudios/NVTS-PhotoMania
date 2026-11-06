@@ -14,6 +14,11 @@ export interface LayerStyleDropShadow { enabled: boolean; color: string; size: n
 export interface LayerStyleBevelEmboss { enabled: boolean; size: number; depth: number; angle: number; altitude: number; highlightColor: string; shadowColor: string; opacity: number }
 export interface LayerStyleGradientOverlay { enabled: boolean; startColor: string; endColor: string; angle: number; opacity: number }
 export interface LayerStyleInnerShadow { enabled: boolean; color: string; size: number; distance: number; angle: number; opacity: number }
+export interface LayerStyleInnerGlow { enabled: boolean; color: string; size: number; choke: number; opacity: number }
+export interface LayerStyleSatin { enabled: boolean; color: string; size: number; distance: number; angle: number; opacity: number; invert: boolean }
+export interface LayerStyleColorOverlay { enabled: boolean; color: string; opacity: number; blendMode: BlendMode }
+export type LayerStylePatternName = 'diagonal' | 'grid' | 'dots' | 'checkerboard' | 'crosshatch';
+export interface LayerStylePatternOverlay { enabled: boolean; pattern: LayerStylePatternName; color: string; backgroundColor: string; scale: number; angle: number; opacity: number; blendMode: BlendMode }
 export interface LayerStyles {
   stroke: LayerStyleStroke;
   outerGlow: LayerStyleOuterGlow;
@@ -21,6 +26,10 @@ export interface LayerStyles {
   bevelEmboss: LayerStyleBevelEmboss;
   gradientOverlay: LayerStyleGradientOverlay;
   innerShadow: LayerStyleInnerShadow;
+  innerGlow: LayerStyleInnerGlow;
+  satin: LayerStyleSatin;
+  colorOverlay: LayerStyleColorOverlay;
+  patternOverlay: LayerStylePatternOverlay;
   /** Ordered effect stacks; singular properties remain for legacy document compatibility. */
   strokes?: LayerStyleStroke[];
   outerGlows?: LayerStyleOuterGlow[];
@@ -28,6 +37,10 @@ export interface LayerStyles {
   bevelEmbosses?: LayerStyleBevelEmboss[];
   gradientOverlays?: LayerStyleGradientOverlay[];
   innerShadows?: LayerStyleInnerShadow[];
+  innerGlows?: LayerStyleInnerGlow[];
+  satins?: LayerStyleSatin[];
+  colorOverlays?: LayerStyleColorOverlay[];
+  patternOverlays?: LayerStylePatternOverlay[];
 }
 
 export function createDefaultLayerStyles(): LayerStyles {
@@ -38,6 +51,10 @@ export function createDefaultLayerStyles(): LayerStyles {
     bevelEmboss: { enabled: false, size: 4, depth: 5, angle: 45, altitude: 45, highlightColor: '#ffffff', shadowColor: '#000000', opacity: 0.7 },
     gradientOverlay: { enabled: false, startColor: '#ff5e62', endColor: '#6a5af9', angle: 90, opacity: 1 },
     innerShadow: { enabled: false, color: '#000000', size: 8, distance: 4, angle: 45, opacity: 0.55 },
+    innerGlow: { enabled: false, color: '#ffffff', size: 12, choke: 0, opacity: 0.75 },
+    satin: { enabled: false, color: '#000000', size: 8, distance: 12, angle: 19, opacity: 0.5, invert: false },
+    colorOverlay: { enabled: false, color: '#ff0000', opacity: 1, blendMode: 'normal' },
+    patternOverlay: { enabled: false, pattern: 'diagonal', color: '#ffffff', backgroundColor: '#000000', scale: 100, angle: 0, opacity: 1, blendMode: 'normal' },
   };
 }
 
@@ -51,12 +68,20 @@ export function cloneLayerStyles(styles?: LayerStyles): LayerStyles {
     bevelEmboss: { ...defaults.bevelEmboss, ...styles.bevelEmboss },
     gradientOverlay: { ...defaults.gradientOverlay, ...styles.gradientOverlay },
     innerShadow: { ...defaults.innerShadow, ...styles.innerShadow },
+    innerGlow: { ...defaults.innerGlow, ...styles.innerGlow },
+    satin: { ...defaults.satin, ...styles.satin },
+    colorOverlay: { ...defaults.colorOverlay, ...styles.colorOverlay },
+    patternOverlay: { ...defaults.patternOverlay, ...styles.patternOverlay },
     ...(Array.isArray(styles.strokes) ? { strokes: normalizeStrokeStack(styles.strokes, styles.stroke ?? defaults.stroke) } : {}),
     ...(Array.isArray(styles.outerGlows) ? { outerGlows: styles.outerGlows.map((effect) => ({ ...defaults.outerGlow, ...effect })) } : {}),
     ...(Array.isArray(styles.dropShadows) ? { dropShadows: styles.dropShadows.map((effect) => ({ ...defaults.dropShadow, ...effect })) } : {}),
     ...(Array.isArray(styles.bevelEmbosses) ? { bevelEmbosses: styles.bevelEmbosses.map((effect) => ({ ...defaults.bevelEmboss, ...effect })) } : {}),
     ...(Array.isArray(styles.gradientOverlays) ? { gradientOverlays: styles.gradientOverlays.map((effect) => ({ ...defaults.gradientOverlay, ...effect })) } : {}),
     ...(Array.isArray(styles.innerShadows) ? { innerShadows: styles.innerShadows.map((effect) => ({ ...defaults.innerShadow, ...effect })) } : {}),
+    ...(Array.isArray(styles.innerGlows) ? { innerGlows: styles.innerGlows.map((effect) => ({ ...defaults.innerGlow, ...effect })) } : {}),
+    ...(Array.isArray(styles.satins) ? { satins: styles.satins.map((effect) => ({ ...defaults.satin, ...effect })) } : {}),
+    ...(Array.isArray(styles.colorOverlays) ? { colorOverlays: styles.colorOverlays.map((effect) => ({ ...defaults.colorOverlay, ...effect })) } : {}),
+    ...(Array.isArray(styles.patternOverlays) ? { patternOverlays: styles.patternOverlays.map((effect) => ({ ...defaults.patternOverlay, ...effect })) } : {}),
   };
 }
 
@@ -98,12 +123,20 @@ export function normalizeLayerStyles(value: unknown): LayerStyles | undefined {
     bevelEmboss: normalizeBevelStyle(raw.bevelEmboss),
     gradientOverlay: normalizeGradientOverlay(raw.gradientOverlay),
     innerShadow: normalizeInnerShadow(raw.innerShadow),
+    innerGlow: normalizeInnerGlow(raw.innerGlow),
+    satin: normalizeSatin(raw.satin),
+    colorOverlay: normalizeColorOverlay(raw.colorOverlay),
+    patternOverlay: normalizePatternOverlay(raw.patternOverlay),
     ...(Array.isArray(raw.strokes) ? { strokes: normalizeStrokeStack(raw.strokes, normalizeStrokeStyle(raw.stroke)) } : {}),
     ...(Array.isArray(raw.outerGlows) ? { outerGlows: raw.outerGlows.map(normalizeOuterGlowStyle) } : {}),
     ...(Array.isArray(raw.dropShadows) ? { dropShadows: raw.dropShadows.map(normalizeDropShadowStyle) } : {}),
     ...(Array.isArray(raw.bevelEmbosses) ? { bevelEmbosses: raw.bevelEmbosses.map(normalizeBevelStyle) } : {}),
     ...(Array.isArray(raw.gradientOverlays) ? { gradientOverlays: raw.gradientOverlays.map(normalizeGradientOverlay) } : {}),
     ...(Array.isArray(raw.innerShadows) ? { innerShadows: raw.innerShadows.map(normalizeInnerShadow) } : {}),
+    ...(Array.isArray(raw.innerGlows) ? { innerGlows: raw.innerGlows.map(normalizeInnerGlow) } : {}),
+    ...(Array.isArray(raw.satins) ? { satins: raw.satins.map(normalizeSatin) } : {}),
+    ...(Array.isArray(raw.colorOverlays) ? { colorOverlays: raw.colorOverlays.map(normalizeColorOverlay) } : {}),
+    ...(Array.isArray(raw.patternOverlays) ? { patternOverlays: raw.patternOverlays.map(normalizePatternOverlay) } : {}),
   };
 }
 
@@ -141,6 +174,33 @@ function normalizeInnerShadow(value: unknown): LayerStyleInnerShadow {
   return { enabled: readEffectEnabled(raw), color: boundedColor(raw.color, defaults.color), size: boundedNumber(raw.size, defaults.size, 0, 64), distance: boundedNumber(raw.distance, defaults.distance, 0, 128), angle: boundedNumber(raw.angle, defaults.angle, -180, 180), opacity: boundedNumber(raw.opacity, defaults.opacity, 0, 1) };
 }
 
+
+function normalizeInnerGlow(value: unknown): LayerStyleInnerGlow {
+  const raw = asStyleRecord(value); const defaults = createDefaultLayerStyles().innerGlow;
+  return { enabled: readEffectEnabled(raw), color: boundedColor(raw.color, defaults.color), size: boundedNumber(raw.size, defaults.size, 0, 128), choke: boundedNumber(raw.choke, defaults.choke, 0, 100), opacity: boundedNumber(raw.opacity, defaults.opacity, 0, 1) };
+}
+
+function normalizeSatin(value: unknown): LayerStyleSatin {
+  const raw = asStyleRecord(value); const defaults = createDefaultLayerStyles().satin;
+  return { enabled: readEffectEnabled(raw), color: boundedColor(raw.color, defaults.color), size: boundedNumber(raw.size, defaults.size, 0, 128), distance: boundedNumber(raw.distance, defaults.distance, 0, 256), angle: boundedNumber(raw.angle, defaults.angle, -180, 180), opacity: boundedNumber(raw.opacity, defaults.opacity, 0, 1), invert: raw.invert === true };
+}
+
+function normalizeColorOverlay(value: unknown): LayerStyleColorOverlay {
+  const raw = asStyleRecord(value); const defaults = createDefaultLayerStyles().colorOverlay;
+  return { enabled: readEffectEnabled(raw), color: boundedColor(raw.color, defaults.color), opacity: boundedNumber(raw.opacity, defaults.opacity, 0, 1), blendMode: normalizeBlendMode(raw.blendMode, defaults.blendMode) };
+}
+
+function normalizePatternOverlay(value: unknown): LayerStylePatternOverlay {
+  const raw = asStyleRecord(value); const defaults = createDefaultLayerStyles().patternOverlay;
+  const patterns: LayerStylePatternName[] = ['diagonal', 'grid', 'dots', 'checkerboard', 'crosshatch'];
+  const pattern = patterns.includes(raw.pattern as LayerStylePatternName) ? raw.pattern as LayerStylePatternName : defaults.pattern;
+  return { enabled: readEffectEnabled(raw), pattern, color: boundedColor(raw.color, defaults.color), backgroundColor: boundedColor(raw.backgroundColor, defaults.backgroundColor), scale: boundedNumber(raw.scale, defaults.scale, 10, 500), angle: boundedNumber(raw.angle, defaults.angle, -180, 180), opacity: boundedNumber(raw.opacity, defaults.opacity, 0, 1), blendMode: normalizeBlendMode(raw.blendMode, defaults.blendMode) };
+}
+
+function normalizeBlendMode(value: unknown, fallback: BlendMode): BlendMode {
+  return value === 'multiply' || value === 'screen' || value === 'overlay' || value === 'normal' ? value : fallback;
+}
+
 function asStyleRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null) return {};
   return value as Record<string, unknown>;
@@ -159,7 +219,7 @@ export function isFilterKind(value: unknown): value is FilterKind {
 export type VectorKind =
   | 'rectangle' | 'rounded-rectangle' | 'ellipse' | 'line'
   | 'polygon' | 'polyline' | 'bezier' | 'freehand'
-  | 'star' | 'spiral' | 'text';
+  | 'star' | 'spiral' | 'text' | 'speech-bubble' | 'flash';
 
 export interface MaskBase {
   id: string;

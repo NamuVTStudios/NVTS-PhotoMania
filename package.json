@@ -4,12 +4,12 @@
   "type": "module",
   "packageManager": "pnpm@12.9.1",
   "scripts": {
-    "build:wasm": "cd packages/engine && bash build.sh && cd ../.. && node tools/copy-wasm.mjs",
-    "dev": "cd apps/web && vite",
-    "build": "pnpm --filter @nvts/web build",
-    "preview": "pnpm --filter @nvts/web preview",
+    "build:wasm": "node tools/build-wasm.mjs",
+    "dev": "node tools/build-wasm.mjs && node tools/run-vite.mjs dev",
+    "build": "node tools/build-wasm.mjs && node tools/run-vite.mjs build",
+    "preview": "node tools/run-vite.mjs preview",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --test --test-concurrency=1",
+    "test": "node tools/build-wasm.mjs && node --test --test-concurrency=1",
     "audit:control-flow": "node tools/audit-control-flow.mjs"
   },
   "devDependencies": {
@@ -18,5 +18,8 @@
     "@webgpu/types": "^0.1.40",
     "typescript": "^5.6.0",
     "vite": "^5.4.0"
+  },
+  "dependencies": {
+    "@nvts/app-object": "link:../NVTS-Shared-Core/packages/app-object"
   }
 }

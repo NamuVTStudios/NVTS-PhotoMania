@@ -1,3 +1,4 @@
+import { ApplicationObject } from '@nvts/app-object';
 // Shared state and internal contract for the editor's feature modules.
 import { type EngineClient, type TiledLayer } from '@nvts/wasm-bindings';
 import { type RendererBackend } from '@nvts/renderer';
@@ -19,11 +20,11 @@ import type { WorkspaceDefinition, WorkspaceId } from '../workspaces';
 import { readComicConfig } from './AppUtilities';
 
 export type Tool = ToolId;
-export type ToolSettings = { size: number; opacity: number; hardness: number; spacing: number; smoothing: number; tolerance: number; contiguous: boolean; sampleMerged: boolean; sampleRadius: 1 | 3 | 5; shapeFill: boolean; shapeCornerRadius: number; polygonSides: number; starPoints: number; spiralTurns: number; lineCap: CanvasLineCap; lineJoin: CanvasLineJoin; gradientType: 'linear' | 'radial'; gradientReverse: boolean; panSensitivity: number; zoomIncrement: number; vectorKeepAspectRatio: boolean };
+export type ToolSettings = { presetId: string; tipShape: 'round' | 'square' | 'diamond' | 'star' | 'flower' | 'leaf' | 'lace'; texture: number; size: number; opacity: number; hardness: number; spacing: number; smoothing: number; tolerance: number; contiguous: boolean; sampleMerged: boolean; sampleRadius: 1 | 3 | 5; gapClosure: 0 | 1 | 2; shapeFill: boolean; shapeCornerRadius: number; polygonSides: number; starPoints: number; spiralTurns: number; lineCap: CanvasLineCap; lineJoin: CanvasLineJoin; smudgeMode: 'smudge' | 'blur' | 'mixer' | 'wet'; gradientType: 'linear' | 'radial' | 'contour'; gradientReverse: boolean; panSensitivity: number; zoomIncrement: number; vectorKeepAspectRatio: boolean };
 export type FillOperation = {
   width: number; height: number; original: Uint8Array; reference: Uint8Array; seedX: number; seedY: number;
   seedColor: readonly [number, number, number, number]; tolerance: number; color: readonly [number, number, number];
-  opacity: number; contiguous: boolean;
+  opacity: number; contiguous: boolean; matchMask?: Uint8Array;
 };
 export type FillResult = { pixels: Uint8Array; filled: number; minX: number; minY: number; maxX: number; maxY: number };
 export type WorkspacePanelElements = { advanced: HTMLElement; history: HTMLElement; layers: HTMLElement; comic: HTMLElement; storyboard: HTMLElement; timeline: HTMLElement; dock: HTMLElement };
@@ -36,7 +37,7 @@ export type PanelVisibilityEntry = { button: HTMLButtonElement; panel: HTMLEleme
 export type StrokeLayerPixels = ReturnType<DocumentController['layerPixels']>;
 
 
-export abstract class AppBase {
+export abstract class AppBase extends ApplicationObject {
   protected ctl!: DocumentController;
   protected documentUnsubscribe: (() => void) | null = null;
   protected ctx!: EngineCtx;
@@ -54,6 +55,9 @@ export abstract class AppBase {
   protected comicConfigWriteChain: Promise<void> = Promise.resolve();
   protected activeId = '';
   protected activeMaskId = '';
+  protected selectionMask: Uint8Array | null = null;
+  protected selectionMaskWidth = 0;
+  protected selectionMaskHeight = 0;
   protected readonly toolManager = new ToolManager('brush');
   protected comicToolMode: 'frame' | 'panel' | 'split' = 'frame';
   protected comicBorderWidth = 5;
@@ -64,7 +68,7 @@ export abstract class AppBase {
   protected vectorDrawGesture: { layerId: string; id: string; tool: VectorDrawingToolId; startPoint: { x: number; y: number }; currentPoint: { x: number; y: number }; points: Array<{ x: number; y: number }> } | null = null;
   protected pixelShapePoints: Array<{ x: number; y: number }> = [];
   protected vectorGesture: { layerId: string; shapeId: string; mode: 'move' | 'resize'; startPoint: { x: number; y: number }; original: VectorShape; latest: VectorShape; moved: boolean } | null = null;
-  protected brush: ToolSettings & { rgb: [number, number, number] } = { rgb: [0, 0, 0], size: 24, opacity: 100, hardness: 80, spacing: 15, smoothing: 0, tolerance: 24, contiguous: true, sampleMerged: false, sampleRadius: 1, shapeFill: false, shapeCornerRadius: 20, polygonSides: 6, starPoints: 5, spiralTurns: 4, lineCap: 'round', lineJoin: 'round', gradientType: 'linear', gradientReverse: false, panSensitivity: 100, zoomIncrement: 1.1, vectorKeepAspectRatio: false };
+  protected brush: ToolSettings & { rgb: [number, number, number] } = { rgb: [0, 0, 0], presetId: 'custom', tipShape: 'round', texture: 0, size: 24, opacity: 100, hardness: 80, spacing: 15, smoothing: 0, tolerance: 24, contiguous: true, sampleMerged: false, sampleRadius: 1, gapClosure: 0, shapeFill: false, shapeCornerRadius: 20, polygonSides: 6, starPoints: 5, spiralTurns: 4, lineCap: 'round', lineJoin: 'round', smudgeMode: 'smudge', gradientType: 'linear', gradientReverse: false, panSensitivity: 100, zoomIncrement: 1.1, vectorKeepAspectRatio: false };
   protected stroke: StrokeSession | null = null;
   protected strokeLayer: ReturnType<DocumentController['layerPixels']> = null;
   protected strokeTool: Tool | null = null;
@@ -94,9 +98,6 @@ export abstract class AppBase {
   protected raf = 0;
   protected recentSaveTimer: ReturnType<typeof setTimeout> | null = null;
   protected filterEditLayerId: string | null = null;
-  protected filterMaskEditLayerId: string | null = null;
-  protected filterMaskEditId: string | null = null;
-  protected filterMaskFilterIndex = 0;
   protected previousEditorDockWidth: string | null = null;
   protected filterPanel: FilterPanelController | null = null;
   protected layerEffectsPanel: LayerEffectsPanelController | null = null;
@@ -116,7 +117,16 @@ export abstract class AppBase {
     protected readonly canvas: HTMLCanvasElement,
     protected readonly engine: EngineClient,
     protected readonly renderer: RendererBackend,
-  ) { }
+  ) {
+    super('photomania.editor', 'PhotoMania Editor');
+  }
+
+  protected activateCreatedLayer(layer: LayerNode): void {
+    this.activeId = layer.id;
+    this.activeMaskId = '';
+    const maskEditor = this.root.querySelector<HTMLElement>('#masks-panel');
+    if (maskEditor && !maskEditor.hidden) this.hideRightEditors();
+  }
 
   protected abstract openInitialFile(file: File | undefined, fallbackName: string): Promise<void>;
   protected abstract openNativeProjectFile(file: File, fallbackName: string): Promise<void>;
@@ -328,19 +338,17 @@ export abstract class AppBase {
   protected abstract editTextLayer(layer: LayerNode): void;
   protected abstract createLayerBehaviorRegistry(): Record<LayerType, LayerBehavior>;
   protected abstract openLayerEffectsEditor(layer: LayerNode): void;
-  protected abstract showRightEditor(panelId: 'effects-panel' | 'filters-panel'): void;
+  protected abstract showRightEditor(panelId: 'effects-panel' | 'filters-panel' | 'masks-panel'): void;
   protected abstract hideRightEditors(): void;
   protected abstract setRightEditorVisibility(visible: boolean): void;
   protected abstract expandRightDockForEditor(): void;
   protected abstract restoreRightDockWidth(): void;
   protected abstract changeFillColor(layer: LayerNode): void;
   protected abstract openFilterEditor(layer: LayerNode): void;
-  protected abstract openFilterMaskEditor(layer: LayerNode, maskId: string, filterIndex?: number): void;
   protected abstract prepareFilterEditor(layerName: string, kind: FilterKind, strength: number, hint: string, mode: string): void;
   protected abstract filterLabel(kind: FilterKind): string;
   protected abstract openDestructiveFilterPanel(): void;
   protected abstract applyFilterDialog(): void;
-  protected abstract applyFilterMaskSelection(kind: FilterKind, strength: number): void;
   protected abstract getActiveFilterSelection(): { layer: LayerNode; kind: FilterKind; strength: number } | null;
   protected abstract updateExistingFilterLayer(layer: LayerNode, kind: FilterKind, strength: number): boolean;
   protected abstract canApplyDestructiveFilter(layer: LayerNode): boolean;
@@ -439,7 +447,7 @@ export abstract class AppBase {
   protected abstract shouldTogglePanelsFromKey(event: KeyboardEvent, mod: boolean, typing: boolean, insideMenuOrDialog: boolean): boolean;
   protected abstract revealPanelsWhenAllHidden(entries: PanelVisibilityEntry[], everyPanelHidden: boolean): void;
   protected abstract handleDocumentShortcut(event: KeyboardEvent, mod: boolean, key: string): boolean;
-  protected abstract handleToolShortcut(key: string, mod: boolean, typing: boolean): void;
+  protected abstract handleToolShortcut(key: string, mod: boolean, typing: boolean, shift?: boolean): void;
   protected abstract createPluginApiContext(): Partial<PluginApi>;
   protected abstract beginVectorGesture(point: { x: number; y: number }, event: PointerEvent): void;
   protected abstract transformVectorShape(original: VectorShape, dx: number, dy: number, mode: 'move' | 'resize'): VectorShape;

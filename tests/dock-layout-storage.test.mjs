@@ -6,11 +6,12 @@ let vite;
 let readDockLayout;
 let writeDockLayout;
 let resetDockLayout;
+let migrateDockSizes;
 const originalStorageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
 
 before(async () => {
   vite = await createViteTestServer();
-  ({ readDockLayout, writeDockLayout, resetDockLayout } = await vite.ssrLoadModule('/packages/ui/src/persistence/DockLayoutStorage.ts'));
+  ({ readDockLayout, writeDockLayout, resetDockLayout, migrateDockSizes } = await vite.ssrLoadModule('/packages/ui/src/persistence/DockLayoutStorage.ts'));
 });
 
 after(async () => {
@@ -101,4 +102,40 @@ test('restaura la configuración predeterminada eliminando todos los overrides g
   assert.deepEqual(resetDockLayout(), { version: 1, workspaces: {} });
   assert.deepEqual(readDockLayout(), { version: 1, workspaces: {} });
   assert.equal(storage.get('nvts-photomania-dock-layout-v1'), JSON.stringify({ version: 1, workspaces: {} }));
+});
+
+
+test('actualiza una sola vez el ancho del dock y la altura del panel de capas', () => {
+  const storage = useStorage(JSON.stringify({
+    version: 1,
+    workspaces: {
+      general: {
+        dockWidth: 280,
+        panelsHidden: false,
+        order: ['layers'],
+        panels: { layers: { visible: true, floating: false, x: 0, y: 0, width: 360, height: 310, dockHeight: 310 } },
+      },
+      vector: {
+        dockWidth: 420,
+        panelsHidden: false,
+        order: ['layers'],
+        panels: { layers: { visible: true, floating: false, x: 0, y: 0, width: 420, height: 500, dockHeight: 500 } },
+      },
+    },
+  }));
+  const migrated = migrateDockSizes(readDockLayout(), 360, 420);
+  assert.equal(migrated.workspaces.general.dockWidth, 360);
+  assert.equal(migrated.workspaces.general.panels.layers.dockHeight, 420);
+  assert.equal(migrated.workspaces.vector.dockWidth, 420);
+  assert.equal(migrated.workspaces.vector.panels.layers.dockHeight, 500);
+  assert.equal(storage.get('nvts-photomania-dock-size-360x420-migrated'), 'true');
+
+  const shrunkLayout = {
+    ...migrated,
+    workspaces: {
+      ...migrated.workspaces,
+      general: { ...migrated.workspaces.general, dockWidth: 300 },
+    },
+  };
+  assert.equal(migrateDockSizes(shrunkLayout, 360, 420).workspaces.general.dockWidth, 300);
 });

@@ -99,7 +99,7 @@ export class WebGPURenderer implements RendererBackend {
     this.tex = this.device.createTexture({
       size: [width, height],
       format: 'rgba8unorm',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC,
     });
     this.texW = width;
     this.texH = height;
@@ -132,6 +132,30 @@ export class WebGPURenderer implements RendererBackend {
 
   setOpacity(value: number): void {
     this.opacity = Math.min(1, Math.max(0, value));
+  }
+
+  async capturePixels(): Promise<{ width: number; height: number; pixels: Uint8Array }> {
+    if (!this.tex || this.texW <= 0 || this.texH <= 0) throw new Error('La textura WebGPU todavía no está disponible.');
+    const width = this.texW;
+    const height = this.texH;
+    const bytesPerRow = Math.ceil((width * 4) / 256) * 256;
+    const buffer = this.device.createBuffer({
+      size: bytesPerRow * height,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    try {
+      const encoder = this.device.createCommandEncoder();
+      encoder.copyTextureToBuffer(
+        { texture: this.tex },
+        { buffer, bytesPerRow, rowsPerImage: height },
+        { width, height, depthOrArrayLayers: 1 },
+      );
+      this.device.queue.submit([encoder.finish()]);
+      await buffer.mapAsync(GPUMapMode.READ);
+      return { width, height, pixels: copyUnpaddedRows(new Uint8Array(buffer.getMappedRange()), width, height, bytesPerRow) };
+    } finally {
+      releaseReadbackBuffer(buffer);
+    }
   }
 
   /** Dibuja la capa ajustada ("contain") al tamaño actual del canvas. */
@@ -169,7 +193,7 @@ export class WebGPURenderer implements RendererBackend {
     const pass = encoder.beginRenderPass({
       colorAttachments: [{
         view: this.ctx.getCurrentTexture().createView(),
-        clearValue: { r: 0.12, g: 0.12, b: 0.12, a: 1 },
+        clearValue: { r: 0, g: 0, b: 0, a: 0 },
         loadOp: 'clear',
         storeOp: 'store',
       }],
@@ -186,6 +210,15 @@ export class WebGPURenderer implements RendererBackend {
     this.uniforms.destroy();
     this.device.destroy();
   }
+}
+
+function copyUnpaddedRows(source: Uint8Array, width: number, height: number, bytesPerRow: number): Uint8Array {
+  const rowBytes = width * 4;
+  const output = new Uint8Array(rowBytes * height);
+  for (let row = 0; row < height; row++) {
+    output.set(source.subarray(row * bytesPerRow, row * bytesPerRow + rowBytes), row * rowBytes);
+  }
+  return output;
 }
 
 function toGPUBuffer(
@@ -206,3 +239,8 @@ renderer.setLayerPixels(img.getPixels(), img.width, img.height); // Wasm -> GPU
 renderer.setOpacity(0.8);
 renderer.render();
 */
+
+function releaseReadbackBuffer(buffer: GPUBuffer): void {
+  if (buffer.mapState === 'mapped') buffer.unmap();
+  buffer.destroy();
+}

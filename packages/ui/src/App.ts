@@ -25,8 +25,10 @@ export class App extends AppFileFeatures {
   }
 
   async initializeEditor(width: number, height: number, name: string, file?: File): Promise<void> {
-    this.bind();
+    // Tool availability and layer panels read ctl.doc while the editor controls are bound.
+    // Install the initial document before bind() performs its first UI synchronization.
     this.newDocument(width, height, file ? documentNameFromFile(file.name) : name);
+    this.bind();
     await this.openInitialFile(file, name);
   }
 }

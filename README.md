@@ -8,10 +8,10 @@ NVTS-PhotoMania is a browser-based, layer-oriented image editor developed by Nam
 
 - Node.js 20 or newer.
 - pnpm (the root `package.json` currently declares `pnpm@12.9.1`).
-- Emscripten/emsdk activated to rebuild the C++ engine to WebAssembly.
+- Emscripten/emsdk installed. The root scripts activate it automatically on Windows when it is installed under `%USERPROFILE%\emsdk`; on POSIX systems, use an active `EMSDK` installation.
 - A modern browser with WebGPU or WebGL2. Chrome and Edge are the primary targets for File System Access API workflows such as choosing a project directory and keeping file handles.
 
-The Layer Effects panel provides non-destructive Stroke, Outer Glow, Drop Shadow, and Bevel/Emboss controls. Parameters are stored in the layer model and `.nvtsphoto` manifest; the Canvas 2D compositor renders them on offscreen surfaces with effect-aware tile padding. Full browser visual verification remains a release gate.
+The Layer Effects panel provides ten non-destructive style families: Stroke, Drop Shadow, Inner Shadow, Outer Glow, Inner Glow, Bevel/Emboss, Satin, Color Overlay, Gradient Overlay, and Pattern Overlay. Every family supports independent additional instances that can be configured and removed. Parameters are stored in the layer model and `.nvtsphoto` manifest; the Canvas 2D compositor renders them on offscreen surfaces while preserving source pixels. Full browser visual verification remains a release gate.
 
 When running on a browser without File System Access API support, document open/save can use classic file-input/download fallbacks. Directory-based Comic Manager workflows require browser support for `showDirectoryPicker` and a secure context such as `localhost` or HTTPS.
 
@@ -24,7 +24,7 @@ pnpm install
 pnpm dev
 ```
 
-The root `dev` script enters `apps/web` and runs the workspace-local Vite executable directly, avoiding a nested `pnpm` invocation from inside a pnpm lifecycle script. Open the local URL printed by Vite (normally `http://localhost:5173`).
+The root `dev` script automatically builds and copies the WebAssembly engine, then launches the Vite CLI from `apps/web` without starting a nested pnpm process. Open the local URL printed by Vite (normally `http://localhost:5173`).
 
 Useful commands:
 
@@ -35,11 +35,9 @@ pnpm build        # Production web build
 pnpm build:wasm   # Rebuild the C++ engine and copy the Wasm assets
 ```
 
-If `pnpm dev` fails in Git Bash on Windows while calling the global `pnpm` launcher from inside the root script, the root script is intentionally configured to launch Vite directly from `apps/web`. Do not commit machine-specific absolute paths to `node.exe` or `pnpm.mjs`; those paths vary per computer. If the command still fails before the script starts, verify `node --version`, `pnpm --version`, and that `pnpm install` completed successfully, then use the complete error output to identify a PATH or package-manager installation problem.
+The Vite launcher uses the repository-local installation and avoids nested pnpm commands. Do not commit machine-specific absolute paths to `node.exe` or `pnpm.mjs`; those paths vary per computer. If a command fails before the script starts, verify `node --version`, `pnpm --version`, and that `pnpm install` completed successfully, then use the complete error output to identify a PATH or package-manager installation problem.
 
-`pnpm build:wasm` requires Emscripten. The generated artifacts are copied to the web app's public Wasm directory by `tools/copy-wasm.mjs`.
-
-The history and `.nvtsphoto` tests use Node's built-in test runner and the generated Wasm module. Rebuild the engine with `pnpm build:wasm` before running them after C++ changes.
+`pnpm dev`, `pnpm build`, and `pnpm test` automatically run the cross-platform WebAssembly builder before their main task. `pnpm build:wasm` remains available when you explicitly want to rebuild the engine by itself. The builder activates Emscripten and copies the generated Wasm asset to the web app through `tools/copy-wasm.mjs`. The history and `.nvtsphoto` tests use Node's built-in test runner and the generated Wasm module.
 
 ## Application Entry Point and Feature Modules
 
@@ -53,6 +51,7 @@ The history and `.nvtsphoto` tests use Node's built-in test runner and the gener
 - `AppLayerPanelFeatures.ts`: layer operations and linked image management.
 - `AppVectorFeatures.ts`: vector layer editing and SVG export.
 - `AppEventFeatures.ts`: event binding, menus, shortcuts, and vector gestures.
+- `LayerMenuCommandRouter.ts`: guarded dispatch for layer-menu actions, including commands that require an active layer.
 - `AppDrawingFeatures.ts`: drawing-tool interactions, clone-stamp sampling, comic frame/panel creation, brush strokes, and fill operations.
 - `AppSamplingFeatures.ts`: canvas compositing and color sampling.
 - `AppFileFeatures.ts`: undo/redo and document file operations.
@@ -71,7 +70,7 @@ Concrete tools are modeled using the requested inheritance structure:
 - Hand, eyedropper, and text creation inherit directly from `ToolsBase` because they navigate/sample the canvas or create text independently of raster/vector paint targets.
 - `ToolCatalog.ts` registers concrete classes. `ToolManager` resolves the registered class and checks layer compatibility before allowing the app to activate a target-specific tool.
 
-The clone stamp records a source point with `Alt + click`, reads only the source patch needed for each dab, and applies a circular softness/opacity mask while copying to the destination layer. If source and destination are the same layer, it keeps original snapshots only for the 256×256 tiles the stroke touches, preventing self-cloning from progressively smearing newly written pixels; this self-clone cache is capped at 64 MiB per stroke. The comic tool creates the outer page frame with a click in **Marco exterior** mode and creates individual rectangular panels by dragging in **Viñeta** mode. Both comic operations update the selected vector layer through its existing vector-content/history pathway.
+The clone stamp records a source point with `Alt + click`, reads only the source patch needed for each dab, and applies a circular softness/opacity mask while copying to the destination layer. If source and destination are the same layer, it keeps original snapshots only for the 256×256 tiles the stroke touches, preventing self-cloning from progressively smearing newly written pixels; this self-clone cache is capped at 64 MiB per stroke. The comic tool creates the outer page frame with a click in **Outer frame** mode and creates individual rectangular panels by dragging in **Panel** mode. Both comic operations update the selected vector layer through its existing vector-content/history pathway.
 
 ## Strategy Pattern
 
@@ -80,7 +79,7 @@ The editor uses interchangeable strategies where behavior varies by tool or algo
 - `packages/ui/src/app/EditorStrategies.ts` defines brush/eraser and clone-stamp algorithms, contiguous/global fill strategies, and immediate-tool strategies. `AppDrawingFeatures` selects the relevant implementation based on the active tool and fill settings.
 - `packages/ui/src/tools/` contains the inheritance hierarchy and catalog: `ToolsBase` is the common parent, `ToolsRaster` handles tools that edit paint/raster layers, and `ToolsVectors` handles tools that edit vector layers. Concrete tool classes are registered through `ToolCatalog.ts`; `ToolManager` owns the active ID and exposes layer compatibility checks.
 - `packages/image-processing/src/filters/FilterProcessor.ts` uses strategy registries for CSS-backed and pixel-backed filter algorithms. The same filter strategy is reused by destructive filters, non-destructive filter layers, and sampling/composition paths.
-- `packages/image-processing/src/effects/LayerStyleRenderer.ts` renders Stroke, Outer Glow, Drop Shadow, and Bevel/Emboss onto a cached offscreen composite surface; each effect supports an ordered stack of independent instances while legacy single-instance fields remain compatible. Layer source pixels remain unchanged.
+- `packages/image-processing/src/effects/LayerStyleRenderer.ts` renders the ten supported layer-style families onto cached offscreen composite surfaces; each family supports ordered independent instances while legacy single-instance fields remain compatible. Layer source pixels remain unchanged.
 
 To add another brush, fill algorithm, immediate tool, or pixel filter, implement the corresponding contract and register it rather than adding another branch to the central drawing or filter flow. A dedicated raster-selection tool is not currently part of `ToolId`; vector selection is covered by the immediate-tool strategy until a separate raster-selection feature is implemented.
 
@@ -102,18 +101,26 @@ The refactoring is incremental: modules that only define data, render a view, or
 - **Document templates:** the 36 document presets (social posts/stories, screen sizes, A4, US/European comics, manga/manhwa, animation, and UV/2D textures) are maintained as individual modules in the shared `@nvts/templates` workspace package so other NVTS apps can reuse them. Related print presets support optional `extendsId` inheritance; `resolveTemplateInheritance` resolves parent fields, merges print metadata, and rejects missing parents or cycles before the catalog is exposed.
 - **Canvas and navigation:** fit-to-window view, zoom with controls or Ctrl/Meta + mouse wheel, panning with the Hand tool or Space + drag, and responsive canvas sizing.
 - **Drawing tools:** brush, eraser, clone stamp, eyedropper, line, rectangle, ellipse, bucket fill, text, gradient, smudge, liquify, vector selection, a comic frame/panel tool, editable vector rectangle, rounded rectangle, ellipse, line, Bézier pen, polygon, star, freehand, polyline and spiral, plus rasterized pixel counterparts for rounded rectangle, polyline, Bézier curve, polygon, star and spiral. The existing pixel line, rectangle, ellipse and brush also cover the matching simple vector forms. Clone Stamp uses `Alt + click` to set the source point, then samples only the source patch needed for each dab and paints into the selected paint layer. Same-layer cloning preserves original snapshots only for touched 256×256 tiles, with a 64 MiB per-stroke guard. Comic mode creates a full-page outer frame on click or individual rectangular panels by dragging; both are editable vector shapes and participate in document history. The brush exposes size, opacity, hardness, spacing, and smoothing controls; the clone stamp reuses size/opacity controls; the comic tool exposes frame/panel/split mode, border width, one-or-two straight split lines, and the spacing between parallel dividers. Tool and vector-shape icons are individual SVG assets in `apps/web/src/icons/tools/`. Menus, the welcome screen, timeline controls, comic manager, filter/effect panels, and dialog close buttons use the collection of 95 SVG assets in `apps/web/public/icons/ui/`; CSS masks inherit the active text color and remain legible in both themes. Google Drive and Dropbox display their SVG logos but remain marked as future integrations until their cloud APIs are implemented.
-- **Non-destructive layer masks:** affine transform masks, colorization masks with editable color strokes, filter masks with per-layer filter stacks, and style masks. The layer-style editor supports additional independent instances of Stroke, Outer Glow, Drop Shadow, and Bevel/Emboss, each with its own parameters; all instances are retained in the native document format and included in rendering. Transform, colorization, and filter masks can be created from **Layers → New Layer** in the Layers panel; a `Máscara de estilos` is created automatically when layer styles are applied. The mask disclosure section keeps selected-mask controls available, and mask metadata is saved in `.nvtsphoto`. Colorization currently uses a line-barrier region fill and is limited to 4 million document pixels. Filter masks apply to the entire layer; every filter entry can be opened and edited in the shared Filters window. Style masks can be enabled/disabled and reopened without destructive pixel changes. Painted grayscale coverage and advanced warp transforms are not implemented yet.
+- **Non-destructive layer masks:** affine transform masks, colorization masks with editable color strokes, filter masks with per-layer filter stacks, and style masks. The single right-side **Layer Masks** panel lists every mask attached to the selected layer and keeps each mask type’s controls inside its own expandable entry in that same panel. Changes preview on the canvas and remain staged until **Apply changes** commits them as one undoable action; **Cancel** restores the original mask collection. The canvas preview can show the original result, a 50/50 before-and-after split, or the edited result. A `Style Mask` is created when layer styles are applied, and mask metadata is saved in `.nvtsphoto`. Colorization currently uses a line-barrier region fill and is limited to 4 million document pixels. Filter masks apply to the entire layer and their filter stacks are edited inline in the Layer Masks panel. Painted grayscale coverage and advanced warp transforms are not implemented yet.
 - **Layer model:** paint, filter, fill, file/image, vector, text, and group layers. Layers support names, order, visibility, lock state, opacity, blend mode, duplication, deletion, nested groups, and thumbnails.
 - **History:** pixel edits use the Wasm tile history; document structure and property changes are recorded by the TypeScript `DocumentController`. Undo/redo shortcuts are `Ctrl/Meta+Z`, `Ctrl/Meta+Shift+Z`, and `Ctrl/Meta+Y`. The history panel shows an estimated memory total, including snapshots retained during an active brush/eraser stroke.
 - **Performance and large documents:** brush/eraser dabs are processed in short animation-frame batches (up to 64 dabs or roughly 4 ms per batch) so long pointer paths yield to the browser. When non-destructive effects are present, local edits invalidate only affected tiles plus filter padding; effect changes force a full invalidation. Effect tiles are rendered incrementally (up to eight tiles or about 6 ms per frame) so initial large filtered documents can appear progressively rather than monopolizing one frame. On a layer path with a transform/colorization mask that requires global recomposition, the filtered preview is recomputed after the pointer is released instead of restarting a full-canvas render during every dab. The engine reuses bounded read/write scratch buffers, the renderer avoids an extra GPU-upload copy for ordinary `ArrayBuffer` views, and pixel plus structural history share the configured memory budget. The editor still runs on the main thread; a Worker-based engine, streaming file I/O and fully asynchronous imports/exports remain future work.
 - **Text:** a text layer stores editable text and typography metadata along with a raster preview. The top tool bar contains font, style, size, and color; advanced options contain alignment, line height, letter spacing, stroke, and background controls.
 - **Vector layers:** editable shape metadata, object list, move/resize interactions, shape editing controls, and SVG export. Selection bounds use the actual path/node geometry and Bézier handles, so the selection frame and rotation pivot stay aligned with the object. The displayed compositor image is currently rasterized; this is not yet a feature-complete vector illustration package.
 - **Filters and layer appearance:** 17 filters covering grayscale, invert, sepia, blur, brightness, contrast, saturation, hue rotation, sharpen, posterize, threshold, duotone, solarize, pixelation, edge detection, grain, and vignette. Filter layers render non-destructively in the current UI renderer path; layer opacity and blend modes are available as layer properties.
-- **Layer Styles status:** the panel exposes non-destructive Stroke, Outer Glow, Drop Shadow, and Bevel/Emboss controls. Their parameters are represented in the shared layer model and serialized in `.nvtsphoto`; visual regression, undo/redo, and full production-build verification remain pending. Color Overlay and Gradient Overlay are not part of this implementation slice. Jira is the source of truth for implementation tasks and statuses; the GDD defines product scope and the TDD records the technical design and verification strategy.
+- **Layer Styles:** the non-destructive style mask supports Stroke, Drop Shadow, Inner Shadow, Outer Glow, Inner Glow, Bevel/Emboss, Satin, Color Overlay, Gradient Overlay, and Pattern Overlay. Styles preview on the canvas without overwriting source pixels; all ten style families can have additional independently configured instances. Pattern Overlay includes diagonal, grid, dots, checkerboard, and crosshatch presets. Style data is normalized and persisted in `.nvtsphoto`; production-build and visual-regression verification must pass before release.
 - **Workspaces:** General, Digital Illustration, Vector Illustration, Image Manipulation, Comics, Storyboarding, and Animation, with a saved workspace choice.
 - **Panels and appearance:** modular Layers, History, Advanced Tool Options, Comic Manager, and supporting filter/vector/effects/plugin/preferences panels; light and dark themes; per-panel visibility under **View → Panels**; `Tab` toggles the panel zone. Dock panels can be reordered by dragging their headers, detached into floating windows, re-docked, resized individually, and the width of the whole panel zone can be dragged. Layouts are saved separately for each workspace. **View → Restore workspace defaults** clears saved layout overrides so each workspace returns to its code-defined panel arrangement.
 - **Projects:** create, open, Save, Save As, `.nvtsphoto` serialization, and optional recent-project snapshots persisted in IndexedDB according to Preferences.
 - **Linked image layers:** the image data is embedded in the project. Where the browser supports file handles, a local link ID and source metadata can also be retained so the application can offer a manual refresh/relink flow. The external file is not continuously watched.
+
+## Illustration tools, presets, and non-destructive guides
+
+The illustration rail groups the current 51 registered tools into drawing, correction, fill/color, selection, vector/figure, and comic workflows. Every registered tool has a distinct keyboard shortcut, and the shortcut map is regression-tested against the `ToolId` union. The brush preset catalog contains 72 presets across Sketch, Inking, Decoration, Texture, and Painting, including graphite/colored pencils, G/Maru/Saji-style pens, comic ink, stamps, paper/stone textures, watercolor, gouache, and acrylic variants.
+
+The Layers panel supports drag-and-drop ordering of layers and masks. Preferences independently choose whether Delete removes a selected layer/mask or clears its content. The Move tool translates raster pixels, text coordinates, or vector geometry directly; it does not create a transform mask. Non-destructive transform masks are created only by the explicit transform command. The vector eraser removes a line/polyline segment between the nearest path intersections; isolated paths are removed as a whole, while non-path vector figures use whole-object deletion.
+
+Comic guides, bleed/trim/safe-area guides, symmetry axes, and visual ruler overlays are rendered on a separate interface canvas, never into the artwork. The visual ruler modes are linear, curved, perspective, fisheye, parallel, radial, and concentric. These are drawing references only; snapping strokes to editable ruler anchors is not implemented yet.
 
 ## Repository structure (folders first, alphabetical)
 
@@ -126,8 +133,8 @@ NVTS-PhotoMania/
 │   └── web/
 │       ├── public/
 │       │   ├── branding/
-│       │   │   ├── photomania-icon.png
-│       │   │   └── photomania-icon.svg
+│       │   │   ├── nvts-photo-mania-icon.png
+│       │   │   └── nvts-photo-mania-icon.svg
 │       │   ├── icons/
 │       │   │   └── ui/
 │       │   │       ├── apply.svg
@@ -430,8 +437,10 @@ NVTS-PhotoMania/
 │   │   │   │   ├── AppSamplingFeatures.ts
 │   │   │   │   ├── AppUtilities.ts
 │   │   │   │   ├── AppVectorFeatures.ts
+│   │   │   │   ├── VectorStrokeEraser.ts
 │   │   │   │   ├── AppWorkspaceFeatures.ts
 │   │   │   │   ├── EditorStrategies.ts
+│   │   │   │   ├── LayerMenuCommandRouter.ts
 │   │   │   │   ├── RasterShapeRenderer.ts
 │   │   │   │   └── VectorSelectionGeometry.ts
 │   │   │   ├── components/
@@ -441,6 +450,7 @@ NVTS-PhotoMania/
 │   │   │   ├── features/
 │   │   │   │   └── comics/
 │   │   │   │       ├── ComicGuideOverlay.ts
+│   │   │   │       ├── RulerGeometry.ts
 │   │   │   │       ├── createComicSplitShapes.ts
 │   │   │   │       └── types.ts
 │   │   │   ├── managers/
@@ -564,22 +574,34 @@ NVTS-PhotoMania/
 │   ├── dock-editor-panel-preservation.test.mjs
 │   ├── dock-layout-storage.test.mjs
 │   ├── document-format-adapters.test.mjs
+│   ├── editor-feature-wiring.test.mjs
+│   ├── editor-requested-features.test.mjs
 │   ├── editor-tool-hierarchy.test.mjs
 │   ├── filter-processor.test.mjs
 │   ├── filter-tile-layout.test.mjs
+│   ├── gap-closure.test.mjs
 │   ├── history-and-format.test.mjs
+│   ├── layer-core-operations.test.mjs
 │   ├── layer-mask-cloning.test.mjs
+│   ├── layer-mask-menu.test.mjs
+│   ├── layer-mask-preview-controller.test.mjs
 │   ├── layer-style-stacks.test.mjs
 │   ├── layer-styles-format.test.mjs
+│   ├── layer-transform-geometry.test.mjs
 │   ├── layer-tree-queries.test.mjs
 │   ├── mask-format.test.mjs
+│   ├── move-tool-content-only.test.mjs
 │   ├── panel-base.test.mjs
+│   ├── pixel-layer-mover.test.mjs
 │   ├── plugin-storage.test.mjs
 │   ├── raster-shape-renderer.test.mjs
+│   ├── renderer-transparent-letterbox.test.mjs
+│   ├── ruler-geometry.test.mjs
 │   ├── symmetry-manager.test.mjs
 │   ├── template-inheritance.test.mjs
 │   ├── vector-selection-geometry.test.mjs
 │   ├── vector-shape-cloning.test.mjs
+│   ├── vector-stroke-eraser.test.mjs
 │   ├── vector-svg-export.test.mjs
 │   └── wasm-heap-export.test.mjs
 ├── tools/
@@ -744,3 +766,21 @@ The **Storyboarding** workspace exposes the storyboard panel and the **Animation
 
 Comic frame splitting creates straight dividers from the gesture start/end points, supports one or two parallel lines with adjustable spacing, and opens the full-page outer frame border where the dividers meet it when a matching frame rectangle exists. Run `pnpm audit:control-flow` to check maintained source files for nested control-flow statements; generated WebAssembly artifacts and installed dependencies are excluded.
 
+
+## Future integration with the NVTS ecosystem
+
+Extracting shared components into `NVTS-Shared-Core` (Rust) and `NVTS-Shared-UI` (TypeScript/SVG) is a future workstream. This repository retains its current C++/WebAssembly engine and existing integrations; the migration is not considered complete. Each integration will be versioned and validated with equivalence tests.
+## Editing tools and layer workflows
+
+- Layer and mask deletion are independently configurable in Preferences: remove the selected entry or clear its content with Delete.
+- Brush presets are grouped into Sketch, Inking, Decoration, Texture, and Painting, with additional graphite, comic-inking, stamp, and material-texture presets.
+- Drawing and comic tools include pen, pencil, airbrush, decoration, vector eraser, dust removal, speech bubbles, flash effects, parallel/radial lines, and pixel/vector shape families.
+- Raster selections support rectangle, ellipse, lasso, and contiguous magic-wand workflows. Active selections constrain raster brush, eraser, gradient, shape, and fill operations; Escape or the selection-clear tool removes the selection.
+- Layer and mask entries support drag-and-drop reordering. Tool shortcuts are shown on the toolbar.
+
+## Current drawing and layer workflow
+
+- Delete behavior for layers and masks is configurable independently in Preferences.
+- Drag and drop reorders layers and masks.
+- Move shifts layer content directly; non-destructive transform masks are created only by the explicit Layer transform command.
+- Brush presets are grouped into Sketch, Inking, Decoration, Texture, and Painting. All tools have keyboard shortcuts.

@@ -23,3 +23,5 @@ export { FILTER_GROUPS, FILTER_LABELS, renderFilterGroups } from './panels/Filte
 
 export { DEFAULT_COMIC_GUIDE_OPTIONS, ComicGuideOverlayController, createPrintCanvasSize, drawComicGuideOverlay } from './features/comics/ComicGuideOverlay';
 export type { ComicGuideOptions } from './features/comics/ComicGuideOverlay';
+
+export * from './panels/Panel';

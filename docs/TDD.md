@@ -12,6 +12,7 @@ This document describes the current repository implementation. It is not a promi
 - **Rendering is backend-agnostic at the UI boundary.** `RendererBackend` is implemented by WebGPU and WebGL2 renderers. WebGPU is attempted first; WebGL2 is used as a fallback where setup allows.
 - **Some features have UI-level rendering paths.** When a document contains filter layers, supported masks, or enabled layer styles, `AppDocumentFeatures.ts` composes those effects by tile using Canvas 2D. Local brush edits invalidate only affected tiles plus effect padding; layer/property changes trigger a full invalidation. The presence of non-destructive effects and filter padding are cached until a general invalidation, avoiding a full layer-tree scan for every brush dab. Layer style bounds are included in tile padding so outer effects have room to render beyond the alpha bounds. Filter tiles are processed across animation frames (up to eight tiles or roughly 6 ms per frame); a single expensive tile can exceed that budget, but a full-canvas invalidation no longer loops through every tile in one frame. While drawing through an enabled transform/colorization mask dependency, full filtered recomposition is deferred until the stroke ends so every dab does not restart the full-document tile queue. Otherwise it uses the Wasm compositor refresh path.
 - **Panel modules do not own independent engines.** Each panel module defines/renderers its UI and forwards document mutations through callbacks to the `App` coordinator.
+- **Layer Styles remain non-destructive document metadata.** The shared `LayerStyles` model stores the standard effect families plus repeatable ordered arrays for additional instances. `normalizeLayerStyles` clamps/validates persisted inputs; `LayerStyleRenderer` composes visual results on temporary Canvas 2D surfaces and leaves the source layer buffer untouched. The Effects panel owns the editable draft; style masks are the canonical per-layer source when present.
 
 ## Monorepo packages
 
@@ -26,6 +27,16 @@ This document describes the current repository implementation. It is not a promi
 | `packages/templates` | UI-independent, reusable document preset definitions for NVTS programs | `src/types.ts`, individual preset modules, `src/index.ts` |
 | `packages/ui` | Application entry point, startup orchestration, feature modules, toolbar, panels, workspaces, preferences and plugins; consumes `@nvts/templates` | `App.ts`, `app/*.ts`, `managers/*.ts`, `panels/*.ts`, `workspaces/*.ts` |
 | `apps/web` | Vite entry point, index HTML, global styles, public assets/Wasm runtime | `src/main.ts`, `src/styles.css`, `vite.config.ts` |
+
+## NVTS Shared Core integration (target architecture)
+
+`NVTS-Shared-Core` will be an independent repository alongside `NVTS-PhotoMania`, `NVTS-Launcher`, and the other NVTS applications. It must not be nested inside PhotoMania or the NamuVT Studios website. Its Rust crates will expose narrowly scoped, versioned modules (for example: shared types, native document-format primitives, compression, geometry, and task/runtime utilities). Each application will depend only on the modules it uses.
+
+For browser applications, Rust modules intended for the browser will be compiled to WebAssembly and exposed through a small TypeScript adapter. Native desktop components such as NVTS-Launcher can consume native Rust libraries. The web UI remains TypeScript; the shared core does not own application panels or DOM behavior.
+
+**Current PhotoMania status:** this repository still builds its tile store, compositor, and pixel history from C++ through Emscripten/Embind. `packages/shared` is currently a PhotoMania workspace package for document and layer types; it is not yet the ecosystem-wide Rust core. No C++ engine files or generated Emscripten artifacts may be removed until a Rust implementation has passed behavioral parity tests for tile writes, composition, dirty-tile reporting, memory handling, and undo/redo. The Rust migration is therefore incremental and has not been activated in this repository yet.
+
+The first safe integration stage is to stabilize the shared contracts and native-format compatibility policy. Publish/version the independent core only after its public API and tests are stable; do not add a dangling Git/path dependency to PhotoMania before that repository exists and contains a tagged release.
 
 ## Shared template package
 
@@ -84,9 +95,11 @@ The app uploads dirty image regions to the renderer. `WebGPURenderer` passes vie
 
 `packages/ui/src/tools/ToolsBase.ts` is the common abstract parent for concrete editor tools and declares each tool's target (`any`, `raster`, or `vector`) plus `canUseLayer()`. `ToolsRaster` and `ToolsVectors` specialize the target compatibility contract. The catalog currently registers paint tools (brush, eraser, line, rectangle, ellipse, fill, clone stamp), vector tools (vector selection and comic frame/panel), and layer-independent tools (hand, eyedropper, text). `ToolManager` owns the catalog, active tool ID, and compatibility lookup; the app still owns pointer gestures and document commits.
 
+`AppEventFeatures.ensureToolTargetLayer()` resolves target compatibility before activating a raster or vector drawing tool. It keeps a compatible visible/unlocked active layer; otherwise it inserts a new compatible layer above the current visible/unlocked selection, or at the document root when the selection is hidden/locked. It intentionally does not reuse an older compatible raster layer below the active foreground layer, which would make new strokes appear to do nothing. Vector selection is different: it activates an existing editable vector layer and does not create an empty one. `AppLayerStateFeatures.syncToolAvailability()` keeps raster/vector drawing tools available because target-layer resolution is automatic; vector selection remains unavailable until an editable vector layer exists. New text layers also fall back to the document root when the selected layer is hidden or locked, preventing them from inheriting an unusable group context.
+
 The clone stamp captures a source point using `Alt + click`. Each dab reads only its mapped source patch. When source and destination are the same layer, original tile snapshots are retained for the 256×256 destination tiles touched by the stroke; source patches overlay those original tile pixels so the clone does not progressively sample its own output. This avoids allocating a full-document source buffer for every clone stroke. The self-clone tile cache is limited to 64 MiB per stroke; if a stroke exceeds that limit, it is canceled before the next write and its state is cleared. The tool samples the chosen source layer rather than the merged visible composite.
 
-The comic frame/panel tool is vector-targeted. In **Marco exterior** mode, one click creates an outline rectangle matching the full document dimensions. In **Viñeta** mode, a drag creates an outline rectangle. A single call to `replaceVectorContent` persists each new shape and its rasterized preview as one history operation. The tool currently creates rectangular panels; slanted, rounded, gutter-aware, and automatic panel layouts remain future extensions.
+The comic frame/panel tool is vector-targeted. In **Outer frame** mode, one click creates an outline rectangle matching the full document dimensions. In **Panel** mode, a drag creates an outline rectangle. A single call to `replaceVectorContent` persists each new shape and its rasterized preview as one history operation. The tool currently creates rectangular panels; slanted, rounded, gutter-aware, and automatic panel layouts remain future extensions.
 
 ### Multiparadigm design: object-oriented and functional programming
 
@@ -216,7 +229,7 @@ pnpm test
 pnpm build
 ```
 
-Rebuilding the C++/Wasm engine requires an activated Emscripten toolchain:
+The root scripts activate the Emscripten toolchain automatically and rebuild the C++/Wasm engine before development, production builds, and tests. Run the standalone command only when you intentionally need to rebuild the engine:
 
 ```bash
 pnpm build:wasm
@@ -233,17 +246,27 @@ On Windows, a broken Corepack/NVM executable or PATH ordering can make the `pnpm
 
 This section records implementation architecture and engineering constraints, not individual Jira issues. Jira is the source of truth for the Version 1.0 task breakdown, subtasks, priorities, owners, statuses, and verification evidence. Keep implementation ticket lists out of this document; update the TDD when an architecture decision, interface, or technical constraint changes.
 
+### Layer-mask editing and canvas preview
+
+`packages/ui/src/panels/LayerMaskEditor.ts` renders every mask attached to the active layer in the single right-side `Layer Masks` panel. The typed renderer registry keeps transform, colorization, filter-stack, and style controls local to each expandable mask entry; do not create separate side panels for individual mask types. `AppLayerPanelFeatures.ts` keeps edits in a draft session. Apply calls `DocumentController.replaceLayerMasks` once so the full edit becomes one undoable mutation; Cancel restores the original mask snapshot and discards the draft. The canvas preview is managed by `LayerMaskPreviewController.ts`, which captures the before image and supports before-only, 50/50 split, and after-only modes. Preserve source pixels and history until Apply is chosen, and keep saving, opening, undo/redo and navigation blocked while a dirty draft is pending.
+
 ### Layer command routing
+
+Layer-menu dispatch is isolated in `packages/ui/src/app/LayerMenuCommandRouter.ts`. The router allows paint-layer creation without a current selection, reports missing selection before layer-dependent commands, and ignores unknown commands. The application supplies the action callbacks, so the router does not depend on the DOM or document controller. `tests/layer-core-operations.test.mjs` covers route guards and controller-level layer create, duplicate, rename, delete, stale-ID rejection, and undo/redo behavior.
 
 Keep menu markup in `packages/ui/src/components/ShellTemplates.ts` and route actions through the relevant application feature/event modules. Menu callbacks should not duplicate document mutation logic. Layer creation, duplication, rename, delete, reorder, visibility, locking, opacity, blending, and style edits should go through the established document/application APIs. Invalid or stale layer selections must fail safely, UI state should remain synchronized with document state, and supported structural changes should use the existing history mechanism.
 
 ### Layer-style data and rendering
 
-The shared style model is defined in `packages/shared/src/nvtsphoto.ts`, keeping style types independent of DOM and panel classes. The current model includes Stroke, Outer Glow, Drop Shadow, and Bevel/Emboss. New style edits are stored in a `styles` mask (`Máscara de estilos`) and render through the same tiled composition path. The legacy `layerStyles` layer property remains a read-compatible fallback for older documents; applying styles migrates that data into the mask and clears the legacy field.
+The shared style model is defined in `packages/shared/src/nvtsphoto.ts`, keeping style types independent of DOM and panel classes. It represents Stroke, Drop Shadow, Inner Shadow, Outer Glow, Inner Glow, Bevel/Emboss, Satin, Color Overlay, Gradient Overlay, and Pattern Overlay, plus ordered arrays for additional instances of every family. Style edits are stored in a `styles` mask (`Style Mask`) and rendered through the tiled composition path. The legacy `layerStyles` layer property remains a read-compatible fallback for older documents; applying styles migrates that data into the mask and clears the legacy field.
 
 `packages/image-processing/src/effects/LayerStyleRenderer.ts` owns alpha-mask generation and effect drawing. The tiled Canvas 2D composition path in `AppDocumentFeatures.ts` draws enabled effects to temporary surfaces rather than writing to source pixel buffers. Tile padding accounts for enabled effects to reduce clipping and seams. Effect-property changes must invalidate the rendered composite, disabling effects must restore the base appearance, and unsupported layer kinds must have explicit behavior. Bevel/Emboss uses an alpha-gradient approximation and should not be described as a physically accurate or feature-identical implementation.
 
 Parameter defaults and normalization must be deterministic; numeric values and colors must be bounded; invalid optional values should fall back safely; and clone/snapshot paths must not share mutable nested style objects.
+
+### Native format version policy
+
+The current writer emits `.nvtsphoto` manifest version `0.1.0`. The reader accepts the compatible `0.1.x` patch line, normalizes legacy optional metadata (`generator` and `extensions`), and converts legacy `raster` layer identifiers to the current `paint` runtime type. A change to the minor or major schema line is rejected until an explicit migration path and regression fixtures are added. Patch releases must not introduce incompatible manifest changes. Preserve unknown manifest properties when normalizing so optional extension data is not discarded.
 
 ### Native persistence and document history
 
@@ -370,4 +393,58 @@ Jira owns actionable implementation work, subtasks, priorities, owners, statuses
 
 The advanced tool options follow single-responsibility separation: `AdvancedToolOptionsPanel.ts` contains only the panel-shell template; `AdvancedToolOptionsController.ts` coordinates the active tool; `ToolOptionsRegistry.ts` maps each tool identifier to its definition; and each of the 15 tools owns its UI and event bindings in a separate module under `packages/ui/src/panels/advanced-tool-options/tools/`. Shared pure helpers live in `shared.ts`, so common sliders and control binding are reused without putting every tool's behavior into one panel file. This is a local application of SOLID's Single Responsibility Principle alongside object-oriented settings/context types and functional rendering/geometry helpers.
 
-`LayerStyles.strokes` is an optional ordered collection of additional stroke instances. The legacy `stroke` property remains supported for older `.nvtsphoto` files. The renderer applies every enabled stroke instance and sums their padding to reduce clipping; the Layer Effects panel can add and remove additional strokes.
+`LayerStyles` retains a legacy singular property for each style family and optional ordered arrays for additional instances. The renderer processes enabled instances in order and calculates effect padding where an effect expands beyond source alpha. The Layer Effects panel can add, configure, and remove instances for all ten style families; `.nvtsphoto` normalization preserves backward compatibility for older singular-only documents.
+
+
+### Cross-platform WebAssembly build
+
+The root scripts automatically build and copy the WebAssembly engine before `pnpm dev`, `pnpm build`, and `pnpm test`. Use `pnpm build:wasm` only when you want to rebuild the engine by itself. `tools/build-wasm.mjs` activates an emsdk installation under the user home directory on Windows, or uses the active `EMSDK` environment on POSIX systems.
+
+
+## Editor startup ordering
+
+`App.initializeEditor()` must create and install the initial `DocumentController` before calling `bind()`. Initial tool-panel synchronization reads `ctl.doc.layers` to determine layer and tool availability, so binding controls while `ctl` is still uninitialized causes startup to fail with `Cannot read properties of undefined (reading 'doc')`. The startup-order regression test in `tests/editor-feature-wiring.test.mjs` asserts that document creation remains before editor binding.
+
+
+## Layer movement and canvas comparison regressions
+
+- Move gestures store the starting pointer and target layer ID, then commit a direct content translation through pixel history, text metadata, or vector-shape history. The move path does not call `beginLayerTransformSession` and does not mutate the layer mask collection.
+- Mask comparison toolbar visibility is controlled by Layer Masks panel visibility; captured snapshots remain internal while the panel is closed. Before renders the full snapshot, split clips the full snapshot to the before half above the current canvas, and after renders the current canvas only.
+- WebGPU and WebGL2 clear with zero alpha; the canvas stage remains transparent so the existing workspace background shows through the contain-fit margins.
+- Regression coverage includes vector Bézier-handle translation, panel-gated comparison visibility, and transparent letterbox clear values.
+
+### Selection mask and tool routing
+
+Selection geometry and magic-wand flood fill are isolated in `packages/ui/src/tools/RasterSelection.ts`. The editor owns the transient selection mask and preview; raster write paths restore destination pixels outside the selection before committing. Selection state is not embedded into layer masks or persisted as a destructive layer change. Normal Move modifies the selected layer content directly and must not create or modify transform masks; non-destructive transforms remain an explicit layer command.
+
+
+## Illustration tool and layer interaction details
+
+- Preferences persist separate `layerDeleteBehavior` and `maskDeleteBehavior` values (`remove` or `clear`). `AppEventFeatures.deleteSelectedElementFromShortcut` checks active text entry, reads the relevant preference, and routes to the document controller's remove/clear operation.
+- The layer tree uses native drag-and-drop payloads with a discriminated `kind: 'layer' | 'mask'` shape. The panel delegates all mutations through `moveLayerRelative` and `moveMaskRelative`; rendering remains separate from state mutation.
+- `AppDrawingFeatures.beginElementMove` creates a content-only pointer gesture. Commit dispatches by layer type: vector geometry translation, text-coordinate/raster-preview update, or pixel-surface movement. `beginLayerTransformSession` is reserved for the explicit non-destructive transform action and rejects invocation while the Move tool is active.
+- Brush presets are immutable catalog data grouped by `BrushCategory`; tool settings are applied through the existing brush option binding rather than branching the renderer per preset.
+- Polygon selection and selection-brush operations update the raster selection mask; erasure subtracts from that mask. Vector line correction uses a Douglas–Peucker pass and declines Bézier paths with explicit control handles instead of silently discarding those handles.
+- Fill gap closure builds a binary color-match mask, closes small boundary gaps using morphology, and passes the mask into the existing flood-fill matching path. Radius is limited to the UI-supported values.
+- Smudge modes share one stroke pipeline with mode-specific strengths and blend weighting. Contour gradient uses its own normalized distance calculation.
+- The keyboard shortcut map is checked against the complete `ToolId` union by regression tests so additions cannot silently ship without a shortcut.
+
+
+### Vector stroke erasing and ruler geometry
+
+`packages/ui/src/app/VectorStrokeEraser.ts` is a pure geometry helper. It projects the pointer onto supported line/polyline/freehand paths, finds the closest hit, calculates intersections with other supported paths, and returns replacement polyline segments outside the erased interval. `AppDrawingFeatures` commits the returned shape list through the existing vector history path. Closed/filled figures and Bézier curves use the existing whole-object fallback; intersection splitting is not claimed for those shapes.
+
+`packages/ui/src/features/comics/RulerGeometry.ts` builds line, curve, perspective, fisheye, parallel, radial, and concentric guide paths from document bounds. `ComicGuideOverlay.ts` renders these paths on the dedicated non-exported overlay canvas. The guides do not yet create editable ruler objects or constrain stroke input.
+
+## Canvas stage and overlay layout
+
+The document canvas is the only non-overlay flex item inside `.canvas-stage`. Tool previews, selection previews, mask comparisons, and guides are positioned as absolute overlays with their own stacking order. In particular, `#selection-preview` must remain absolutely positioned and must never participate in the stage's flex layout: it covers the stage for selection feedback, but it is not part of the document page. Keeping it out of flex sizing prevents the selection overlay dimensions from shifting the centered document canvas. Pointer-to-document conversion continues to use the document canvas `getBoundingClientRect()` so zoom, pan, and aspect-ratio fitting share one coordinate source.
+
+## AppObject Architecture
+
+- Keep `AppObject` free of DOM, renderer, persistence, and framework dependencies.
+- Use optional capability interfaces (`Updatable`, `Renderable`, `Serializable`, and `Selectable`) instead of adding unrelated methods to the base class.
+- Prefer composition and narrow interfaces over deep inheritance.
+- Consumer repositories must depend on the versioned `@nvts/app-object` package from NVTS-Shared-Core; do not copy its source into application repositories.
+- PhotoMania currently adapts `Panel`, `ToolsBase`, and `AppBase` to `PanelObject`, `ToolObject`, and `ApplicationObject`. Controllers, managers, DTOs, and pure processing functions are not forced into the hierarchy.
+- In the combined ecosystem archive, PhotoMania resolves the package through a sibling `link:` dependency. For standalone repository releases, publish the package and replace the local link with its published semver version.

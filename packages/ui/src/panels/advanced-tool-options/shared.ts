@@ -81,7 +81,8 @@ export function bindTolerance(host: HTMLElement, brush: AdvancedBrushSettings): 
 
 export function bindGradientSettings(host: HTMLElement, brush: AdvancedBrushSettings): void {
   host.querySelector<HTMLSelectElement>('#advanced-gradient-type')?.addEventListener('change', (event) => {
-    brush.gradientType = (event.currentTarget as HTMLSelectElement).value === 'radial' ? 'radial' : 'linear';
+    const value = (event.currentTarget as HTMLSelectElement).value;
+    brush.gradientType = value === 'radial' || value === 'contour' ? value : 'linear';
   });
   bindCheckbox(host, '#advanced-gradient-reverse', (checked) => { brush.gradientReverse = checked; });
   host.querySelector<HTMLInputElement>('#advanced-gradient-opacity')?.addEventListener('input', (event) => {

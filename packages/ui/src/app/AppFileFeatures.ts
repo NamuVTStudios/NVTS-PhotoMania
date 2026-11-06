@@ -9,13 +9,13 @@ import { documentNameFromFile } from './AppUtilities';
 
 export class AppFileFeatures extends AppSamplingFeatures {
   protected doUndo(): void {
-      if (this.stroke) return;
+      if (this.stroke || this.blockForUnappliedMaskChanges('deshacer')) return;
       this.handleHistoryResult(this.ctl.undo());
       this.updateHistoryUI();
     }
 
   protected doRedo(): void {
-      if (this.stroke) return;
+      if (this.stroke || this.blockForUnappliedMaskChanges('rehacer')) return;
       this.handleHistoryResult(this.ctl.redo());
       this.updateHistoryUI();
     }
@@ -31,7 +31,7 @@ export class AppFileFeatures extends AppSamplingFeatures {
     }
 
   protected async save(asNew: boolean): Promise<void> {
-      if (this.stroke) return;
+      if (this.stroke || this.blockForUnappliedMaskChanges('guardar')) return;
       try { await this.saveDocument(asNew); }
       catch (error) { this.fail(error); }
     }
@@ -55,7 +55,7 @@ export class AppFileFeatures extends AppSamplingFeatures {
     }
 
   protected async open(): Promise<void> {
-      if (this.stroke) return;
+      if (this.stroke || this.blockForUnappliedMaskChanges('abrir otro documento')) return;
       try { await this.openDocument(); }
       catch (error) { this.fail(error); }
     }

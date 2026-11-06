@@ -10,10 +10,16 @@ import { wireVectorEditorPanel } from '../panels/VectorEditorPanel';
 import { wirePlugins, type PluginApi } from '../panels/PluginsPanel';
 import { createDockLayoutManager } from '../managers/DockLayoutManager';
 import { ComicGuideOverlayController } from '../features/comics/ComicGuideOverlay';
+import { routeLayerMenuAction, type LayerMenuCommand } from './LayerMenuCommandRouter';
 import type { WorkspaceId } from '../workspaces';
 import type { Tool, MenuEntry, PanelVisibilityEntry } from './AppBase';
+import type { ToolTarget } from '../tools/ToolsBase';
+import { readPreferences } from '../panels/PreferencesPanel';
 
 export abstract class AppEventFeatures extends AppVectorFeatures {
+  protected abstract handleTransformSessionKey(event: KeyboardEvent): boolean;
+  protected abstract startLayerTransform(): void;
+
   protected bind(): void {
       this.bindPluginAndLayerPanels();
       this.wireComicManager();
@@ -146,7 +152,9 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
           menu.button.setAttribute('aria-expanded', String(shouldOpen));
         });
         menu.dropdown.addEventListener('click', (event) => {
-          if ((event.target as HTMLElement).closest('button[role^="menuitem"]')) this.closeMenu(menu);
+          const item = (event.target as HTMLElement).closest<HTMLButtonElement>('button[role^="menuitem"]');
+          if (!item || item.classList.contains('submenu-trigger')) return;
+          this.closeMenu(menu);
         });
         menu.dropdown.addEventListener('keydown', (event) => {
           if (event.key !== 'Escape') return;
@@ -154,6 +162,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
           menu.button.focus();
         });
       }
+      this.bindLayerTypeSubmenu();
       document.addEventListener('pointerdown', (event) => {
         const target = event.target;
         if (!(target instanceof Node)) return;
@@ -162,6 +171,24 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
         });
       });
     }
+
+  private bindLayerTypeSubmenu(): void {
+    const button = this.q<HTMLButtonElement>('#menu-new-layer-types');
+    const dropdown = this.q<HTMLElement>('#layer-types-menu-dropdown');
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      dropdown.hidden = !dropdown.hidden;
+      button.setAttribute('aria-expanded', String(!dropdown.hidden));
+    });
+    dropdown.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement;
+      if (target.closest('[data-create-layer-type]')) {
+        dropdown.hidden = true;
+        button.setAttribute('aria-expanded', 'false');
+      }
+    });
+  }
 
   protected bindWorkspaceSelector(): void {
       const workspaceMenu = this.getMenuEntries()[4];
@@ -343,7 +370,27 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       on('#menu-filter', () => this.openDestructiveFilterPanel());
       this.bindLayerMenuActions();
       on('#rail-hand', () => this.setTool('hand'));
+      on('#rail-move', () => this.setTool('move'));
       on('#rail-brush', () => this.setTool('brush'));
+      on('#rail-pen', () => this.setTool('pen'));
+      on('#rail-pencil', () => this.setTool('pencil'));
+      on('#rail-airbrush', () => this.setTool('airbrush'));
+      on('#rail-decoration', () => this.setTool('decoration'));
+      on('#rail-dust-removal', () => this.setTool('dust-removal'));
+      on('#rail-vector-eraser', () => this.setTool('vector-eraser'));
+      on('#rail-vector-line-correction', () => this.setTool('vector-line-correction'));
+      on('#rail-speech-bubble', () => this.setTool('speech-bubble'));
+      on('#rail-flash', () => this.setTool('flash'));
+      on('#rail-vector-parallel-lines', () => this.setTool('vector-parallel-lines'));
+      on('#rail-vector-radial-lines', () => this.setTool('vector-radial-lines'));
+      on('#rail-select-rectangle', () => this.setTool('select-rectangle'));
+      on('#rail-select-ellipse', () => this.setTool('select-ellipse'));
+      on('#rail-select-lasso', () => this.setTool('select-lasso'));
+      on('#rail-select-polygon', () => this.setTool('select-polygon'));
+      on('#rail-selection-brush', () => this.setTool('selection-brush'));
+      on('#rail-selection-erase', () => this.setTool('selection-erase'));
+      on('#rail-magic-wand', () => this.setTool('magic-wand'));
+      on('#rail-selection-clear', () => this.setTool('selection-clear'));
       on('#rail-eraser', () => this.setTool('eraser'));
       on('#rail-eyedropper', () => this.setTool('eyedropper'));
       on('#rail-line', () => this.setTool('line'));
@@ -380,23 +427,65 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       dropdown.querySelectorAll<HTMLButtonElement>('[data-layer-action]').forEach((button) => {
         button.addEventListener('click', () => this.runLayerMenuAction(button.dataset.layerAction ?? ''));
       });
+      dropdown.querySelectorAll<HTMLButtonElement>('[data-create-layer-type]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const type = button.dataset.createLayerType as LayerNode['type'] | undefined;
+          if (type) void this.createLayerOfType(type);
+        });
+      });
     }
 
   protected runLayerMenuAction(action: string): void {
       const layer = this.active();
-      if (action === 'new-paint') { void this.createLayerOfType('paint'); return; }
-      if (!layer) { this.reportLayerDeletionBlockReason('Seleccioná una capa primero.'); return; }
-      if (action === 'duplicate') { this.duplicateActiveLayer(); return; }
-      if (action === 'rename') { this.renameLayer(layer); return; }
-      if (action === 'move-up') { this.moveActive(1); return; }
-      if (action === 'move-down') { this.moveActive(-1); return; }
-      if (action === 'delete') { this.deleteActiveLayer(); return; }
-      if (action === 'effects') { this.openLayerEffectsEditor(layer); return; }
-      if (action === 'visibility') { this.ctl.setProps(layer.id, { visible: !layer.visible }); this.refreshAfterLayerPropertyChange(); return; }
-      if (action === 'lock') { this.ctl.setProps(layer.id, { locked: !layer.locked }); this.refreshAfterLayerPropertyChange(); return; }
-      if (action === 'opacity') { this.promptLayerOpacity(layer.opacity); return; }
-      if (action === 'blend') { this.promptLayerBlendMode(layer.blendMode); }
+      routeLayerMenuAction(action, Boolean(layer), {
+        createPaintLayer: () => { void this.createLayerOfType('paint'); },
+        reportMissingSelection: () => this.reportLayerDeletionBlockReason('Seleccioná una capa primero.'),
+        selectedLayerActions: layer ? this.createLayerMenuCommandHandlers(layer) : {},
+      });
     }
+
+  protected createLayerMenuCommandHandlers(layer: LayerNode): Partial<Record<LayerMenuCommand, () => void>> {
+      return {
+        duplicate: () => this.duplicateActiveLayer(),
+        rename: () => this.renameLayer(layer),
+        'move-up': () => this.moveActive(1),
+        'move-down': () => this.moveActive(-1),
+        delete: () => this.deleteActiveLayer(),
+        effects: () => this.openLayerEffectsEditor(layer),
+        visibility: () => {
+          this.ctl.setProps(layer.id, { visible: !layer.visible });
+          this.refreshAfterLayerPropertyChange();
+        },
+        lock: () => {
+          this.ctl.setProps(layer.id, { locked: !layer.locked });
+          this.refreshAfterLayerPropertyChange();
+        },
+        opacity: () => this.promptLayerOpacity(layer.opacity),
+        blend: () => this.promptLayerBlendMode(layer.blendMode),
+        group: () => this.groupActiveLayer(),
+        transform: () => this.startLayerTransform(),
+      };
+    }
+
+  protected groupActiveLayer(): void {
+    const layer = this.active();
+    if (!layer) {
+      this.reportLayerDeletionBlockReason('Seleccioná una capa antes de agrupar.');
+      return;
+    }
+    if (layer.type === 'group') {
+      this.q<HTMLElement>('#status').textContent = 'Seleccioná una capa que no sea un grupo para agruparla.';
+      return;
+    }
+    if (this.ctl.isEffectivelyLocked(layer.id)) {
+      this.q<HTMLElement>('#status').textContent = 'No se puede agrupar una capa bloqueada.';
+      return;
+    }
+    const group = this.ctl.groupLayer(layer.id);
+    if (!group) return;
+    this.refreshAfterLayerStructureChange();
+    this.q<HTMLElement>('#status').textContent = `«${layer.name}» se agrupó en «${group.name}».`;
+  }
 
   protected promptLayerOpacity(currentOpacity: number): void {
       const entered = prompt('Opacidad de la capa (0–100)', String(Math.round(currentOpacity * 100)));
@@ -439,18 +528,14 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
   private closePanelByTarget(target: string | undefined): void {
     if (!target) return;
     if (target === 'filters-panel') return this.closeFilterDialog();
-    if (target === 'effects-panel') return this.hideRightEditors();
+    if (target === 'effects-panel' || target === 'masks-panel') return this.hideRightEditors();
     this.q<HTMLElement>('#' + target).hidden = true;
   }
 
   protected applyLayerStyleSettings(): void {
-    const layer = this.active();
     const style = this.layerEffectsPanel?.getStyle();
-    if (!layer || !style) return;
-    this.ctl.setLayerAppearance(layer.id, style);
-    this.activeMaskId = layer.masks?.find((mask) => mask.type === 'styles')?.id ?? '';
-    this.refreshAfterLayerPropertyChange();
-    this.hideRightEditors();
+    if (!style) return;
+    this.commitLayerStyleSettings(style);
   }
 
   protected bindEditorPanels(): void {
@@ -461,7 +546,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       this.layerEffectsPanel = wireLayerEffectsPanel(this.root, (layerId) => {
         const layer = this.ctl.find(layerId);
         if (layer) this.openLayerEffectsEditor(layer);
-      }, () => this.applyLayerStyleSettings());
+      }, () => this.applyLayerStyleSettings(), (style) => this.previewLayerStyleSettings(style));
       wireVectorEditorPanel(this.root, {
         addShape: (kind) => this.addVectorShape(kind),
         deleteShape: () => this.deleteSelectedVectorShape(),
@@ -551,12 +636,88 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
         if (this.tool !== 'eyedropper') event.preventDefault();
       });
       const stage = this.root.querySelector<HTMLElement>('.canvas-stage')!;
+      this.bindCanvasFileDrop(stage);
       stage.addEventListener('wheel', (event) => this.handleCanvasWheel(event), { passive: false });
       new ResizeObserver(() => {
+        this.applyCanvasView();
         this.updatePreviewCanvasSize();
         this.scheduleRefresh();
       }).observe(stage);
     }
+
+  private bindCanvasFileDrop(stage: HTMLElement): void {
+    stage.addEventListener('dragenter', (event) => this.handleCanvasFileDragEnter(event, stage));
+    stage.addEventListener('dragover', (event) => this.handleCanvasFileDragOver(event));
+    stage.addEventListener('dragleave', (event) => this.handleCanvasFileDragLeave(event, stage));
+    stage.addEventListener('drop', (event) => this.handleCanvasFileDrop(event, stage));
+  }
+
+  private handleCanvasFileDragEnter(event: DragEvent, stage: HTMLElement): void {
+    if (!this.isFileDrag(event)) return;
+    event.preventDefault();
+    stage.classList.add('canvas-stage--file-drop');
+  }
+
+  private handleCanvasFileDragOver(event: DragEvent): void {
+    if (!this.isFileDrag(event)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  }
+
+  private handleCanvasFileDragLeave(event: DragEvent, stage: HTMLElement): void {
+    const related = event.relatedTarget;
+    if (related instanceof Node && stage.contains(related)) return;
+    stage.classList.remove('canvas-stage--file-drop');
+  }
+
+  private handleCanvasFileDrop(event: DragEvent, stage: HTMLElement): void {
+    event.preventDefault();
+    stage.classList.remove('canvas-stage--file-drop');
+    const files = this.getDroppedImageFiles(event.dataTransfer);
+    if (!files.length) {
+      this.q<HTMLElement>('#status').textContent = 'Soltá archivos de imagen compatibles sobre el lienzo.';
+      return;
+    }
+    void this.importDroppedImageFiles(files);
+  }
+
+  private isFileDrag(event: DragEvent): boolean {
+    const transfer = event.dataTransfer;
+    if (!transfer) return false;
+    return Array.from(transfer.types).includes('Files') || Array.from(transfer.items).some((item) => item.kind === 'file');
+  }
+
+  private getDroppedImageFiles(dataTransfer: DataTransfer | null): File[] {
+    return Array.from(dataTransfer?.files ?? []).filter((file) => this.isSupportedImageFile(file));
+  }
+
+  private isSupportedImageFile(file: File): boolean {
+    return file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp|tiff?|svg|avif)$/i.test(file.name);
+  }
+
+  private async importDroppedImageFiles(files: File[]): Promise<void> {
+    let successful = 0;
+    const failedNames: string[] = [];
+    for (const file of files) {
+      try {
+        await this.createFileLayerFromSource({ file, handle: null });
+        successful++;
+      } catch (error) {
+        failedNames.push(file.name);
+        console.warn(`No se pudo importar «${file.name}»:`, error);
+      }
+    }
+    this.reportDroppedImageImportResult(files.length, successful, failedNames);
+  }
+
+  private reportDroppedImageImportResult(total: number, successful: number, failedNames: string[]): void {
+    const status = this.q<HTMLElement>('#status');
+    if (!failedNames.length) {
+      status.textContent = total === 1 ? 'Imagen importada como capa.' : `${successful} imágenes importadas como capas.`;
+      return;
+    }
+    status.textContent = `${successful} de ${total} imágenes importadas. No se pudieron cargar: ${failedNames.join(', ')}.`;
+  }
 
   protected handleCanvasWheel(event: WheelEvent): void {
       if (event.ctrlKey || event.metaKey) {
@@ -587,8 +748,9 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
     }
 
   protected handleKeyDown(event: KeyboardEvent): void {
+      if (this.handleTransformSessionKey(event)) return;
       const mod = event.ctrlKey || event.metaKey;
-      const key = event.key.toLowerCase();
+      const key = event.code.startsWith('Digit') ? event.code.slice(5) : event.key.toLowerCase();
       const target = event.target as HTMLElement | null;
       const typing = this.isTypingTarget(target);
       const insideMenuOrDialog = !!target?.closest('.menus, .preferences-overlay, .editor-panel');
@@ -602,8 +764,9 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
         this.spaceDown = true;
         return;
       }
+      if (typing && event.key === 'Delete') return;
       if (this.handleDocumentShortcut(event, mod, key)) return;
-      this.handleToolShortcut(key, mod, typing);
+      this.handleToolShortcut(key, mod, typing, event.shiftKey);
     }
 
   protected isTypingTarget(target: HTMLElement | null): boolean {
@@ -619,14 +782,114 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
     }
 
   protected handleDocumentShortcut(event: KeyboardEvent, mod: boolean, key: string): boolean {
-      if (!mod) return false;
+      if (!mod) return this.handleLayerFunctionShortcut(event, key);
       if (key === 'z') return this.handleUndoRedoShortcut(event);
       if (key === 'y') { event.preventDefault(); this.doRedo(); return true; }
       if (key === 's') { event.preventDefault(); void this.save(event.shiftKey); return true; }
       if (key === 'o') { event.preventDefault(); void this.open(); return true; }
-      if (key === 'n') { event.preventDefault(); this.promptNew(); return true; }
+      if (key === 'n' && !event.shiftKey && !event.altKey) { event.preventDefault(); this.promptNew(); return true; }
+      if (key === 'i' && event.altKey) { event.preventDefault(); void this.createFileLayer(); return true; }
+      if (key === 'e' && event.altKey && event.shiftKey) { event.preventDefault(); void this.exportVisibleImage('image/jpeg'); return true; }
+      if (key === 'e' && event.shiftKey) { event.preventDefault(); void this.exportVisibleImage('image/png'); return true; }
+      if (key === 'g' && !event.shiftKey && !event.altKey) { event.preventDefault(); this.groupActiveLayer(); return true; }
+      if (key === 'j' && !event.shiftKey && !event.altKey) { event.preventDefault(); this.duplicateActiveLayer(); return true; }
+      if (key === 'n' && event.shiftKey && !event.altKey) { event.preventDefault(); void this.createLayerOfType('paint'); return true; }
+      if (key === 'n' && event.shiftKey && event.altKey) { event.preventDefault(); void this.createLayerOfType('filter'); return true; }
+      if (key === 'f' && event.shiftKey && !event.altKey) { event.preventDefault(); void this.createLayerOfType('fill'); return true; }
+      if (key === 'v' && event.shiftKey && event.altKey) { event.preventDefault(); void this.createLayerOfType('vector'); return true; }
+      if (key === 't' && event.shiftKey && event.altKey) { event.preventDefault(); void this.createLayerOfType('text'); return true; }
+      if (key === 'g' && event.shiftKey && event.altKey) { event.preventDefault(); void this.createLayerOfType('group'); return true; }
+      if (key === '1' && event.altKey) return this.togglePanelShortcut(event, '#toggle-panel-advanced');
+      if (key === '2' && event.altKey) return this.togglePanelShortcut(event, '#toggle-panel-history');
+      if (key === '3' && event.altKey) return this.togglePanelShortcut(event, '#toggle-panel-layers');
+      if (key === '4' && event.altKey) return this.togglePanelShortcut(event, '#toggle-panel-timeline');
+      if (key === '5' && event.altKey) return this.togglePanelShortcut(event, '#toggle-panel-comic');
+      if (key === '6' && event.altKey) return this.togglePanelShortcut(event, '#toggle-panel-storyboard');
+      if (key === 'p' && event.altKey && !event.shiftKey) return this.clickMenuAction(event, '#plugins-manage');
+      if (key === 'p' && event.altKey && event.shiftKey) return this.clickMenuAction(event, '#plugins-install-menu');
+      if (key === ',' && !event.altKey) return this.clickMenuAction(event, '#b-preferences');
+      if (key === 'h' && event.shiftKey && !event.altKey) return this.runActiveLayerCommand(event, 'visibility');
+      if (key === 'l' && event.shiftKey && !event.altKey) return this.runActiveLayerCommand(event, 'lock');
+      if (key === 'k' && event.shiftKey && !event.altKey) return this.runActiveLayerCommand(event, 'effects');
+      if (key === 'o' && event.shiftKey && !event.altKey) return this.runActiveLayerCommand(event, 'opacity');
+      if (key === 'b' && event.shiftKey && !event.altKey) return this.runActiveLayerCommand(event, 'blend');
+      if (key === ']' && !event.shiftKey && !event.altKey) return this.moveActiveLayerFromShortcut(event, 1);
+      if (key === '[' && !event.shiftKey && !event.altKey) return this.moveActiveLayerFromShortcut(event, -1);
       return false;
     }
+
+  private handleLayerFunctionShortcut(event: KeyboardEvent, key: string): boolean {
+    if (event.key === 'F2') return this.renameActiveLayerFromShortcut(event);
+    if (event.key === 'Delete' && !event.altKey) return this.deleteSelectedElementFromShortcut(event);
+    return false;
+  }
+
+  private renameActiveLayerFromShortcut(event: KeyboardEvent): boolean {
+    event.preventDefault();
+    const layer = this.active();
+    if (layer) this.renameLayer(layer);
+    return true;
+  }
+
+  private deleteSelectedElementFromShortcut(event: KeyboardEvent): boolean {
+    const layer = this.active();
+    if (!layer) return false;
+    event.preventDefault();
+    const preferences = readPreferences();
+    if (this.activeMaskId) {
+      const maskId = this.activeMaskId;
+      this.cancelMaskChanges();
+      const currentLayer = this.ctl.find(layer.id);
+      const maskExists = currentLayer?.masks?.some((mask) => mask.id === maskId) ?? false;
+      if (!maskExists) return true;
+      const changed = preferences.maskDeleteBehavior === 'clear'
+        ? this.ctl.clearMaskContent(layer.id, maskId)
+        : this.ctl.removeMask(layer.id, maskId);
+      if (!changed) return true;
+      this.activeMaskId = preferences.maskDeleteBehavior === 'remove' ? '' : maskId;
+      this.refreshAfterLayerPropertyChange();
+      this.q<HTMLElement>('#status').textContent = preferences.maskDeleteBehavior === 'clear'
+        ? 'Se borró el contenido de la máscara.'
+        : 'Se eliminó la máscara.';
+      return true;
+    }
+    if (preferences.layerDeleteBehavior === 'remove') {
+      this.deleteActiveLayer();
+      return true;
+    }
+    if (!this.ctl.clearLayerContent(layer.id)) {
+      this.q<HTMLElement>('#status').textContent = 'No se puede borrar el contenido de este tipo de capa.';
+      return true;
+    }
+    this.activeMaskId = '';
+    this.refreshAfterLayerPropertyChange();
+    this.q<HTMLElement>('#status').textContent = `Se borró el contenido de «${layer.name}».`;
+    return true;
+  }
+
+  private togglePanelShortcut(event: KeyboardEvent, selector: string): boolean {
+    event.preventDefault();
+    this.q<HTMLButtonElement>(selector).click();
+    return true;
+  }
+
+  private clickMenuAction(event: KeyboardEvent, selector: string): boolean {
+    event.preventDefault();
+    this.q<HTMLButtonElement>(selector).click();
+    return true;
+  }
+
+  private runActiveLayerCommand(event: KeyboardEvent, action: LayerMenuCommand): boolean {
+    event.preventDefault();
+    this.runLayerMenuAction(action);
+    return true;
+  }
+
+  private moveActiveLayerFromShortcut(event: KeyboardEvent, delta: number): boolean {
+    event.preventDefault();
+    if (this.active()) this.moveActive(delta);
+    return true;
+  }
 
   private handleUndoRedoShortcut(event: KeyboardEvent): boolean {
     event.preventDefault();
@@ -635,13 +898,22 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
     return true;
   }
 
-  protected handleToolShortcut(key: string, mod: boolean, typing: boolean): void {
+  protected handleToolShortcut(key: string, mod: boolean, typing: boolean, shift = false): void {
       if (mod || typing) return;
       const tools: Record<string, Tool> = {
-        b: 'brush', e: 'eraser', i: 'eyedropper', l: 'line', r: 'rectangle',
-        o: 'ellipse', g: 'fill', h: 'hand', t: 'text', v: 'vector-select', c: 'clone-stamp', p: 'comic-panel', d: 'gradient', j: 'smudge', k: 'liquify',
+        b: 'brush', q: 'pen', y: 'pencil', a: 'airbrush', x: 'decoration', e: 'eraser', i: 'eyedropper', l: 'line', r: 'rectangle',
+        o: 'ellipse', g: 'fill', h: 'hand', m: 'move', t: 'text', v: 'vector-select', c: 'clone-stamp', p: 'comic-panel', d: 'gradient', j: 'smudge', k: 'liquify',
+        'shift+e': 'vector-eraser', 'shift+u': 'dust-removal', 'shift+t': 'vector-line-correction', 'shift+w': 'speech-bubble', 'shift+f': 'flash',
+        'shift+o': 'vector-parallel-lines', 'shift+p': 'vector-radial-lines',
+        'shift+r': 'select-rectangle', 'shift+q': 'select-ellipse', 'shift+l': 'select-lasso', 'shift+m': 'magic-wand', 'shift+x': 'selection-clear',
+        'shift+1': 'select-polygon', 'shift+2': 'selection-brush', 'shift+3': 'selection-erase',
+        '1': 'pixel-rounded-rectangle', '2': 'pixel-polyline', '3': 'pixel-bezier', '4': 'pixel-polygon', '5': 'pixel-star', '6': 'pixel-spiral',
+        '7': 'vector-rectangle', '8': 'vector-rounded-rectangle', '9': 'vector-ellipse', '0': 'vector-line',
+        'shift+z': 'vector-polyline', 'shift+n': 'vector-pen', 'shift+s': 'vector-polygon', 'shift+g': 'vector-star',
+        'shift+d': 'vector-spiral', 'shift+c': 'vector-freehand',
       };
-      const tool = tools[key];
+      const shortcut = shift ? `shift+${key}` : key;
+      const tool = tools[shortcut] ?? tools[key];
       if (tool) this.setTool(tool);
     }
 
@@ -653,8 +925,8 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
         createLayer: (type, name) => {
           if (!this.ctl) return null;
           try {
-            const node = this.ctl.addLayer(type, name);
-            this.activeId = node.id; this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
+            const node = this.ctl.addLayerAbove(type, name, this.activeId);
+            this.activateCreatedLayer(node); this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
             return { id: node.id, name: node.name, type: node.type };
           } catch (error) { this.fail(error); return null; }
         },
@@ -831,12 +1103,14 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
 
   protected setTool(t: Tool): void {
       if (this.stroke || this.isPanning) return;
-      const layer = this.active();
-      const layerType = layer?.type ?? null;
       const definition = this.toolManager.getDefinition(t);
-      if (!this.toolManager.canUseLayer(t, layerType)) return this.reportUnavailableToolTarget(definition.target, layer);
-      if (this.hasUnavailableToolLayer(definition.target, layer)) return this.reportUnavailableToolTarget(definition.target, layer);
+      const layer = this.ensureToolTargetLayer(t, definition.target);
+      if (definition.target !== 'any' && !layer) {
+        this.reportUnavailableToolTarget(definition.target, this.active());
+        return;
+      }
       this.tool = t;
+      this.applyDefaultBrushPresetForTool(t);
       this.vectorGesture = null; this.vectorDrawGesture = null; this.vectorDirectSelectedId = null;
       this.renderToolOptions();
       this.renderAdvancedToolOptions();
@@ -844,9 +1118,61 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       this.clearToolPreview();
     }
 
-  private hasUnavailableToolLayer(target: string, layer: LayerNode | undefined): boolean {
-    if (target === 'any' || !layer) return false;
-    return this.ctl.isEffectivelyLocked(layer.id) || !this.ctl.isEffectivelyVisible(layer.id);
+  private ensureToolTargetLayer(tool: Tool, target: ToolTarget): LayerNode | undefined {
+    if (target === 'any') return this.active();
+    const active = this.active();
+    if (this.isUsableToolLayer(active, target)) return active;
+
+    if (tool === 'vector-select') return this.activateEditableVectorLayer(target);
+
+    // No reutilizar una capa compatible que pueda estar debajo de la capa activa:
+    // el resultado del trazo quedaría oculto por la imagen, texto o vector superior.
+    const created = this.createToolTargetLayer(target, active);
+    this.activateCreatedLayer(created);
+    this.syncUI();
+    this.updateHistoryUI();
+    this.scheduleRefresh();
+    this.q<HTMLElement>('#status').textContent = target === 'raster'
+      ? 'Se creó una capa de pintura para la herramienta seleccionada.'
+      : 'Se creó una capa vectorial para la herramienta seleccionada.';
+    return created;
+  }
+
+  private isUsableToolLayer(layer: LayerNode | undefined, target: ToolTarget): layer is LayerNode {
+    if (!layer) return false;
+    if (target === 'any') return true;
+    const matchesTarget = target === 'raster'
+      ? layer.type === 'paint' || layer.type === 'raster'
+      : layer.type === 'vector';
+    if (!matchesTarget) return false;
+    return this.ctl.isEffectivelyVisible(layer.id) && !this.ctl.isEffectivelyLocked(layer.id);
+  }
+
+  private activateEditableVectorLayer(target: ToolTarget): LayerNode | undefined {
+    const existing = this.findEditableToolLayer(this.ctl.doc.layers, target);
+    if (!existing) return undefined;
+    this.activateCreatedLayer(existing);
+    this.syncUI();
+    this.q<HTMLElement>('#status').textContent = `Se seleccionó «${existing.name}» para editar sus objetos.`;
+    return existing;
+  }
+
+  private findEditableToolLayer(nodes: LayerNode[], target: ToolTarget): LayerNode | undefined {
+    return [...nodes].reverse()
+      .map((node) => node.type === 'group'
+        ? this.findEditableToolLayer(node.children, target)
+        : this.isUsableToolLayer(node, target) ? node : undefined)
+      .find((candidate): candidate is LayerNode => Boolean(candidate));
+  }
+
+  private createToolTargetLayer(target: ToolTarget, active: LayerNode | undefined): LayerNode {
+    const type = target === 'raster' ? 'paint' : 'vector';
+    const name = target === 'raster' ? 'Pintura' : 'Vectorial';
+    const canInsertAbove = Boolean(active
+      && this.ctl.isEffectivelyVisible(active.id)
+      && !this.ctl.isEffectivelyLocked(active.id));
+    if (canInsertAbove && active) return this.ctl.addLayerAbove(type, name, active.id);
+    return this.ctl.addLayer(type, name);
   }
 
   private reportUnavailableToolTarget(target: string, layer: LayerNode | undefined): void {
@@ -873,6 +1199,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
   }
 
   protected promptNew(): void {
+      if (this.blockForUnappliedMaskChanges('crear un documento nuevo')) return;
       const m = /^(\d{2,5})\s*[x×]\s*(\d{2,5})$/.exec(prompt('Tamaño (ancho x alto)', '1280x720') ?? '');
       if (!m) return;
       const [w, h] = [Number(m[1]), Number(m[2])];

@@ -49,8 +49,8 @@ export abstract class AppDocumentFeatures extends AppBase {
 
   protected async importImage(file: File): Promise<void> {
       const pixels = await this.imageFileToDocumentPixels(file);
-      this.ctl.addFileLayer(documentNameFromFile(file.name) || 'Imagen importada', pixels, file.name, undefined, file.lastModified, file.size);
-      this.activeId = this.ctl.doc.layers.at(-1)?.id ?? this.activeId;
+      const layer = this.ctl.addFileLayer(documentNameFromFile(file.name) || 'Imagen importada', pixels, file.name, undefined, file.lastModified, file.size, this.activeId);
+      this.activateCreatedLayer(layer);
       this.syncUI();
       this.updateHistoryUI();
       this.scheduleRefresh();
@@ -71,6 +71,7 @@ export abstract class AppDocumentFeatures extends AppBase {
       this.clearRendererForDocument(ctl.doc.width, ctl.doc.height);
       this.ctx = this.createEngineContext(ctl);
       this.refreshAfterDocumentReplacement();
+      this.applyCanvasView();
     }
 
   protected onDocumentChanged(_label: string): void {

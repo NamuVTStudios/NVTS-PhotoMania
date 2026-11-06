@@ -1,10 +1,8 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
 import { createViteTestServer } from './helpers/vite-test-server.mjs';
-import createEngine from '../packages/wasm-bindings/build/engine.js';
+import { createTestEngine } from './helpers/create-test-engine.mjs';
 
 const requireStorageDependency = createRequire(new URL('../packages/storage/package.json', import.meta.url));
 const { strFromU8, strToU8, unzipSync, zipSync } = requireStorageDependency('fflate');
@@ -15,6 +13,7 @@ let DocumentController;
 let packNvtsPhoto;
 let unpackNvtsPhoto;
 let normalizeLayerStyles;
+let migrateNvtsPhotoManifest;
 const controllers = [];
 
 before(async () => {
@@ -23,9 +22,9 @@ before(async () => {
   ({ DocumentController } = await vite.ssrLoadModule('/packages/document-model/src/DocumentController.ts'));
   ({ packNvtsPhoto, unpackNvtsPhoto } = await vite.ssrLoadModule('/packages/storage/src/NvtsPhotoIO.ts'));
   ({ normalizeLayerStyles } = await vite.ssrLoadModule('/packages/shared/src/nvtsphoto.ts'));
+  ({ migrateNvtsPhotoManifest } = await vite.ssrLoadModule('/packages/storage/src/ManifestMigrations.ts'));
 
-  const wasmPath = fileURLToPath(new URL('../packages/wasm-bindings/build/engine.wasm', import.meta.url));
-  engine = await createEngine({ wasmBinary: readFileSync(wasmPath), locateFile: () => wasmPath });
+  engine = await createTestEngine();
 });
 
 after(async () => {
@@ -239,6 +238,18 @@ test('structural snapshots obey the configured memory budget', () => {
   assert.equal(controller.historyEntries.length, 0);
 });
 
+test('history subscribers see the final stack after structural actions are trimmed', () => {
+  const controller = createController(16, 16, 0);
+  const observedHistory = [];
+  controller.subscribe(() => observedHistory.push(controller.historyEntries.map((entry) => entry.label)));
+
+  controller.addRaster('Capa descartada por límite');
+
+  assert.deepEqual(observedHistory, [[]]);
+  assert.equal(controller.canUndo, false);
+  assert.equal(controller.historyEntries.length, 0);
+});
+
 test('a native document round-trips its manifest and RGBA layer data', () => {
   const doc = makeDocument();
   const sourcePixels = Uint8Array.from([12, 34, 56, 255]);
@@ -251,6 +262,30 @@ test('a native document round-trips its manifest and RGBA layer data', () => {
   assert.deepEqual([...unpacked.pixels.get('layer-1')], [...sourcePixels]);
 });
 
+test('manifest migration accepts compatible patch versions and normalizes legacy fields', () => {
+  const migrated = migrateNvtsPhotoManifest({
+    format: 'nvtsphoto',
+    version: '0.1.9',
+    document: { id: 'legacy', name: 'Legacy', width: 1, height: 1 },
+    layers: [{ id: 'layer-1', type: 'raster', name: 'Capa', visible: true, locked: false, opacity: 1, blendMode: 'normal' }],
+  }, 'nvtsphoto', '0.1.0');
+
+  assert.equal(migrated.generator, 'NVTS PhotoMania (archivo compatible)');
+  assert.deepEqual(migrated.extensions, {});
+  assert.equal(migrated.layers[0].type, 'paint');
+});
+
+test('manifest migration rejects unsupported schema lines and malformed versions', () => {
+  const manifest = {
+    format: 'nvtsphoto',
+    version: '0.2.0',
+    document: { id: 'doc', name: 'Doc', width: 1, height: 1 },
+    layers: [],
+  };
+  assert.throws(() => migrateNvtsPhotoManifest(manifest, 'nvtsphoto', '0.1.0'), /Versión 0\.2\.0 no soportada/);
+  assert.throws(() => migrateNvtsPhotoManifest({ ...manifest, version: '0.1' }, 'nvtsphoto', '0.1.0'), /Versión de formato inválida/);
+});
+
 test('the loader normalizes legacy raster layers and rejects incompatible major versions', () => {
   const archive = packNvtsPhoto(makeDocument(), () => Uint8Array.from([1, 2, 3, 4]));
   const legacyArchive = rewriteManifest(archive, (manifest) => { manifest.layers[0].type = 'raster'; });
@@ -258,6 +293,29 @@ test('the loader normalizes legacy raster layers and rejects incompatible major 
 
   assert.equal(unpackNvtsPhoto(legacyArchive).doc.layers[0].type, 'paint');
   assert.throws(() => unpackNvtsPhoto(incompatibleArchive), /Versión 1\.0\.0 no soportada/);
+});
+
+test('the loader normalizes compatible 0.1.x manifests with missing optional metadata', () => {
+  const archive = packNvtsPhoto(makeDocument(), () => Uint8Array.from([1, 2, 3, 4]));
+  const compatibleArchive = rewriteManifest(archive, (manifest) => {
+    manifest.version = '0.1.7';
+    delete manifest.generator;
+    delete manifest.extensions;
+    manifest.layers[0].type = 'raster';
+  });
+
+  const unpacked = unpackNvtsPhoto(compatibleArchive);
+  assert.equal(unpacked.doc.layers[0].type, 'paint');
+  assert.deepEqual([...unpacked.pixels.get('layer-1')], [1, 2, 3, 4]);
+});
+
+test('the loader rejects unsupported minor and malformed format versions', () => {
+  const archive = packNvtsPhoto(makeDocument(), () => null);
+  const unsupportedMinor = rewriteManifest(archive, (manifest) => { manifest.version = '0.2.0'; });
+  const malformedVersion = rewriteManifest(archive, (manifest) => { manifest.version = '0.1'; });
+
+  assert.throws(() => unpackNvtsPhoto(unsupportedMinor), /Versión 0\.2\.0 no soportada/);
+  assert.throws(() => unpackNvtsPhoto(malformedVersion), /Versión de formato inválida/);
 });
 
 test('the loader rejects invalid dimensions and archives without a manifest', () => {

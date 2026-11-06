@@ -8,6 +8,7 @@ import { zipSync, unzipSync, strToU8, strFromU8, type Zippable } from 'fflate';
 import { cloneLayerMasks, cloneLayerStyles, normalizeLayerStyles, cloneVectorShapes, NVTS_FORMAT, NVTS_VERSION, isPixelLayerType, type LayerManifest, type NvtsManifest, type LayerType } from '@nvts/shared';
 import type { DocumentState, LayerNode, UnpackedDocument } from '@nvts/document-model';
 import { parseLayerMasks } from './LayerMaskCodec';
+import { migrateNvtsPhotoManifest } from './ManifestMigrations';
 
 const MAX_ENTRY_BYTES = 1 << 30; // 1 GiB por entrada: defensa básica contra "zip bombs"
 type UnzippedFiles = ReturnType<typeof unzipSync>;
@@ -86,17 +87,6 @@ export function packNvtsPhoto(doc: DocumentState, read: PixelReader): Uint8Array
 
 /* ───────────── 2. DESERIALIZAR ───────────── */
 
-function validate(m: NvtsManifest): void {
-  if (m?.format !== NVTS_FORMAT) throw new Error('No es un archivo .nvtsphoto');
-  if (m.version.split('.')[0] !== NVTS_VERSION.split('.')[0]) {
-    throw new Error(`Versión ${m.version} no soportada (actual ${NVTS_VERSION})`);
-  }
-  const { width: w, height: h } = m.document;
-  if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || w > 16384 || h > 16384) {
-    throw new Error('Dimensiones de documento inválidas');
-  }
-}
-
 function createLayerFromManifest(manifest: LayerManifest): LayerNode {
   return {
     id: String(manifest.id), engineId: 0, type: (manifest.type === 'raster' ? 'paint' : manifest.type) as LayerType,
@@ -159,9 +149,8 @@ export function unpackNvtsPhoto(bytes: Uint8Array): UnpackedDocument {
 function readAndValidateManifest(files: UnzippedFiles): NvtsManifest {
   const raw = files['manifest.json'];
   if (!raw) throw new Error('Falta manifest.json');
-  const manifest = JSON.parse(strFromU8(raw)) as NvtsManifest;
-  validate(manifest);
-  return manifest;
+  const parsed: unknown = JSON.parse(strFromU8(raw));
+  return migrateNvtsPhotoManifest(parsed, NVTS_FORMAT, NVTS_VERSION);
 }
 
 /* ───────────── 3. DISCO (File System Access API + fallback) ───────────── */

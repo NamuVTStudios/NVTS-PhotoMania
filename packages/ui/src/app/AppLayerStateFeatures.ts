@@ -7,6 +7,8 @@ import { renderHistoryPanel } from '../panels/HistoryPanel';
 import { readPreferences } from '../panels/PreferencesPanel';
 import { documentFormats, rememberRecentProject } from '@nvts/storage';
 import type { Tool, TextToolSettings } from './AppBase';
+import { BRUSH_PRESETS, BRUSH_CATEGORY_LABELS, findBrushPreset } from '../tools/BrushPresetCatalog';
+import { getCanvasFitSize } from '../tools/CanvasViewGeometry';
 
 export abstract class AppLayerStateFeatures extends AppComicFeatures {
   protected syncUI(): void {
@@ -136,19 +138,36 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
         return this.ctl.isEffectivelyVisible(layer.id) && !this.ctl.isEffectivelyLocked(layer.id);
       };
       const canPaint = canUseActiveLayer('brush');
-      const canUseVector = canUseActiveLayer('comic-panel');
-      this.setToolButtonsDisabled(['#rail-brush', '#rail-eraser', '#rail-line', '#rail-rectangle', '#rail-ellipse', '#rail-pixel-rounded-rectangle', '#rail-pixel-polyline', '#rail-pixel-bezier', '#rail-pixel-polygon', '#rail-pixel-star', '#rail-pixel-spiral', '#rail-fill', '#rail-clone-stamp', '#rail-gradient', '#rail-smudge', '#rail-liquify'], !canPaint);
-      this.setToolButtonsDisabled(['#advanced-brightness-down', '#advanced-brightness-up'], !canPaint);
-      this.setToolButtonsDisabled(['#rail-eyedropper', '#rail-hand'], false);
+      const canSelectVector = this.hasEditableVectorLayer(this.ctl.doc.layers);
       this.setToolButtonsDisabled([
-        '#rail-vector-select', '#rail-vector-rectangle', '#rail-vector-rounded-rectangle', '#rail-vector-ellipse',
-        '#rail-vector-line', '#rail-vector-polyline', '#rail-vector-pen', '#rail-vector-polygon', '#rail-vector-star',
-        '#rail-vector-spiral', '#rail-vector-freehand', '#rail-comic-panel',
-      ], !canUseVector);
+        '#rail-brush', '#rail-pen', '#rail-pencil', '#rail-airbrush', '#rail-decoration', '#rail-eraser', '#rail-line', '#rail-rectangle', '#rail-ellipse',
+        '#rail-pixel-rounded-rectangle', '#rail-pixel-polyline', '#rail-pixel-bezier',
+        '#rail-pixel-polygon', '#rail-pixel-star', '#rail-pixel-spiral', '#rail-fill',
+        '#rail-clone-stamp', '#rail-gradient', '#rail-smudge', '#rail-liquify', '#rail-vector-eraser', '#rail-dust-removal',
+      ], false);
+      this.setToolButtonsDisabled(['#advanced-brightness-down', '#advanced-brightness-up'], !canPaint);
+      this.setToolButtonsDisabled(['#rail-eyedropper', '#rail-hand', '#rail-select-rectangle', '#rail-select-ellipse', '#rail-select-lasso', '#rail-select-polygon', '#rail-selection-brush', '#rail-selection-erase', '#rail-magic-wand', '#rail-selection-clear'], false);
+      const canMove = Boolean(layer && ['paint', 'raster', 'file', 'text', 'vector'].includes(layer.type)
+        && this.ctl.isEffectivelyVisible(layer.id) && !this.ctl.isEffectivelyLocked(layer.id));
+      this.setToolButtonsDisabled(['#rail-move'], !canMove);
+      this.setToolButtonsDisabled(['#rail-vector-select'], !canSelectVector);
+      this.setToolButtonsDisabled([
+        '#rail-vector-rectangle', '#rail-vector-rounded-rectangle', '#rail-vector-ellipse',
+        '#rail-vector-line', '#rail-vector-polyline', '#rail-vector-pen', '#rail-vector-polygon', '#rail-vector-line-correction',
+        '#rail-vector-star', '#rail-vector-spiral', '#rail-vector-freehand', '#rail-comic-panel', '#rail-speech-bubble', '#rail-flash', '#rail-vector-parallel-lines', '#rail-vector-radial-lines',
+      ], false);
       const swatch = this.root.querySelector<HTMLElement>('#foreground-swatch');
       if (swatch) swatch.style.background = this.foregroundHex();
       const secondarySwatch = this.root.querySelector<HTMLElement>('#secondary-swatch');
       if (secondarySwatch) secondarySwatch.style.background = '#ffffff';
+    }
+
+  private hasEditableVectorLayer(nodes: LayerNode[]): boolean {
+      return nodes.some((node) => node.type === 'group'
+        ? this.hasEditableVectorLayer(node.children)
+        : node.type === 'vector'
+          && this.ctl.isEffectivelyVisible(node.id)
+          && !this.ctl.isEffectivelyLocked(node.id));
     }
 
   protected setToolButtonsDisabled(selectors: string[], disabled: boolean): void {
@@ -183,17 +202,21 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
         this.textSettings = this.textSettingsFromLayer(selectedText);
       }
       const labels: Record<Tool, string> = {
-        brush: 'Pincel', eraser: 'Borrador', eyedropper: 'Cuentagotas', line: 'Línea',
-        rectangle: 'Rectángulo', ellipse: 'Elipse', fill: 'Relleno', hand: 'Mover lienzo',
-        text: 'Texto', 'vector-select': 'Selección vectorial',
+        brush: 'Pincel', pen: 'Plumilla', pencil: 'Lápiz', airbrush: 'Aerógrafo', decoration: 'Decoración',
+        eraser: 'Borrador', 'vector-eraser': 'Goma vectorial', 'dust-removal': 'Eliminar polvo', eyedropper: 'Cuentagotas',
+        line: 'Línea', rectangle: 'Rectángulo', ellipse: 'Elipse', fill: 'Relleno', hand: 'Mover lienzo', move: 'Mover contenido',
+        text: 'Texto', 'vector-select': 'Selección vectorial', 'clone-stamp': 'Tampón de copia', 'comic-panel': 'Borde y división de viñetas',
+        'select-polygon': 'Selección poligonal', 'selection-brush': 'Pincel de selección', 'selection-erase': 'Borrador de selección',
+        gradient: 'Degradado', smudge: 'Mezcla de color', liquify: 'Licuar', 'select-rectangle': 'Selección rectangular',
+        'select-ellipse': 'Selección elíptica', 'select-lasso': 'Lazo', 'magic-wand': 'Selección automática', 'selection-clear': 'Borrar selección',
         'pixel-rounded-rectangle': 'Rectángulo redondeado de píxeles', 'pixel-polyline': 'Polilínea de píxeles',
-        'pixel-bezier': 'Curva Bézier de píxeles', 'pixel-polygon': 'Polígono de píxeles',
-        'pixel-star': 'Estrella de píxeles', 'pixel-spiral': 'Espiral de píxeles',
+        'pixel-bezier': 'Curva Bézier de píxeles', 'pixel-polygon': 'Polígono de píxeles', 'pixel-star': 'Estrella de píxeles',
+        'pixel-spiral': 'Espiral de píxeles', 'vector-line-correction': 'Corrección de línea',
         'vector-rectangle': 'Rectángulo vectorial', 'vector-rounded-rectangle': 'Rectángulo redondeado vectorial',
-        'vector-ellipse': 'Elipse vectorial', 'vector-line': 'Línea vectorial', 'vector-polyline': 'Polilínea vectorial',
-        'vector-pen': 'Pluma vectorial', 'vector-polygon': 'Polígono vectorial', 'vector-star': 'Estrella vectorial',
-        'vector-freehand': 'Trazo vectorial libre', 'vector-spiral': 'Espiral vectorial',
-        'clone-stamp': 'Tampón de clonar', 'comic-panel': 'Marco y viñetas', gradient: 'Degradado', smudge: 'Dedo', liquify: 'Licuar',
+        'vector-ellipse': 'Elipse vectorial', 'vector-line': 'Línea vectorial', 'vector-pen': 'Pluma vectorial',
+        'vector-polygon': 'Polígono vectorial', 'vector-star': 'Estrella vectorial', 'vector-freehand': 'Trazo vectorial libre',
+        'vector-polyline': 'Polilínea vectorial', 'vector-spiral': 'Espiral vectorial',
+        'vector-parallel-lines': 'Líneas paralelas', 'vector-radial-lines': 'Líneas radiales', 'speech-bubble': 'Bocadillo', flash: 'Flash',
       };
       this.q<HTMLElement>('#tool-current-label').textContent = labels[this.tool];
     }
@@ -232,10 +255,12 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
   }
 
   private createToolSpecificOptions(fields: { color: string; size: string; opacity: string }, fontOptions: string): string {
-    if (this.tool === 'brush') return `${fields.color}${fields.size}${fields.opacity}`;
+    if (['brush', 'pen', 'pencil', 'airbrush', 'decoration'].includes(this.tool)) return `${fields.color}${fields.size}${fields.opacity}${this.createBrushPresetMarkup()}`;
     if (this.tool === 'gradient') return `${fields.color}${fields.opacity}<span class="tool-help">Arrastrá para aplicar un degradado configurable desde el color frontal. El tipo y la inversión están en opciones avanzadas.</span>`;
     if (this.tool === 'smudge') return `${fields.size}${fields.opacity}<span class="tool-help">Arrastrá para mezclar los colores existentes.</span>`;
     if (this.tool === 'liquify') return `${fields.size}<span class="tool-help">Arrastrá para empujar los píxeles dentro del radio del pincel.</span>`;
+    if (this.tool === 'dust-removal') return `${fields.size}${fields.opacity}<span class="tool-help">Detecta puntos aislados comparando cada píxel con sus vecinos y suaviza solo las anomalías pequeñas.</span>`;
+    if (this.tool === 'vector-eraser') return `${fields.size}<span class="tool-help">En líneas y polilíneas, borra el tramo entre las intersecciones más próximas. En otras figuras, elimina el objeto completo.</span>`;
     if (this.tool === 'clone-stamp') return this.createCloneStampToolMarkup(fields);
     if (this.tool === 'comic-panel') return this.createComicToolMarkup();
     if (this.tool === 'eraser') return `${fields.size}${fields.opacity}`;
@@ -245,9 +270,13 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
     if (this.tool === 'pixel-polyline' || this.tool === 'pixel-bezier' || this.tool === 'pixel-spiral') return `${fields.color}${fields.size}${fields.opacity}<span class="tool-help">La forma se rasteriza en la capa de pintura seleccionada. Los parámetros específicos están en Opciones avanzadas.</span>`;
     if (this.tool === 'fill') return this.createFillToolMarkup(fields.color);
     if (this.tool === 'text') return this.createTextToolMarkup(fontOptions);
+    if (this.tool === 'move') return '<span class="tool-help">Arrastrá un elemento en la capa seleccionada para moverlo. Funciona con capas de píxeles, texto y objetos vectoriales.</span>';
     if (this.tool === 'eyedropper') return '<span class="tool-help">Hacé clic en el lienzo para tomar un color.</span>';
+    if (['select-rectangle', 'select-ellipse', 'select-lasso'].includes(this.tool)) return '<span class="tool-help">Arrastrá para crear una selección. La selección limita los trazos rasterizados y el relleno hasta que la borres.</span>';
+    if (this.tool === 'magic-wand') return `${fields.color}<span class="tool-help">Hacé clic sobre un color para seleccionar su región contigua según la tolerancia.</span>`;
+    if (this.tool === 'selection-clear') return '<span class="tool-help">Hacé clic en el lienzo o presioná Shift + X para quitar la selección activa.</span>'; 
     if (this.tool === 'vector-select') return '<span class="tool-help">Seleccioná un objeto vectorial; arrastralo para moverlo o usá el control de la esquina inferior derecha para cambiar su tamaño.</span>';
-    if (this.tool.startsWith('vector-')) return `${fields.color}${fields.size}${fields.opacity}<span class="tool-help">Arrastrá sobre una capa vectorial visible y desbloqueada para crear un objeto editable. El relleno y el estilo del trazo se configuran en Opciones avanzadas.</span>`;
+    if (this.tool.startsWith('vector-') || ['speech-bubble', 'flash'].includes(this.tool)) return `${fields.color}${fields.size}${fields.opacity}<span class="tool-help">Arrastrá sobre una capa vectorial visible y desbloqueada para crear un objeto editable. El relleno y el estilo del trazo se configuran en Opciones avanzadas.</span>`;
     return '<span class="tool-help">Arrastrá el lienzo para desplazarte. Usá − / + o la rueda con Ctrl para cambiar el zoom.</span>';
   }
 
@@ -281,15 +310,62 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       ];
       const styleOptions = styles.map(([value, label]) =>
         `<option value="${value}" ${settings.style === value ? 'selected' : ''}>${label}</option>`).join('');
-      return `<label class="tool-setting">Fuente <select id="tool-text-font">${fontOptions}</select></label><label class="tool-setting">Estilo <select id="tool-text-style">${styleOptions}</select></label><label class="tool-setting">Tamaño <input id="tool-text-size" type="number" min="1" max="1000" value="${settings.fontSize}"/></label><label class="tool-setting">Color <input id="tool-text-color" type="color" value="${settings.color}"/></label>`;
+      return `<label class="tool-setting">Fuente <select id="tool-text-font">${fontOptions}</select></label><label class="tool-setting">Estilo <select id="tool-text-style">${styleOptions}</select></label><label class="tool-setting">Tamaño <input id="tool-text-size" type="number" min="1" max="1000" value="${settings.fontSize}"/></label><label class="tool-setting">Color <input id="tool-text-color" type="color" value="${settings.color}"/></label><button id="tool-text-new-layer" type="button">Crear otra capa de texto</button><span class="tool-help">Cada clic en el lienzo o en este botón crea una capa de texto independiente. Para editar una existente, usá el botón de edición de su capa.</span>`;
     }
 
   protected bindToolOptionEvents(host: HTMLElement): void {
       this.bindBrushToolControls(host);
       this.bindFillToolControls(host);
       this.bindTextToolControls(host);
+      this.bindNewTextLayerButton(host);
       this.bindComicToolControls(host);
+      this.bindBrushPresetControl(host);
     }
+
+  private createBrushPresetMarkup(): string {
+    const groups = (['sketch', 'inking', 'decoration', 'texture', 'painting'] as const).map((category) => {
+      const options = BRUSH_PRESETS.filter((preset) => preset.category === category).map((preset) =>
+        `<option value="${preset.id}" ${this.brush.presetId === preset.id ? 'selected' : ''}>${preset.name}</option>`).join('');
+      return `<optgroup label="${BRUSH_CATEGORY_LABELS[category]}">${options}</optgroup>`;
+    }).join('');
+    const customSelected = findBrushPreset(this.brush.presetId) ? '' : 'selected';
+    return `<label class="tool-setting">Preajuste <select id="tool-brush-preset"><option value="custom" ${customSelected}>Personalizado</option>${groups}</select></label>`;
+  }
+
+  private bindBrushPresetControl(host: HTMLElement): void {
+    const select = host.querySelector<HTMLSelectElement>('#tool-brush-preset');
+    if (!select) return;
+    select.onchange = () => this.applyBrushPreset(select.value);
+  }
+
+  private applyBrushPreset(presetId: string): void {
+    const preset = findBrushPreset(presetId);
+    if (!preset) return;
+    this.brush = { ...this.brush, ...preset, presetId: preset.id };
+    this.renderToolOptions();
+    this.renderAdvancedToolOptions();
+    this.scheduleRefresh();
+  }
+
+  protected applyDefaultBrushPresetForTool(tool: Tool): void {
+    const presetByTool: Partial<Record<Tool, string>> = {
+      brush: 'acrylic', pen: 'g-pen', pencil: 'graphite-hb', airbrush: 'soft-airbrush', decoration: 'flower-stamp',
+    };
+    const presetId = presetByTool[tool];
+    if (!presetId) return;
+    const preset = findBrushPreset(presetId);
+    if (!preset) return;
+    const current = findBrushPreset(this.brush.presetId);
+    if (current?.category === preset.category) return;
+    const { id, size, opacity, hardness, spacing, smoothing, tipShape, texture } = preset;
+    this.brush = { ...this.brush, presetId: id, size, opacity, hardness, spacing, smoothing, tipShape, texture };
+  }
+
+  private markBrushSettingsCustom(host: HTMLElement): void {
+    this.brush.presetId = 'custom';
+    const preset = host.querySelector<HTMLSelectElement>('#tool-brush-preset');
+    if (preset) preset.value = 'custom';
+  }
 
   protected bindBrushToolControls(host: HTMLElement): void {
       const color = host.querySelector<HTMLInputElement>('#tool-color');
@@ -299,11 +375,13 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       const size = host.querySelector<HTMLInputElement>('#tool-size');
       if (size) size.oninput = () => {
         this.brush.size = Number(size.value);
+        this.markBrushSettingsCustom(host);
         this.updateToolOutput(host, '#tool-size-value', `${this.brush.size}px`);
       };
       const opacity = host.querySelector<HTMLInputElement>('#tool-opacity');
       if (opacity) opacity.oninput = () => {
         this.brush.opacity = Number(opacity.value);
+        this.markBrushSettingsCustom(host);
         this.updateToolOutput(host, '#tool-opacity-value', `${this.brush.opacity}%`);
         const advancedOpacity = this.root.querySelector<HTMLInputElement>('#advanced-gradient-opacity');
         if (advancedOpacity && this.tool === 'gradient') advancedOpacity.value = opacity.value;
@@ -411,6 +489,18 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       options?.toggleAttribute('hidden', this.comicToolMode !== 'split');
     }
 
+  protected bindNewTextLayerButton(host: HTMLElement): void {
+      const button = host.querySelector<HTMLButtonElement>('#tool-text-new-layer');
+      if (!button) return;
+      button.onclick = () => {
+        const point = {
+          x: Math.round(this.ctl.doc.width * 0.25),
+          y: Math.round(this.ctl.doc.height * 0.25),
+        };
+        void this.createTextAt(point);
+      };
+    }
+
   protected bindTextToolControls(host: HTMLElement): void {
       const font = host.querySelector<HTMLSelectElement>('#tool-text-font');
       if (font) font.onchange = () => {
@@ -448,7 +538,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
 
   protected updateSelectedToolButton(): void {
       const toolButtons: Record<Tool, string> = {
-        hand: '#rail-hand', brush: '#rail-brush', eraser: '#rail-eraser', line: '#rail-line',
+        hand: '#rail-hand', move: '#rail-move', brush: '#rail-brush', pen: '#rail-pen', pencil: '#rail-pencil', airbrush: '#rail-airbrush', decoration: '#rail-decoration', eraser: '#rail-eraser', line: '#rail-line',
         rectangle: '#rail-rectangle', ellipse: '#rail-ellipse', fill: '#rail-fill',
         eyedropper: '#rail-eyedropper', text: '#rail-text', 'vector-select': '#rail-vector-select',
         'pixel-rounded-rectangle': '#rail-pixel-rounded-rectangle', 'pixel-polyline': '#rail-pixel-polyline',
@@ -458,22 +548,40 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
         'vector-ellipse': '#rail-vector-ellipse', 'vector-line': '#rail-vector-line', 'vector-polyline': '#rail-vector-polyline',
         'vector-pen': '#rail-vector-pen', 'vector-polygon': '#rail-vector-polygon', 'vector-star': '#rail-vector-star',
         'vector-spiral': '#rail-vector-spiral', 'vector-freehand': '#rail-vector-freehand',
-        'clone-stamp': '#rail-clone-stamp', 'comic-panel': '#rail-comic-panel', gradient: '#rail-gradient', smudge: '#rail-smudge', liquify: '#rail-liquify',
+        'clone-stamp': '#rail-clone-stamp', 'comic-panel': '#rail-comic-panel',
+        'select-rectangle': '#rail-select-rectangle', 'select-ellipse': '#rail-select-ellipse', 'select-lasso': '#rail-select-lasso', 'magic-wand': '#rail-magic-wand', 'selection-clear': '#rail-selection-clear', 'select-polygon': '#rail-select-polygon', 'selection-brush': '#rail-selection-brush', 'selection-erase': '#rail-selection-erase', 'vector-eraser': '#rail-vector-eraser', 'vector-line-correction': '#rail-vector-line-correction', 'dust-removal': '#rail-dust-removal', 'speech-bubble': '#rail-speech-bubble', flash: '#rail-flash', 'vector-parallel-lines': '#rail-vector-parallel-lines', 'vector-radial-lines': '#rail-vector-radial-lines', gradient: '#rail-gradient', smudge: '#rail-smudge', liquify: '#rail-liquify',
       };
       Object.values(toolButtons).forEach((selector) => this.root.querySelector<HTMLElement>(selector)?.classList.remove('selected'));
       this.root.querySelector<HTMLElement>(toolButtons[this.tool])?.classList.add('selected');
+      this.syncShapeToolGroups();
     }
+
+  private syncShapeToolGroups(): void {
+    const pixelTools: Tool[] = ['line', 'rectangle', 'ellipse', 'pixel-rounded-rectangle', 'pixel-polyline', 'pixel-bezier', 'pixel-polygon', 'pixel-star', 'pixel-spiral'];
+    const vectorTools: Tool[] = ['vector-rectangle', 'vector-rounded-rectangle', 'vector-ellipse', 'vector-line', 'vector-polyline', 'vector-pen', 'vector-polygon', 'vector-star', 'vector-spiral', 'vector-freehand', 'vector-parallel-lines', 'vector-radial-lines', 'speech-bubble', 'flash'];
+    const pixelGroup = this.root.querySelector<HTMLDetailsElement>('#pixel-shapes-group');
+    const vectorGroup = this.root.querySelector<HTMLDetailsElement>('#vector-shapes-group');
+    const comicGroup = this.root.querySelector<HTMLDetailsElement>('#comic-guides-group');
+    const selectionGroup = this.root.querySelector<HTMLDetailsElement>('#selection-tools-group');
+    const selectionTools: Tool[] = ['select-rectangle', 'select-ellipse', 'select-lasso', 'select-polygon', 'selection-brush', 'selection-erase', 'magic-wand', 'selection-clear'];
+    if (selectionGroup) selectionGroup.open = selectionTools.includes(this.tool);
+    if (pixelGroup) pixelGroup.open = pixelTools.includes(this.tool);
+    if (vectorGroup) vectorGroup.open = vectorTools.includes(this.tool);
+    if (comicGroup) comicGroup.open = ['comic-panel', 'speech-bubble', 'flash', 'vector-parallel-lines', 'vector-radial-lines'].includes(this.tool);
+  }
 
   protected updateToolCursor(): void {
       const cursors: Record<Tool, string> = {
-        hand: 'grab', eyedropper: 'copy', text: 'text', 'vector-select': 'default',
-        brush: 'crosshair', eraser: 'crosshair', line: 'crosshair', rectangle: 'crosshair',
+        hand: 'grab', move: 'move', eyedropper: 'copy', text: 'text', 'vector-select': 'default',
+        brush: 'crosshair', pen: 'crosshair', pencil: 'crosshair', airbrush: 'crosshair', decoration: 'crosshair', eraser: 'crosshair', line: 'crosshair', rectangle: 'crosshair',
         ellipse: 'crosshair', 'pixel-rounded-rectangle': 'crosshair', 'pixel-polyline': 'crosshair',
         'pixel-bezier': 'crosshair', 'pixel-polygon': 'crosshair', 'pixel-star': 'crosshair', 'pixel-spiral': 'crosshair',
         fill: 'crosshair', 'clone-stamp': 'crosshair', 'comic-panel': 'crosshair', gradient: 'crosshair', smudge: 'crosshair', liquify: 'crosshair',
+        'select-rectangle': 'crosshair', 'select-ellipse': 'crosshair', 'select-lasso': 'crosshair', 'select-polygon': 'crosshair', 'selection-brush': 'crosshair', 'selection-erase': 'crosshair', 'magic-wand': 'crosshair', 'selection-clear': 'crosshair',
         'vector-rectangle': 'crosshair', 'vector-rounded-rectangle': 'crosshair', 'vector-ellipse': 'crosshair',
         'vector-line': 'crosshair', 'vector-polyline': 'crosshair', 'vector-pen': 'crosshair',
         'vector-polygon': 'crosshair', 'vector-star': 'crosshair', 'vector-spiral': 'crosshair', 'vector-freehand': 'crosshair',
+        'vector-eraser': 'crosshair', 'vector-line-correction': 'crosshair', 'dust-removal': 'crosshair', 'speech-bubble': 'crosshair', flash: 'crosshair', 'vector-parallel-lines': 'crosshair', 'vector-radial-lines': 'crosshair',
       };
       this.canvas.style.cursor = cursors[this.tool];
     }
@@ -625,8 +733,15 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       }
       const x = Math.round(point.x);
       const y = Math.round(point.y);
-      const layer = this.ctl.addLayer('text', content.split('\n')[0].slice(0, 48) || 'Texto');
-      this.activeId = layer.id;
+      const active = this.active();
+      const name = content.split('\n')[0].slice(0, 48) || 'Texto';
+      const canInsertAbove = Boolean(active
+        && this.ctl.isEffectivelyVisible(active.id)
+        && !this.ctl.isEffectivelyLocked(active.id));
+      const layer = canInsertAbove && active
+        ? this.ctl.addLayerAbove('text', name, active.id)
+        : this.ctl.addLayer('text', name);
+      this.activateCreatedLayer(layer);
       const pixels = this.rasterizeText(content, x, y, settings);
       this.ctl.replaceTextContent(layer.id, this.textLayerPatch(content, x, y, settings), pixels);
     }
@@ -691,6 +806,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
     }
 
   protected applyCanvasView(): void {
+      this.updateCanvasFitSize();
       this.canvas.style.transformOrigin = 'center center';
       this.canvas.style.transform = `translate(${this.panX}px, ${this.panY}px) scale(${this.zoom})`;
       // Aumenta la resolución interna al hacer zoom, para que el lienzo no se vea borroso al ampliarlo.
@@ -703,6 +819,16 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       this.canvas.style.cursor = this.getCanvasCursor();
     }
 
+  private updateCanvasFitSize(): void {
+    if (!this.ctl) return;
+    const stage = this.root.querySelector<HTMLElement>('.canvas-stage');
+    if (!stage) return;
+    const fit = getCanvasFitSize(stage.clientWidth, stage.clientHeight, this.ctl.doc.width, this.ctl.doc.height);
+    if (!fit) return;
+    this.canvas.style.width = `${fit.width}px`;
+    this.canvas.style.height = `${fit.height}px`;
+  }
+
   private getZoomLabel(): string {
     if (Math.abs(this.zoom - 1) < 0.005) return 'Ajustar';
     return `${Math.round(this.zoom * 100)}%`;
@@ -711,6 +837,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
   private getCanvasCursor(): string {
     if (this.isPanning) return 'grabbing';
     if (this.tool === 'hand') return 'grab';
+    if (this.tool === 'move') return 'move';
     if (this.tool === 'eyedropper') return 'copy';
     return 'crosshair';
   }
@@ -724,6 +851,10 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       const height = Math.max(1, Math.round(rect.height * dpr));
       if (preview.width !== width) preview.width = width;
       if (preview.height !== height) preview.height = height;
+      const selectionPreview = this.root.querySelector<HTMLCanvasElement>('#selection-preview');
+      if (!selectionPreview) return;
+      if (selectionPreview.width !== width) selectionPreview.width = width;
+      if (selectionPreview.height !== height) selectionPreview.height = height;
     }
 
   protected clearToolPreview(): void {

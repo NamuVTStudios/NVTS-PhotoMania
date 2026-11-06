@@ -16,6 +16,14 @@ export const PREFERENCES_PANEL_TEMPLATE = `
         <span><strong>Tema de la interfaz</strong><small>Cambiá entre la apariencia oscura y la clara.</small></span>
         <select id="pref-theme"><option value="dark">Tema oscuro</option><option value="light">Tema claro</option></select>
       </div>
+      <div class="preference-row">
+        <span><strong>Tecla Supr en capas</strong><small>Elegí si Supr elimina la capa o solamente borra su contenido.</small></span>
+        <select id="pref-layer-delete-behavior"><option value="remove">Eliminar capa</option><option value="clear">Borrar contenido</option></select>
+      </div>
+      <div class="preference-row">
+        <span><strong>Tecla Supr en máscaras</strong><small>Elegí si Supr elimina la máscara o restablece su contenido.</small></span>
+        <select id="pref-mask-delete-behavior"><option value="remove">Eliminar máscara</option><option value="clear">Borrar contenido</option></select>
+      </div>
       <p class="preferences-note">Al desactivar los proyectos recientes, PhotoMania borra las copias y la lista guardadas para esta función.</p>
     </div>
     <footer><button type="button" id="preferences-cancel">Cancelar</button><button type="button" class="primary" id="preferences-save">Guardar preferencias</button></footer>
@@ -24,8 +32,9 @@ export const PREFERENCES_PANEL_TEMPLATE = `
 
 const PREFERENCES_KEY = 'nvts-photomania-preferences';
 type UiTheme = 'dark' | 'light';
-export interface AppPreferences { rememberRecentProjects: boolean; theme: UiTheme }
-const DEFAULT_PREFERENCES: AppPreferences = { rememberRecentProjects: false, theme: 'dark' };
+export type DeleteBehavior = 'remove' | 'clear';
+export interface AppPreferences { rememberRecentProjects: boolean; theme: UiTheme; layerDeleteBehavior: DeleteBehavior; maskDeleteBehavior: DeleteBehavior }
+const DEFAULT_PREFERENCES: AppPreferences = { rememberRecentProjects: false, theme: 'dark', layerDeleteBehavior: 'remove', maskDeleteBehavior: 'remove' };
 
 export function readPreferences(): AppPreferences {
   let raw: string | null;
@@ -42,6 +51,8 @@ function parsePreferences(raw: string | null): AppPreferences {
   return {
     rememberRecentProjects: parsed.rememberRecentProjects === true,
     theme: parsed.theme === 'light' ? 'light' : 'dark',
+    layerDeleteBehavior: parsed.layerDeleteBehavior === 'clear' ? 'clear' : 'remove',
+    maskDeleteBehavior: parsed.maskDeleteBehavior === 'clear' ? 'clear' : 'remove',
   };
 }
 
@@ -68,6 +79,8 @@ interface PreferenceElements {
   overlay: HTMLElement;
   recent: HTMLInputElement;
   theme: HTMLSelectElement;
+  layerDeleteBehavior: HTMLSelectElement;
+  maskDeleteBehavior: HTMLSelectElement;
 }
 
 export function wirePreferences(root: HTMLElement, onSaved?: (next: AppPreferences, previous: AppPreferences) => void | Promise<void>): () => void {
@@ -85,6 +98,8 @@ function getPreferenceElements(root: HTMLElement): PreferenceElements {
     overlay: root.querySelector<HTMLElement>('#preferences-overlay')!,
     recent: root.querySelector<HTMLInputElement>('#pref-recent-projects')!,
     theme: root.querySelector<HTMLSelectElement>('#pref-theme')!,
+    layerDeleteBehavior: root.querySelector<HTMLSelectElement>('#pref-layer-delete-behavior')!,
+    maskDeleteBehavior: root.querySelector<HTMLSelectElement>('#pref-mask-delete-behavior')!,
   };
 }
 
@@ -92,6 +107,8 @@ function openPreferences(root: HTMLElement, elements: PreferenceElements): void 
   const current = readPreferences();
   elements.recent.checked = current.rememberRecentProjects;
   elements.theme.value = current.theme;
+  elements.layerDeleteBehavior.value = current.layerDeleteBehavior;
+  elements.maskDeleteBehavior.value = current.maskDeleteBehavior;
   elements.overlay.hidden = false;
   root.querySelector<HTMLButtonElement>('#preferences-close')?.focus();
 }
@@ -140,6 +157,8 @@ function readPreferenceControls(elements: PreferenceElements): AppPreferences {
   return {
     rememberRecentProjects: elements.recent.checked,
     theme: elements.theme.value === 'light' ? 'light' : 'dark',
+    layerDeleteBehavior: elements.layerDeleteBehavior.value === 'clear' ? 'clear' : 'remove',
+    maskDeleteBehavior: elements.maskDeleteBehavior.value === 'clear' ? 'clear' : 'remove',
   };
 }
 

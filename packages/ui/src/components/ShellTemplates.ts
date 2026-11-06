@@ -1,5 +1,12 @@
 // Shared application shell markup used by the welcome screen and editor.
-export const LOGO_URL = `${import.meta.env.BASE_URL}branding/photomania-icon.svg`;
+export const LOGO_URL = `${import.meta.env.BASE_URL}branding/nvts-photo-mania-icon.svg`;
+export const LOGO_PNG_URL = `${import.meta.env.BASE_URL}branding/nvts-photo-mania-icon.png`;
+
+export function logoImageMarkup(className = '', alt = ''): string {
+  const classAttribute = className ? ` class=\"${className}\"` : '';
+  const accessibilityAttributes = alt ? ` alt=\"${alt}\"` : ' alt=\"\" aria-hidden=\"true\"';
+  return `<img${classAttribute} src=\"${LOGO_URL}\"${accessibilityAttributes} onerror=\"this.onerror=null;this.src='${LOGO_PNG_URL}'\"/>`;
+}
 export const UI_ICON_URL = `${import.meta.env.BASE_URL}icons/ui/`;
 
 export function uiIcon(name: string): string {
@@ -16,39 +23,53 @@ export const MAIN_MENU = `<nav class="menus" aria-label="Menú principal">
       <div id="file-menu-dropdown" class="file-menu-dropdown" role="menu" aria-label="Archivo" hidden>
         <button id="b-new" class="menu-item" role="menuitem" type="button">${menuLabel('new-project', 'Nuevo proyecto')}<kbd>Ctrl+N</kbd></button>
         <button id="b-open" class="menu-item" role="menuitem" type="button">${menuLabel('open-file', 'Abrir archivo…')}<kbd>Ctrl+O</kbd></button>
-        <button id="b-import-image" class="menu-item" role="menuitem" type="button">${menuLabel('import-image', 'Importar imagen como capa…')}</button>
+        <button id="b-import-image" class="menu-item" role="menuitem" type="button">${menuLabel('import-image', 'Importar imagen como capa…')}<kbd>Ctrl+Alt+I</kbd></button>
         <div class="menu-divider" role="separator"></div>
         <button id="b-save" class="menu-item" role="menuitem" type="button">${menuLabel('save', 'Guardar')}<kbd>Ctrl+S</kbd></button>
         <button id="b-save-as" class="menu-item" role="menuitem" type="button">${menuLabel('save-as', 'Guardar como…')}<kbd>Ctrl+Shift+S</kbd></button>
         <div class="menu-divider" role="separator"></div>
-        <button id="b-export-png" class="menu-item" role="menuitem" type="button">${menuLabel('export-png', 'Exportar composición como PNG…')}</button>
-        <button id="b-export-jpeg" class="menu-item" role="menuitem" type="button">${menuLabel('export-jpeg', 'Exportar composición como JPEG…')}</button>
+        <button id="b-export-png" class="menu-item" role="menuitem" type="button">${menuLabel('export-png', 'Exportar composición como PNG…')}<kbd>Ctrl+Shift+E</kbd></button>
+        <button id="b-export-jpeg" class="menu-item" role="menuitem" type="button">${menuLabel('export-jpeg', 'Exportar composición como JPEG…')}<kbd>Ctrl+Alt+Shift+E</kbd></button>
       </div>
     </div>
     <div class="menu-wrap">
       <button id="menu-edit" aria-haspopup="menu" aria-expanded="false" aria-controls="edit-menu-dropdown">${uiIcon('edit')}<span>Editar</span></button>
       <div id="edit-menu-dropdown" class="file-menu-dropdown" role="menu" aria-label="Editar" hidden>
-        <button id="b-preferences" class="menu-item" role="menuitem" type="button">${menuLabel('preferences', 'Preferencias…')}<kbd></kbd></button>
+        <button id="b-preferences" class="menu-item" role="menuitem" type="button">${menuLabel('preferences', 'Preferencias…')}<kbd>Ctrl+,</kbd></button>
       </div>
     </div>
     <button id="menu-image">${uiIcon('image')}<span>Imagen</span></button>
     <div class="menu-wrap">
       <button id="menu-layer" aria-haspopup="menu" aria-expanded="false" aria-controls="layer-menu-dropdown">${uiIcon('layer')}<span>Capa</span></button>
       <div id="layer-menu-dropdown" class="file-menu-dropdown" role="menu" aria-label="Capa" hidden>
-        <button class="menu-item" role="menuitem" data-layer-action="new-paint" type="button">${menuLabel('new-project', 'Nueva capa de pintura')}</button>
-        <button class="menu-item" role="menuitem" data-layer-action="duplicate" type="button">${menuLabel('duplicate', 'Duplicar capa…')}</button>
-        <button class="menu-item" role="menuitem" data-layer-action="rename" type="button">${menuLabel('edit', 'Cambiar nombre de capa…')}</button>
+        <div class="menu-subwrap">
+          <button id="menu-new-layer-types" class="menu-item submenu-trigger" role="menuitem" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="layer-types-menu-dropdown">${menuLabel('new-project', 'Nueva capa')}<span class="submenu-arrow">›</span></button>
+          <div id="layer-types-menu-dropdown" class="file-menu-dropdown submenu-dropdown" role="menu" aria-label="Tipos de capa" hidden>
+            <button class="menu-item" role="menuitem" data-create-layer-type="paint" type="button">${menuLabel('new-project', 'Capa de pintura')}<kbd>Ctrl+Shift+N</kbd></button>
+            <button class="menu-item" role="menuitem" data-create-layer-type="filter" type="button">${menuLabel('filter', 'Capa de filtro')}<kbd>Ctrl+Alt+Shift+N</kbd></button>
+            <button class="menu-item" role="menuitem" data-create-layer-type="fill" type="button">${menuLabel('layer', 'Capa de relleno…')}<kbd>Ctrl+Shift+F</kbd></button>
+            <button class="menu-item" role="menuitem" data-create-layer-type="file" type="button">${menuLabel('import-image', 'Capa de archivo…')}<kbd>Ctrl+Alt+I</kbd></button>
+            <button class="menu-item" role="menuitem" data-create-layer-type="vector" type="button">${menuLabel('select', 'Capa vectorial')}<kbd>Ctrl+Alt+Shift+V</kbd></button>
+            <button class="menu-item" role="menuitem" data-create-layer-type="text" type="button">${menuLabel('edit', 'Capa de texto')}<kbd>Ctrl+Alt+Shift+T</kbd></button>
+            <button class="menu-item" role="menuitem" data-create-layer-type="group" type="button">${menuLabel('layer', 'Grupo vacío')}<kbd>Ctrl+Alt+Shift+G</kbd></button>
+          </div>
+        </div>
         <div class="menu-divider" role="separator"></div>
-        <button class="menu-item" role="menuitem" data-layer-action="move-up" type="button">${menuLabel('move-up', 'Subir capa')}</button>
-        <button class="menu-item" role="menuitem" data-layer-action="move-down" type="button">${menuLabel('move-down', 'Bajar capa')}</button>
-        <button class="menu-item" role="menuitem" data-layer-action="visibility" type="button">${menuLabel('view', 'Mostrar / ocultar capa')}</button>
-        <button class="menu-item" role="menuitem" data-layer-action="lock" type="button">${menuLabel('lock', 'Bloquear / desbloquear capa')}</button>
+        <button class="menu-item" role="menuitem" data-layer-action="group" type="button">${menuLabel('layer', 'Agrupar capa seleccionada')}<kbd>Ctrl+G</kbd></button>
+        <button class="menu-item" role="menuitem" data-layer-action="transform" type="button">${menuLabel('vector-select', 'Transformación no destructiva…')}<kbd>Ctrl+Shift+T</kbd></button>
+        <button class="menu-item" role="menuitem" data-layer-action="duplicate" type="button">${menuLabel('duplicate', 'Duplicar capa…')}<kbd>Ctrl+J</kbd></button>
+        <button class="menu-item" role="menuitem" data-layer-action="rename" type="button">${menuLabel('edit', 'Cambiar nombre de capa…')}<kbd>F2</kbd></button>
         <div class="menu-divider" role="separator"></div>
-        <button class="menu-item" role="menuitem" data-layer-action="effects" type="button">${menuLabel('effects', 'Estilos de capa…')}</button>
-        <button class="menu-item" role="menuitem" data-layer-action="opacity" type="button">${menuLabel('opacity', 'Opacidad…')}</button>
-        <button class="menu-item" role="menuitem" data-layer-action="blend" type="button">${menuLabel('layer', 'Modo de fusión…')}</button>
+        <button class="menu-item" role="menuitem" data-layer-action="move-up" type="button">${menuLabel('move-up', 'Subir capa')}<kbd>Ctrl+]</kbd></button>
+        <button class="menu-item" role="menuitem" data-layer-action="move-down" type="button">${menuLabel('move-down', 'Bajar capa')}<kbd>Ctrl+[</kbd></button>
+        <button class="menu-item" role="menuitem" data-layer-action="visibility" type="button">${menuLabel('view', 'Mostrar / ocultar capa')}<kbd>Ctrl+Shift+H</kbd></button>
+        <button class="menu-item" role="menuitem" data-layer-action="lock" type="button">${menuLabel('lock', 'Bloquear / desbloquear capa')}<kbd>Ctrl+Shift+L</kbd></button>
         <div class="menu-divider" role="separator"></div>
-        <button class="menu-item danger" role="menuitem" data-layer-action="delete" type="button">${menuLabel('delete', 'Eliminar capa')}</button>
+        <button class="menu-item" role="menuitem" data-layer-action="effects" type="button">${menuLabel('effects', 'Estilos de capa…')}<kbd>Ctrl+Shift+K</kbd></button>
+        <button class="menu-item" role="menuitem" data-layer-action="opacity" type="button">${menuLabel('opacity', 'Opacidad…')}<kbd>Ctrl+Shift+O</kbd></button>
+        <button class="menu-item" role="menuitem" data-layer-action="blend" type="button">${menuLabel('layer', 'Modo de fusión…')}<kbd>Ctrl+Shift+B</kbd></button>
+        <div class="menu-divider" role="separator"></div>
+        <button class="menu-item danger" role="menuitem" data-layer-action="delete" type="button">${menuLabel('delete', 'Eliminar capa')}<kbd>Shift+Delete</kbd></button>
       </div>
     </div>
     <button id="menu-select">${uiIcon('select')}<span>Seleccionar</span></button><button id="menu-filter">${uiIcon('filter')}<span>Filtro</span></button>
@@ -60,19 +81,19 @@ export const MAIN_MENU = `<nav class="menus" aria-label="Menú principal">
         <div class="menu-subwrap">
           <button id="menu-panels" class="menu-item submenu-trigger" role="menuitem" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="panels-menu-dropdown">${menuLabel('panels', 'Paneles')}<span class="submenu-arrow">›</span></button>
           <div id="panels-menu-dropdown" class="file-menu-dropdown submenu-dropdown" role="menu" aria-label="Paneles" hidden>
-            <button id="toggle-panel-advanced" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="true" type="button">${menuLabel('preferences', 'Opciones avanzadas de herramienta')}<span class="menu-check">✓</span></button>
-            <button id="toggle-panel-history" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="true" type="button">${menuLabel('recent', 'Historial')}<span class="menu-check">✓</span></button>
-            <button id="toggle-panel-layers" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="true" type="button">${menuLabel('layer', 'Capas')}<span class="menu-check">✓</span></button>
-            <button id="toggle-panel-comic" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="false" type="button">${menuLabel('workspace-comics', 'Gestor de cómics')}<span class="menu-check"></span></button>
-            <button id="toggle-panel-storyboard" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="false" type="button">${menuLabel('workspace-storyboard', 'Guion gráfico')}<span class="menu-check"></span></button>
-            <button id="toggle-panel-timeline" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="false" type="button">${menuLabel('workspace-animation', 'Línea de tiempo de animación')}<span class="menu-check"></span></button>
+            <button id="toggle-panel-advanced" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="true" type="button">${menuLabel('preferences', 'Opciones avanzadas de herramienta')}<kbd>Ctrl+Alt+1</kbd><span class="menu-check">✓</span></button>
+            <button id="toggle-panel-history" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="true" type="button">${menuLabel('recent', 'Historial')}<kbd>Ctrl+Alt+2</kbd><span class="menu-check">✓</span></button>
+            <button id="toggle-panel-layers" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="true" type="button">${menuLabel('layer', 'Capas')}<kbd>Ctrl+Alt+3</kbd><span class="menu-check">✓</span></button>
+            <button id="toggle-panel-comic" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="false" type="button">${menuLabel('workspace-comics', 'Gestor de cómics')}<kbd>Ctrl+Alt+5</kbd><span class="menu-check"></span></button>
+            <button id="toggle-panel-storyboard" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="false" type="button">${menuLabel('workspace-storyboard', 'Guion gráfico')}<kbd>Ctrl+Alt+6</kbd><span class="menu-check"></span></button>
+            <button id="toggle-panel-timeline" class="menu-item panel-visibility-item" role="menuitemcheckbox" aria-checked="false" type="button">${menuLabel('workspace-animation', 'Línea de tiempo de animación')}<kbd>Ctrl+Alt+4</kbd><span class="menu-check"></span></button>
           </div>
         </div>
         <div class="menu-subwrap">
           <button id="menu-plugins" class="menu-item submenu-trigger" role="menuitem" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="plugins-menu-dropdown">${menuLabel('plugins', 'Plugins')}<span class="submenu-arrow">›</span></button>
           <div id="plugins-menu-dropdown" class="file-menu-dropdown submenu-dropdown" role="menu" aria-label="Plugins" hidden>
-            <button id="plugins-manage" class="menu-item" role="menuitem" type="button">${menuLabel('plugin-manage', 'Administrar plugins…')}</button>
-            <button id="plugins-install-menu" class="menu-item" role="menuitem" type="button">${menuLabel('plugin-install', 'Instalar plugin (.js)…')}</button>
+            <button id="plugins-manage" class="menu-item" role="menuitem" type="button">${menuLabel('plugin-manage', 'Administrar plugins…')}<kbd>Ctrl+Alt+P</kbd></button>
+            <button id="plugins-install-menu" class="menu-item" role="menuitem" type="button">${menuLabel('plugin-install', 'Instalar plugin (.js)…')}<kbd>Ctrl+Alt+Shift+P</kbd></button>
             <div class="menu-divider" role="separator"></div>
             <div id="plugin-actions" class="plugin-actions"></div>
           </div>
@@ -98,9 +119,9 @@ export const MAIN_MENU = `<nav class="menus" aria-label="Menú principal">
 
 export const HOME_TEMPLATE = `
 <div class="home-shell">
-  <header class="home-topbar"><button class="home-back" title="Volver al selector" aria-label="Volver al selector">${uiIcon('arrow-left')}</button><div class="home-mini-brand"><img src="${LOGO_URL}" alt=""/><strong>PhotoMania</strong></div><span class="home-top-divider"></span>${MAIN_MENU}</header>
+  <header class="home-topbar"><button class="home-back" title="Volver al selector" aria-label="Volver al selector">${uiIcon('arrow-left')}</button><div class="home-mini-brand">${logoImageMarkup()}<strong>PhotoMania</strong></div><span class="home-top-divider"></span>${MAIN_MENU}</header>
   <main class="home-card">
-    <header class="home-brand"><img src="${LOGO_URL}" alt="Logo de NVTS PhotoMania"/><div><h1>Photo<span>Mania</span></h1><p>Crea algo increíble. Diseñá, editá y da vida a tus ideas.</p></div></header>
+    <header class="home-brand">${logoImageMarkup('', 'Logo de NVTS PhotoMania')}<div><h1>Photo<span>Mania</span></h1><p>Crea algo increíble. Diseñá, editá y da vida a tus ideas.</p></div></header>
     <div class="home-layout">
       <aside class="home-sidebar">
         <button data-home-nav="new" class="active">${uiIcon('new-project')}<span class="home-nav-label">Nuevo proyecto</span></button>

@@ -1,5 +1,6 @@
 import { calculatePrintGuideRects, millimetresToPixels, type PrintBoundsMm } from '@nvts/templates';
 import { symmetryManager, type SymmetryAxis } from '../../managers/SymmetryManager';
+import { createRulerGeometry, type RulerMode } from './RulerGeometry';
 
 export interface ComicGuideOptions {
   dpi: number;
@@ -16,6 +17,9 @@ export interface ComicGuideOptions {
   symmetryCenterY: number;
   symmetryVerticalAxis?: boolean;
   symmetryHorizontalAxis?: boolean;
+  rulerMode?: RulerMode;
+  rulerCenterX?: number;
+  rulerCenterY?: number;
 }
 
 export const DEFAULT_COMIC_GUIDE_OPTIONS: ComicGuideOptions = {
@@ -31,6 +35,9 @@ export const DEFAULT_COMIC_GUIDE_OPTIONS: ComicGuideOptions = {
   symmetryAxes: 4,
   symmetryCenterX: 0.5,
   symmetryCenterY: 0.5,
+  rulerMode: 'none',
+  rulerCenterX: 0.5,
+  rulerCenterY: 0.5,
 };
 
 /** Draws non-exported editorial guides on a dedicated overlay canvas. */
@@ -48,7 +55,31 @@ export function drawComicGuideOverlay(canvas: HTMLCanvasElement, options: ComicG
   drawSafeArea(context, rects.safe, options.showSafeArea);
   drawGrid(context, rects.canvas, options.gridSpacingPx, options.showGrid);
   drawSymmetry(context, rects.canvas, options, options.showSymmetry);
+  drawRulers(context, rects.canvas, options);
   context.restore();
+}
+
+function drawRulers(context: CanvasRenderingContext2D, rect: { width: number; height: number }, options: ComicGuideOptions): void {
+  const mode = options.rulerMode ?? 'none';
+  if (mode === 'none') return;
+  const centerX = rect.width * clampUnit(options.rulerCenterX ?? 0.5);
+  const centerY = rect.height * clampUnit(options.rulerCenterY ?? 0.5);
+  const geometry = createRulerGeometry(mode, rect.width, rect.height, centerX, centerY);
+  context.save();
+  context.strokeStyle = 'rgba(48, 190, 220, 0.72)';
+  context.lineWidth = 1;
+  context.setLineDash([5, 4]);
+  context.beginPath();
+  geometry.paths.forEach((path) => drawRulerPath(context, path.points, path.closed === true));
+  context.stroke();
+  context.restore();
+}
+
+function drawRulerPath(context: CanvasRenderingContext2D, points: readonly { x: number; y: number }[], closed: boolean): void {
+  if (points.length < 2) return;
+  context.moveTo(points[0].x, points[0].y);
+  for (let index = 1; index < points.length; index += 1) context.lineTo(points[index].x, points[index].y);
+  if (closed) context.closePath();
 }
 
 function drawBleed(context: CanvasRenderingContext2D, canvas: { width: number; height: number }, trim: { x: number; y: number; width: number; height: number }, visible: boolean): void {
@@ -154,6 +185,10 @@ export class ComicGuideOverlayController {
   private readonly guidesButton: HTMLButtonElement;
   private readonly verticalSymmetryButton: HTMLButtonElement;
   private readonly horizontalSymmetryButton: HTMLButtonElement;
+  private readonly rulerButton: HTMLButtonElement;
+  private readonly rulerModeSelect: HTMLSelectElement;
+  private rulerMode: RulerMode = 'linear';
+  private showRulers = false;
   private showGuides = false;
   private showSymmetry = symmetryManager.isEnabled();
   private readonly observer: MutationObserver;
@@ -163,10 +198,15 @@ export class ComicGuideOverlayController {
     this.guidesButton = this.requireButton('#toggle-comic-guides');
     this.verticalSymmetryButton = this.requireButton('#toggle-comic-symmetry-vertical');
     this.horizontalSymmetryButton = this.requireButton('#toggle-comic-symmetry-horizontal');
+    this.rulerButton = this.requireButton('#toggle-ruler-guides');
+    this.rulerModeSelect = this.requireSelect('#ruler-guide-mode');
+    this.rulerMode = this.readRulerMode(this.rulerModeSelect.value);
     this.syncSymmetryButtons();
     this.guidesButton.addEventListener('click', () => this.toggleGuides());
     this.verticalSymmetryButton.addEventListener('click', () => this.toggleSymmetryAxis('vertical'));
     this.horizontalSymmetryButton.addEventListener('click', () => this.toggleSymmetryAxis('horizontal'));
+    this.rulerButton.addEventListener('click', () => this.toggleRulers());
+    this.rulerModeSelect.addEventListener('change', () => this.updateRulerMode());
     this.observer = new MutationObserver(() => this.syncCanvasView());
     this.observer.observe(this.sourceCanvas, { attributes: true, attributeFilter: ['style', 'width', 'height'] });
     new ResizeObserver(() => this.syncCanvasView()).observe(this.sourceCanvas.parentElement!);
@@ -185,6 +225,30 @@ export class ComicGuideOverlayController {
     const button = this.root.querySelector<HTMLButtonElement>(selector);
     if (!button) throw new Error(`Falta el control de guías ${selector}.`);
     return button;
+  }
+
+  private requireSelect(selector: string): HTMLSelectElement {
+    const select = this.root.querySelector<HTMLSelectElement>(selector);
+    if (!select) throw new Error(`Falta el selector de reglas ${selector}.`);
+    return select;
+  }
+
+  private readRulerMode(value: string): RulerMode {
+    const modes: readonly RulerMode[] = ['linear', 'curved', 'perspective', 'fisheye', 'parallel', 'radial', 'concentric'];
+    return modes.includes(value as RulerMode) ? value as RulerMode : 'linear';
+  }
+
+  private toggleRulers(): void {
+    this.showRulers = !this.showRulers;
+    this.rulerButton.setAttribute('aria-pressed', String(this.showRulers));
+    this.redraw();
+  }
+
+  private updateRulerMode(): void {
+    this.rulerMode = this.readRulerMode(this.rulerModeSelect.value);
+    this.showRulers = true;
+    this.rulerButton.setAttribute('aria-pressed', 'true');
+    this.redraw();
   }
 
   private toggleGuides(): void {
@@ -218,7 +282,7 @@ export class ComicGuideOverlayController {
   }
 
   private redraw(): void {
-    const visible = this.showGuides || this.showSymmetry;
+    const visible = this.showGuides || this.showSymmetry || this.showRulers;
     this.overlay.hidden = !visible;
     if (!visible) {
       this.overlay.getContext('2d')?.clearRect(0, 0, this.overlay.width, this.overlay.height);
@@ -251,6 +315,9 @@ export class ComicGuideOverlayController {
       symmetryCenterY: symmetry.centerY,
       symmetryVerticalAxis: symmetry.verticalAxis,
       symmetryHorizontalAxis: symmetry.horizontalAxis,
+      rulerMode: this.showRulers ? this.rulerMode : 'none',
+      rulerCenterX: 0.5,
+      rulerCenterY: 0.5,
     });
   }
 }

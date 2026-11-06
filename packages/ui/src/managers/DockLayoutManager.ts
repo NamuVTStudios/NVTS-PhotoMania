@@ -2,6 +2,7 @@ import { uiIcon } from '../components/ShellTemplates';
 /** Docking, floating and resizing behavior for PhotoMania's side panels. */
 import {
   readDockLayout,
+  migrateDockSizes,
   writeDockLayout,
   resetDockLayout,
   type DockablePanelId,
@@ -11,10 +12,13 @@ import {
 } from '../persistence/DockLayoutStorage';
 export type { DockablePanelId } from '../persistence/DockLayoutStorage';
 
+const DEFAULT_DOCK_WIDTH = 360;
+const DEFAULT_LAYERS_PANEL_HEIGHT = 420;
+
 const PANEL_DEFINITIONS: Array<{ id: DockablePanelId; selector: string; title: string; defaultHeight: number }> = [
   { id: 'advanced', selector: '.advanced-tool-panel', title: 'Opciones avanzadas de herramienta', defaultHeight: 210 },
   { id: 'history', selector: '.history-panel', title: 'Historial', defaultHeight: 175 },
-  { id: 'layers', selector: '.layers-panel', title: 'Capas', defaultHeight: 310 },
+  { id: 'layers', selector: '.layers-panel', title: 'Capas', defaultHeight: DEFAULT_LAYERS_PANEL_HEIGHT },
   { id: 'comic', selector: '.comic-manager-panel', title: 'Gestor de cómics', defaultHeight: 340 },
   { id: 'storyboard', selector: '.storyboard-panel', title: 'Guion gráfico', defaultHeight: 340 },
   { id: 'timeline', selector: '.animation-timeline-panel', title: 'Línea de tiempo de animación', defaultHeight: 260 },
@@ -95,7 +99,7 @@ function createEmptyDockController(): DockLayoutController {
 
 /** Owns dock state; individual interactions are separated into small methods. */
 class DockLayoutManagerImpl implements DockLayoutController {
-  private persisted: PersistedDockLayout = readDockLayout();
+  private persisted: PersistedDockLayout = migrateDockSizes(readDockLayout(), DEFAULT_DOCK_WIDTH, DEFAULT_LAYERS_PANEL_HEIGHT);
   private activeWorkspace: string;
   private order: DockablePanelId[] = [];
   private restoring = false;
@@ -650,7 +654,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
 
   private captureDockWidth(): number {
     const dockRect = this.dock.getBoundingClientRect();
-    const computedWidth = Number.parseFloat(getComputedStyle(this.dock).width) || 280;
+    const computedWidth = Number.parseFloat(getComputedStyle(this.dock).width) || DEFAULT_DOCK_WIDTH;
     return clamp(dockRect.width || computedWidth, 220, Math.max(220, Math.min(600, window.innerWidth * 0.6)));
   }
 
@@ -734,7 +738,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
 
   private restoreSavedWorkspace(saved: WorkspaceSavedState): void {
     this.order = this.sanitizeOrder(saved.order);
-    const width = clamp(Number(saved.dockWidth) || 280, 220, Math.max(220, Math.min(600, window.innerWidth * 0.6)));
+    const width = clamp(Number(saved.dockWidth) || DEFAULT_DOCK_WIDTH, 220, Math.max(220, Math.min(600, window.innerWidth * 0.6)));
     this.workspaceElement.style.setProperty('--right-dock-width', `${width}px`);
     this.setTimelineDockHeight(Number(saved.timelineDockHeight) || 260);
     this.dock.classList.toggle('panels-hidden', !!saved.panelsHidden);
@@ -787,7 +791,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
       .sort((a, b) => (presetOrder.get(a.id) ?? VALID_IDS.indexOf(a.id)) - (presetOrder.get(b.id) ?? VALID_IDS.indexOf(b.id)))
       .map((item) => item.id);
     this.applyDefaultDockOrder();
-    this.workspaceElement.style.setProperty('--right-dock-width', '280px');
+    this.workspaceElement.style.setProperty('--right-dock-width', `${DEFAULT_DOCK_WIDTH}px`);
     this.setTimelineDockHeight(260);
     this.dock.classList.remove('panels-hidden');
     this.workspaceElement.classList.remove('panels-hidden');

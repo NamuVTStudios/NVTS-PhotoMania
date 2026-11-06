@@ -2,16 +2,23 @@
 import { AppEventFeatures } from './AppEventFeatures';
 import { type StampOperation } from '@nvts/image-processing';
 import { CloneStampStrategy, ContiguousFillStrategy, EraserStrategy, EyedropperStrategy, GlobalFillStrategy, PaintBrushStrategy, TextCreationStrategy, VectorSelectionStrategy, type BrushStrategy, type CloneStampOperation, type ImmediateToolStrategy } from './EditorStrategies';
-import { containsLayerType, StrokeSession, runEdit, type LayerNode } from '@nvts/document-model';
-import { cloneVectorShapes, isPixelLayerType, type VectorShape } from '@nvts/shared';
+import { containsLayerType, runEdit, StrokeSession, type LayerNode } from '@nvts/document-model';
+import { cloneLayerMasks, cloneVectorShapes, createLayerMask, getVectorShapeBounds, isPixelLayerType, type LayerMask, type TransformMask, type VectorShape } from '@nvts/shared';
 import { renderVectorShape } from '@nvts/vector';
-import { getDocumentDisplayTransform } from './VectorSelectionGeometry';
-import { isPixelShapeTool, isVectorDrawingTool, type PixelShapeToolId, type VectorDrawingToolId } from '../tools/ToolsBase';
+import { findVectorSelectionTarget, getDocumentDisplayTransform } from './VectorSelectionGeometry';
+import { eraseVectorStrokeAt } from './VectorStrokeEraser';
+import { isBrushStrokeTool as isBrushStrokeToolId, isPixelShapeTool, isVectorDrawingTool, type PixelShapeToolId, type VectorDrawingToolId } from '../tools/ToolsBase';
 import { renderRasterShape, type RasterShapeSettings } from './RasterShapeRenderer';
+import { createTransformMaskValues, moveRect, resizeRect, snapMoveRect, snapResizeRect, transformRectWithMask, translateVectorShapes, type LayerRect, type SnapGuides } from '../tools/LayerTransformGeometry';
+import { movePixelSurface } from '../tools/PixelLayerMover';
+import { simplifyVectorLine } from '../tools/VectorLineCorrection';
 import { updateHistoryMemoryIndicator } from '../panels/HistoryPanel';
 import { createComicSplitShapes as buildComicSplitShapes } from '../features/comics/createComicSplitShapes';
-import type { Tool, FillOperation, FillResult, PixelRegion, StrokeLayerPixels } from './AppBase';
+import type { Tool, ToolSettings, FillOperation, FillResult, PixelRegion, StrokeLayerPixels } from './AppBase';
 import { symmetryManager } from '../managers/SymmetryManager';
+import { createMagicWandMask, createSelectionMask, getSelectionBounds, type SelectionKind, type SelectionPoint } from '../tools/RasterSelection';
+import { paintSelectionMask } from '../tools/SelectionBrush';
+import { createGapClosedMatchMask } from '../tools/GapClosure';
 
 const MAX_CLONE_ORIGINAL_TILE_BYTES = 64 * 1024 * 1024;
 
@@ -28,6 +35,24 @@ function nextPowerOfTwo(value: number): number {
   return size;
 }
 
+type LayerTransformSession = {
+  layerId: string;
+  originalMasks: LayerMask[];
+  baseMasks: LayerMask[];
+  template: TransformMask;
+  baseBounds: LayerRect;
+  currentBounds: LayerRect;
+  latestMasks: LayerMask[];
+};
+
+type LayerTransformHandle = 'move' | 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
+type LayerTransformGesture = {
+  pointerId: number;
+  handle: LayerTransformHandle;
+  startPoint: { x: number; y: number };
+  startBounds: LayerRect;
+};
+
 export abstract class AppDrawingFeatures extends AppEventFeatures {
   private readonly brushStrategies: Record<'brush' | 'eraser', BrushStrategy> = {
     brush: new PaintBrushStrategy(),
@@ -41,6 +66,13 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
   private cloneSourceScratch = new Uint8Array(0);
   private cloneDestinationStart: { x: number; y: number } | null = null;
   private comicPanelStart: { x: number; y: number; clientX: number; clientY: number } | null = null;
+  private rasterMoveGesture: { layerId: string; startPoint: { x: number; y: number }; currentPoint: { x: number; y: number }; pointerId: number } | null = null;
+  private selectionGesture: { kind: SelectionKind; startPoint: SelectionPoint; points: SelectionPoint[]; pointerId: number } | null = null;
+  private selectionBrushGesture: { pointerId: number; lastPoint: SelectionPoint; erase: boolean } | null = null;
+  private selectionRenderCanvas: HTMLCanvasElement | null = null;
+  private layerTransformSession: LayerTransformSession | null = null;
+  private layerTransformGesture: LayerTransformGesture | null = null;
+  private layerTransformOverlay: HTMLElement | null = null;
   private comicSplitPoints: Array<{ x: number; y: number }> = [];
   private comicSplitClientPoints: Array<{ x: number; y: number }> = [];
   private comicVectorLayerId: string | null = null;
@@ -75,10 +107,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
 
   private shouldMirrorCurrentStroke(): boolean {
     if (!symmetryManager.isEnabled()) return false;
-    return this.strokeTool === 'brush'
-      || this.strokeTool === 'eraser'
-      || this.strokeTool === 'smudge'
-      || this.strokeTool === 'liquify';
+    return isBrushStrokeToolId(this.strokeTool);
   }
 
   private stampAt(x: number, y: number): void {
@@ -99,9 +128,11 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
   protected applyStampToLayer(
       layer: NonNullable<StrokeLayerPixels>, operation: StampOperation, pixels: Uint8Array,
     ): void {
+      const original = this.selectionMask ? pixels.slice() : null;
       const changed = this.applyStampStrategy(pixels, operation);
       if (!changed) return;
       this.clipStampPixelsToComicPanel(operation.region, pixels);
+      if (original) this.restoreOutsideSelection(original, pixels, operation.region);
       if (!layer.writeRectFromJS(
         operation.region.left, operation.region.top, operation.region.width, operation.region.height, pixels,
       )) return;
@@ -118,33 +149,139 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       if (this.strokeTool === 'clone-stamp') return this.applyCloneStamp(pixels, operation);
       if (this.strokeTool === 'smudge') return this.applySmudge(pixels, operation);
       if (this.strokeTool === 'liquify') return this.applyLiquify(pixels, operation);
+      if (this.strokeTool === 'dust-removal') return this.applyDustRemoval(pixels, operation);
       const strategy = this.brushStrategies[this.strokeTool === 'eraser' ? 'eraser' : 'brush'];
       return strategy.apply(pixels, operation);
     }
 
+  private applyDustRemoval(pixels: Uint8Array, operation: StampOperation): boolean {
+    const original = pixels.slice();
+    const { width, height } = operation.region;
+    let changed = false;
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        changed = this.removeDustPixel(pixels, original, operation, x, y, width) || changed;
+      }
+    }
+    return changed;
+  }
+
+  private removeDustPixel(
+    pixels: Uint8Array,
+    original: Uint8Array,
+    operation: StampOperation,
+    x: number,
+    y: number,
+    width: number,
+  ): boolean {
+    const docX = operation.region.left + x + 0.5 - operation.centerX;
+    const docY = operation.region.top + y + 0.5 - operation.centerY;
+    if (docX * docX + docY * docY > operation.radius * operation.radius) return false;
+    const index = (y * width + x) * 4;
+    if (original[index + 3] < 64) return false;
+    const neighborhood = this.getDustNeighborhood(original, x, y, width);
+    if (neighborhood.count < 5 || neighborhood.spread > 44) return false;
+    const difference = Math.max(
+      Math.abs(original[index] - neighborhood.red),
+      Math.abs(original[index + 1] - neighborhood.green),
+      Math.abs(original[index + 2] - neighborhood.blue),
+    );
+    if (difference < 68) return false;
+    const blend = Math.max(0, Math.min(1, operation.opacity * 0.85));
+    pixels[index] = Math.round(original[index] * (1 - blend) + neighborhood.red * blend);
+    pixels[index + 1] = Math.round(original[index + 1] * (1 - blend) + neighborhood.green * blend);
+    pixels[index + 2] = Math.round(original[index + 2] * (1 - blend) + neighborhood.blue * blend);
+    return true;
+  }
+
+  private getDustNeighborhood(
+    pixels: Uint8Array,
+    x: number,
+    y: number,
+    width: number,
+  ): { red: number; green: number; blue: number; spread: number; count: number } {
+    const totals = { red: 0, green: 0, blue: 0, count: 0, min: 255, max: 0 };
+    for (let offsetY = -1; offsetY <= 1; offsetY++) {
+      for (let offsetX = -1; offsetX <= 1; offsetX++) {
+        if (offsetX === 0 && offsetY === 0) continue;
+        this.addDustNeighbor(pixels, x + offsetX, y + offsetY, width, totals);
+      }
+    }
+    if (!totals.count) return { red: 0, green: 0, blue: 0, spread: 255, count: 0 };
+    return {
+      red: totals.red / totals.count,
+      green: totals.green / totals.count,
+      blue: totals.blue / totals.count,
+      spread: totals.max - totals.min,
+      count: totals.count,
+    };
+  }
+
+  private addDustNeighbor(
+    pixels: Uint8Array,
+    x: number,
+    y: number,
+    width: number,
+    totals: { red: number; green: number; blue: number; count: number; min: number; max: number },
+  ): void {
+    const index = (y * width + x) * 4;
+    if (pixels[index + 3] < 64) return;
+    const luminance = (pixels[index] + pixels[index + 1] + pixels[index + 2]) / 3;
+    totals.red += pixels[index];
+    totals.green += pixels[index + 1];
+    totals.blue += pixels[index + 2];
+    totals.min = Math.min(totals.min, luminance);
+    totals.max = Math.max(totals.max, luminance);
+    totals.count++;
+  }
+
   private applySmudge(pixels: Uint8Array, operation: StampOperation): boolean {
-      const original = pixels.slice();
-      const { width, height } = operation.region;
-      const strength = Math.max(0.05, Math.min(1, operation.opacity * 0.35));
-      for (let y = 1; y < height - 1; y++) this.smudgeRow(pixels, original, operation, y, width, strength);
-      return true;
-    }
+    const original = pixels.slice();
+    const { width, height } = operation.region;
+    const mode = this.brush.smudgeMode;
+    const strength = this.getSmudgeStrength(mode, operation.opacity);
+    for (let y = 1; y < height - 1; y++) this.smudgeRow(pixels, original, operation, y, width, strength, mode);
+    return true;
+  }
 
-  private smudgeRow(pixels: Uint8Array, original: Uint8Array, operation: StampOperation, y: number, width: number, strength: number): void {
-      for (let x = 1; x < width - 1; x++) this.smudgePixel(pixels, original, operation, x, y, width, strength);
-    }
+  private getSmudgeStrength(mode: ToolSettings['smudgeMode'], opacity: number): number {
+    const factors: Record<ToolSettings['smudgeMode'], number> = { smudge: 0.35, blur: 0.72, mixer: 0.48, wet: 0.62 };
+    return Math.max(0.05, Math.min(1, opacity * factors[mode]));
+  }
 
-  private smudgePixel(pixels: Uint8Array, original: Uint8Array, operation: StampOperation, x: number, y: number, width: number, strength: number): void {
-      const dx = operation.region.left + x - operation.centerX; const dy = operation.region.top + y - operation.centerY;
-      if (dx * dx + dy * dy > operation.radius * operation.radius) return;
-      const index = (y * width + x) * 4;
-      const averageRed = (original[index - 4] + original[index + 4] + original[index - width * 4] + original[index + width * 4]) / 4;
-      const averageGreen = (original[index - 3] + original[index + 5] + original[index - width * 4 + 1] + original[index + width * 4 + 1]) / 4;
-      const averageBlue = (original[index - 2] + original[index + 6] + original[index - width * 4 + 2] + original[index + width * 4 + 2]) / 4;
-      pixels[index] = Math.round(original[index] * (1 - strength) + averageRed * strength);
-      pixels[index + 1] = Math.round(original[index + 1] * (1 - strength) + averageGreen * strength);
-      pixels[index + 2] = Math.round(original[index + 2] * (1 - strength) + averageBlue * strength);
-    }
+  private smudgeRow(pixels: Uint8Array, original: Uint8Array, operation: StampOperation, y: number, width: number, strength: number, mode: ToolSettings['smudgeMode']): void {
+    for (let x = 1; x < width - 1; x++) this.smudgePixel(pixels, original, operation, x, y, width, strength, mode);
+  }
+
+  private smudgePixel(pixels: Uint8Array, original: Uint8Array, operation: StampOperation, x: number, y: number, width: number, strength: number, mode: ToolSettings['smudgeMode']): void {
+    const dx = operation.region.left + x - operation.centerX;
+    const dy = operation.region.top + y - operation.centerY;
+    if (dx * dx + dy * dy > operation.radius * operation.radius) return;
+    const index = (y * width + x) * 4;
+    const sample = this.getSmudgeSample(original, index, width, operation.color, mode);
+    pixels[index] = Math.round(original[index] * (1 - strength) + sample[0] * strength);
+    pixels[index + 1] = Math.round(original[index + 1] * (1 - strength) + sample[1] * strength);
+    pixels[index + 2] = Math.round(original[index + 2] * (1 - strength) + sample[2] * strength);
+  }
+
+  private getSmudgeSample(
+    pixels: Uint8Array, index: number, width: number, foreground: readonly [number, number, number], mode: ToolSettings['smudgeMode'],
+  ): readonly [number, number, number] {
+    const averages: [number, number, number] = [
+      (pixels[index - 4] + pixels[index + 4] + pixels[index - width * 4] + pixels[index + width * 4]) / 4,
+      (pixels[index - 3] + pixels[index + 5] + pixels[index - width * 4 + 1] + pixels[index + width * 4 + 1]) / 4,
+      (pixels[index - 2] + pixels[index + 6] + pixels[index - width * 4 + 2] + pixels[index + width * 4 + 2]) / 4,
+    ];
+    if (mode === 'mixer') return this.mixSmudgeColor(averages, foreground, 0.4);
+    if (mode === 'wet') return this.mixSmudgeColor(averages, foreground, 0.18);
+    return averages;
+  }
+
+  private mixSmudgeColor(
+    sampled: readonly [number, number, number], foreground: readonly [number, number, number], foregroundWeight: number,
+  ): readonly [number, number, number] {
+    return [0, 1, 2].map((channel) => Math.round(sampled[channel] * (1 - foregroundWeight) + foreground[channel] * foregroundWeight)) as [number, number, number];
+  }
 
   private applyLiquify(pixels: Uint8Array, operation: StampOperation): boolean {
       const original = pixels.slice(); const { width, height } = operation.region;
@@ -352,6 +489,8 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
         erase: this.strokeTool === 'eraser',
         color: [this.brush.rgb[0], this.brush.rgb[1], this.brush.rgb[2]],
         opacity: this.brush.opacity / 100,
+        tipShape: this.brush.tipShape,
+        texture: this.brush.texture,
       };
     }
 
@@ -401,6 +540,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       for (let localY = 0; localY < rows; localY++) {
         this.applyGradientRow(pixels, original, start, dx, dy, lengthSquared, red, green, blue, width, top, localY);
       }
+      this.restoreOutsideSelection(original, pixels, { left: 0, top, width, height: rows });
       layer.writeRectFromJS(0, top, width, rows, pixels);
     }
 
@@ -429,10 +569,23 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       const offsetY = y - start.y;
       const position = this.brush.gradientType === 'radial'
         ? Math.sqrt(offsetX * offsetX + offsetY * offsetY) / Math.sqrt(lengthSquared)
-        : (offsetX * dx + offsetY * dy) / lengthSquared;
+        : this.brush.gradientType === 'contour'
+          ? this.getContourGradientPosition(x, y, start, dx, dy)
+          : (offsetX * dx + offsetY * dy) / lengthSquared;
       const clamped = Math.max(0, Math.min(1, position));
       return this.brush.gradientReverse ? 1 - clamped : clamped;
     }
+
+  private getContourGradientPosition(x: number, y: number, start: { x: number; y: number }, dx: number, dy: number): number {
+    const radiusX = Math.max(0.5, Math.abs(dx) / 2);
+    const radiusY = Math.max(0.5, Math.abs(dy) / 2);
+    const centerX = start.x + dx / 2;
+    const centerY = start.y + dy / 2;
+    const normalizedX = (x - centerX) / radiusX;
+    const normalizedY = (y - centerY) / radiusY;
+    const distance = Math.sqrt(normalizedX * normalizedX + normalizedY * normalizedY);
+    return Math.max(0, Math.min(1, 1 - distance));
+  }
 
   protected commitShape(
     start: { x: number; y: number },
@@ -584,6 +737,10 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       layer.readRectToJS(region.left, region.top, region.width, region.height, target);
       let changed = false;
       for (let offset = 0; offset < target.length; offset += 4) {
+        const pixel = offset / 4;
+        const x = region.left + (pixel % region.width);
+        const y = region.top + Math.floor(pixel / region.width);
+        if (!this.isSelectionPixelSelected(x, y)) continue;
         changed = this.blendShapePixel(source, target, offset) || changed;
       }
       return changed ? target : null;
@@ -609,7 +766,12 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       const point = this.toDoc(event);
       if (!this.onDocument(point)) return;
       if (this.tool === 'clone-stamp' && event.altKey) { this.setCloneSource(point); return; }
+      if (this.beginSelectionBrush(point, event)) return;
+      if (this.handleSelectionTool(point, event)) return;
       if (this.handleImmediateTool(point, event)) return;
+      if (this.tool === 'move') { this.beginElementMove(point, event); return; }
+      if (this.tool === 'vector-eraser') { this.eraseVectorShapeAt(point); return; }
+      if (this.tool === 'vector-line-correction') { this.correctVectorLineAt(point); return; }
       if (this.tool === 'comic-panel') { this.beginComicPanel(point, event); return; }
       if (isVectorDrawingTool(this.tool)) { this.beginVectorDrawingGesture(point, event); return; }
       const activeLayer = this.active();
@@ -627,6 +789,736 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       this.beginPaintStroke(event, point, layer);
     }
 
+
+  private handleSelectionTool(point: SelectionPoint, event: PointerEvent): boolean {
+    if (this.tool === 'selection-clear') {
+      this.clearRasterSelection();
+      this.q<HTMLElement>('#status').textContent = 'Selección eliminada.';
+      return true;
+    }
+    if (this.tool === 'magic-wand') {
+      this.selectMagicWand(point);
+      return true;
+    }
+    const kind = this.getSelectionKind(this.tool);
+    if (!kind) return false;
+    this.beginSelectionGesture(kind, point, event);
+    return true;
+  }
+
+  private beginSelectionBrush(point: SelectionPoint, event: PointerEvent): boolean {
+    if (this.tool !== 'selection-brush' && this.tool !== 'selection-erase') return false;
+    this.selectionBrushGesture = { pointerId: event.pointerId, lastPoint: { ...point }, erase: this.tool === 'selection-erase' };
+    this.canvas.setPointerCapture(event.pointerId);
+    this.paintSelectionBrushSegment(point, point);
+    return true;
+  }
+
+  private updateSelectionBrush(point: SelectionPoint): void {
+    const gesture = this.selectionBrushGesture;
+    if (!gesture) return;
+    this.paintSelectionBrushSegment(gesture.lastPoint, point);
+    gesture.lastPoint = { ...point };
+  }
+
+  private paintSelectionBrushSegment(from: SelectionPoint, to: SelectionPoint): void {
+    const gesture = this.selectionBrushGesture;
+    if (!gesture) return;
+    const { width, height } = this.ctl.doc;
+    if (gesture.erase && !this.selectionMask) return;
+    const mask = paintSelectionMask(this.selectionMask, width, height, from, to, Math.max(1, this.brush.size / 2), gesture.erase);
+    this.applyRasterSelection(mask);
+  }
+
+  private finishSelectionBrush(event?: PointerEvent): void {
+    const gesture = this.selectionBrushGesture;
+    if (!gesture) return;
+    if (event && event.pointerId !== gesture.pointerId) return;
+    if (event && event.type !== 'pointercancel') this.updateSelectionBrush(this.toDoc(event));
+    this.selectionBrushGesture = null;
+    const count = this.selectionMask ? this.countSelectedPixels(this.selectionMask) : 0;
+    this.q<HTMLElement>('#status').textContent = count
+      ? `Selección activa · ${count.toLocaleString()} píxeles`
+      : 'La selección está vacía.';
+  }
+
+  private getSelectionKind(tool: Tool): SelectionKind | null {
+    if (tool === 'select-rectangle') return 'rectangle';
+    if (tool === 'select-ellipse') return 'ellipse';
+    if (tool === 'select-lasso') return 'lasso';
+    if (tool === 'select-polygon') return 'polygon';
+    return null;
+  }
+
+  private beginSelectionGesture(kind: SelectionKind, point: SelectionPoint, event: PointerEvent): void {
+    this.selectionGesture = { kind, startPoint: { ...point }, points: [{ ...point }], pointerId: event.pointerId };
+    this.canvas.setPointerCapture(event.pointerId);
+    this.drawSelectionGesturePreview(point);
+  }
+
+  private updateSelectionGesture(point: SelectionPoint): void {
+    const gesture = this.selectionGesture;
+    if (!gesture) return;
+    if (gesture.kind === 'lasso') this.appendLassoPoint(gesture.points, point);
+    else gesture.points[1] = { ...point };
+    this.drawSelectionGesturePreview(point);
+  }
+
+  private appendLassoPoint(points: SelectionPoint[], point: SelectionPoint): void {
+    const lastPoint = points.at(-1);
+    if (lastPoint && Math.hypot(point.x - lastPoint.x, point.y - lastPoint.y) < 2) return;
+    points.push({ ...point });
+  }
+
+  private finishSelectionGesture(event?: PointerEvent): void {
+    const gesture = this.selectionGesture;
+    if (!gesture) return;
+    if (event?.type === 'pointercancel') {
+      this.selectionGesture = null;
+      this.clearSelectionGesturePreview();
+      return;
+    }
+    if (event) this.updateSelectionGesture(this.toDoc(event));
+    this.selectionGesture = null;
+    const points = gesture.kind === 'lasso' ? gesture.points : [gesture.startPoint, gesture.points.at(-1) ?? gesture.startPoint];
+    this.applyRasterSelection(createSelectionMask(this.ctl.doc.width, this.ctl.doc.height, gesture.kind, points));
+  }
+
+  private selectMagicWand(point: SelectionPoint): void {
+    const layer = this.active();
+    if (!layer || !isPixelLayerType(layer.type)) {
+      this.q<HTMLElement>('#status').textContent = 'La varita mágica necesita una capa raster seleccionada.';
+      return;
+    }
+    const pixels = this.ctl.readPixels(layer);
+    if (!pixels) return;
+    const { width, height } = this.ctl.doc;
+    if (width * height > 8_000_000) {
+      this.q<HTMLElement>('#status').textContent = 'La varita mágica admite hasta 8 millones de píxeles por selección.';
+      return;
+    }
+    const mask = createMagicWandMask(width, height, pixels, Math.floor(point.x), Math.floor(point.y), this.brush.tolerance);
+    this.applyRasterSelection(mask);
+  }
+
+  private applyRasterSelection(mask: Uint8Array): void {
+    const { width, height } = this.ctl.doc;
+    const bounds = getSelectionBounds(mask, width, height);
+    this.selectionMask = bounds ? mask : null;
+    this.selectionMaskWidth = this.selectionMask ? width : 0;
+    this.selectionMaskHeight = this.selectionMask ? height : 0;
+    this.drawSelectionOverlay();
+    this.q<HTMLElement>('#status').textContent = bounds
+      ? `Selección activa · ${this.countSelectedPixels(mask).toLocaleString()} píxeles`
+      : 'No se seleccionaron píxeles.';
+  }
+
+  private countSelectedPixels(mask: Uint8Array): number {
+    let count = 0;
+    for (const value of mask) count += value;
+    return count;
+  }
+
+  private drawSelectionGesturePreview(point: SelectionPoint): void {
+    const gesture = this.selectionGesture;
+    if (!gesture) return;
+    const preview = this.q<HTMLCanvasElement>('#tool-preview');
+    const ctx = preview.getContext('2d');
+    if (!ctx) return;
+    this.resetPreviewContext(ctx, preview);
+    const stage = this.q<HTMLElement>('.canvas-stage').getBoundingClientRect();
+    const display = getDocumentDisplayTransform(stage, this.canvas.getBoundingClientRect(), this.ctl.doc.width, this.ctl.doc.height);
+    ctx.save();
+    ctx.translate(display.left, display.top);
+    ctx.scale(display.scale, display.scale);
+    ctx.strokeStyle = '#18a8f0';
+    ctx.lineWidth = 1 / display.scale;
+    ctx.setLineDash([5 / display.scale, 3 / display.scale]);
+    this.drawSelectionGesturePath(ctx, gesture, point);
+    ctx.restore();
+  }
+
+  private drawSelectionGesturePath(ctx: CanvasRenderingContext2D, gesture: NonNullable<AppDrawingFeatures['selectionGesture']>, point: SelectionPoint): void {
+    if (gesture.kind === 'rectangle') {
+      const x = Math.min(gesture.startPoint.x, point.x);
+      const y = Math.min(gesture.startPoint.y, point.y);
+      ctx.strokeRect(x, y, Math.abs(point.x - gesture.startPoint.x), Math.abs(point.y - gesture.startPoint.y));
+      return;
+    }
+    if (gesture.kind === 'ellipse') {
+      ctx.beginPath();
+      ctx.ellipse((gesture.startPoint.x + point.x) / 2, (gesture.startPoint.y + point.y) / 2, Math.max(0.5, Math.abs(point.x - gesture.startPoint.x) / 2), Math.max(0.5, Math.abs(point.y - gesture.startPoint.y) / 2), 0, 0, Math.PI * 2);
+      ctx.stroke();
+      return;
+    }
+    ctx.beginPath();
+    gesture.points.forEach((entry, index) => index === 0 ? ctx.moveTo(entry.x, entry.y) : ctx.lineTo(entry.x, entry.y));
+    ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+  }
+
+  private drawSelectionOverlay(): void {
+    const preview = this.q<HTMLCanvasElement>('#selection-preview');
+    const ctx = preview.getContext('2d');
+    if (!ctx) return;
+    this.updatePreviewCanvasSize();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, preview.width, preview.height);
+    const mask = this.selectionMask;
+    if (!mask) return;
+    const width = this.selectionMaskWidth;
+    const height = this.selectionMaskHeight;
+    this.selectionRenderCanvas = this.createSelectionRenderCanvas(mask, width, height);
+    const stage = this.q<HTMLElement>('.canvas-stage').getBoundingClientRect();
+    const display = getDocumentDisplayTransform(stage, this.canvas.getBoundingClientRect(), width, height);
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.drawImage(this.selectionRenderCanvas, display.left, display.top, width * display.scale, height * display.scale);
+    this.drawSelectionBounds(ctx, mask, width, height, display.left, display.top, display.scale);
+  }
+
+  private createSelectionRenderCanvas(mask: Uint8Array, width: number, height: number): HTMLCanvasElement {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) return canvas;
+    const image = context.createImageData(width, height);
+    for (let index = 0; index < mask.length; index++) this.paintSelectionOverlayPixel(image.data, index, mask[index]);
+    context.putImageData(image, 0, 0);
+    return canvas;
+  }
+
+  private paintSelectionOverlayPixel(data: Uint8ClampedArray, pixelIndex: number, selected: number): void {
+    if (!selected) return;
+    const offset = pixelIndex * 4;
+    data[offset] = 24;
+    data[offset + 1] = 150;
+    data[offset + 2] = 235;
+    data[offset + 3] = 42;
+  }
+
+  private drawSelectionBounds(ctx: CanvasRenderingContext2D, mask: Uint8Array, width: number, height: number, left: number, top: number, scale: number): void {
+    const bounds = getSelectionBounds(mask, width, height);
+    if (!bounds) return;
+    ctx.strokeStyle = '#18a8f0';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 3]);
+    ctx.strokeRect(left + bounds.left * scale, top + bounds.top * scale, (bounds.right - bounds.left) * scale, (bounds.bottom - bounds.top) * scale);
+    ctx.setLineDash([]);
+  }
+
+  private clearSelectionGesturePreview(): void {
+    const preview = this.q<HTMLCanvasElement>('#tool-preview');
+    const ctx = preview.getContext('2d');
+    if (ctx) ctx.clearRect(0, 0, preview.width, preview.height);
+  }
+
+  private clearRasterSelection(): void {
+    this.selectionMask = null;
+    this.selectionMaskWidth = 0;
+    this.selectionMaskHeight = 0;
+    this.selectionRenderCanvas = null;
+    const preview = this.root.querySelector<HTMLCanvasElement>('#selection-preview');
+    const ctx = preview?.getContext('2d');
+    if (ctx && preview) ctx.clearRect(0, 0, preview.width, preview.height);
+  }
+
+  private isSelectionPixelSelected(x: number, y: number): boolean {
+    const mask = this.selectionMask;
+    if (!mask || this.selectionMaskWidth !== this.ctl.doc.width || this.selectionMaskHeight !== this.ctl.doc.height) return true;
+    const ix = Math.floor(x);
+    const iy = Math.floor(y);
+    if (ix < 0 || iy < 0 || ix >= this.selectionMaskWidth || iy >= this.selectionMaskHeight) return false;
+    return mask[iy * this.selectionMaskWidth + ix] === 1;
+  }
+
+  private restoreOutsideSelection(original: Uint8Array, modified: Uint8Array, region: PixelRegion): void {
+    if (!this.selectionMask || this.selectionMaskWidth !== this.ctl.doc.width || this.selectionMaskHeight !== this.ctl.doc.height) return;
+    for (let y = 0; y < region.height; y++) this.restoreUnselectedRow(original, modified, region, y);
+  }
+
+  private restoreUnselectedRow(original: Uint8Array, modified: Uint8Array, region: PixelRegion, y: number): void {
+    for (let x = 0; x < region.width; x++) {
+      if (this.isSelectionPixelSelected(region.left + x, region.top + y)) continue;
+      const offset = (y * region.width + x) * 4;
+      modified.set(original.subarray(offset, offset + 4), offset);
+    }
+  }
+
+  private applySelectionToFillResult(operation: FillOperation, result: FillResult): void {
+    if (!this.selectionMask || this.selectionMaskWidth !== operation.width || this.selectionMaskHeight !== operation.height) return;
+    result.filled = 0;
+    result.minX = operation.width;
+    result.minY = operation.height;
+    result.maxX = -1;
+    result.maxY = -1;
+    for (let pixel = 0; pixel < operation.width * operation.height; pixel++) this.applyFillSelectionPixel(operation, result, pixel);
+  }
+
+  private applyFillSelectionPixel(operation: FillOperation, result: FillResult, pixel: number): void {
+    const offset = pixel * 4;
+    const selected = this.selectionMask?.[pixel] === 1;
+    if (!selected) result.pixels.set(operation.original.subarray(offset, offset + 4), offset);
+    if (!selected || this.pixelsMatch(operation.original, result.pixels, offset)) return;
+    result.filled++;
+    this.expandFillBounds(result, pixel, operation.width);
+  }
+
+  private pixelsMatch(first: Uint8Array, second: Uint8Array, offset: number): boolean {
+    return first[offset] === second[offset] && first[offset + 1] === second[offset + 1]
+      && first[offset + 2] === second[offset + 2] && first[offset + 3] === second[offset + 3];
+  }
+
+  private correctVectorLineAt(point: { x: number; y: number }): void {
+    const layer = this.active();
+    if (!layer || layer.type !== 'vector') {
+      this.q<HTMLElement>('#status').textContent = 'Seleccioná una capa vectorial para corregir sus trazos.';
+      return;
+    }
+    const shapes = layer.vectorShapes ?? [];
+    const target = findVectorSelectionTarget(point, shapes, (shape) => Math.max(6, shape.strokeWidth));
+    if (!target) {
+      this.q<HTMLElement>('#status').textContent = 'No hay un trazo vectorial bajo el cursor.';
+      return;
+    }
+    const corrected = simplifyVectorLine(target.shape, Math.max(1, this.brush.size * 0.08));
+    if (!corrected) {
+      this.q<HTMLElement>('#status').textContent = 'El trazo no necesita simplificación o contiene controles Bézier.';
+      return;
+    }
+    const next = shapes.map((shape) => shape.id === corrected.id ? corrected : shape);
+    this.commitVectorShapes(layer, next);
+    this.q<HTMLElement>('#status').textContent = 'Trazo vectorial simplificado.';
+  }
+
+  protected beginElementMove(point: { x: number; y: number }, event: PointerEvent): void {
+    if (this.layerTransformSession) this.cancelLayerTransformSession();
+    this.activeMaskId = '';
+    this.canvas.dataset.moveOperation = 'content-only';
+    const layer = this.active();
+    if (!layer) return this.reportMoveUnavailable('Seleccioná una capa para mover sus elementos.');
+    if (!this.ctl.isEffectivelyVisible(layer.id) || this.ctl.isEffectivelyLocked(layer.id)) {
+      return this.reportMoveUnavailable('La capa está oculta o bloqueada.');
+    }
+    if (!isPixelLayerType(layer.type)) {
+      return this.reportMoveUnavailable('La herramienta Mover admite capas de píxeles, texto, imágenes y vectores.');
+    }
+    this.rasterMoveGesture = { layerId: layer.id, startPoint: { ...point }, currentPoint: { ...point }, pointerId: event.pointerId };
+    this.canvas.setPointerCapture(event.pointerId);
+    this.canvas.style.cursor = 'grabbing';
+    this.q<HTMLElement>('#status').textContent = 'Moviendo contenido · soltá para confirmar · Escape para cancelar.';
+  }
+
+  private reportMoveUnavailable(message: string): void {
+    this.q<HTMLElement>('#status').textContent = message;
+  }
+
+  private updateElementMove(point: { x: number; y: number }): void {
+    const gesture = this.rasterMoveGesture;
+    if (!gesture) return;
+    gesture.currentPoint = { ...point };
+    const deltaX = Math.round(point.x - gesture.startPoint.x);
+    const deltaY = Math.round(point.y - gesture.startPoint.y);
+    this.q<HTMLElement>('#status').textContent = `Mover elementos · X: ${deltaX >= 0 ? '+' : ''}${deltaX}px · Y: ${deltaY >= 0 ? '+' : ''}${deltaY}px`;
+  }
+
+  private finishElementMove(event?: PointerEvent): void {
+    const gesture = this.rasterMoveGesture;
+    if (event && gesture && event.pointerId !== gesture.pointerId) return;
+    if (!gesture) return;
+    if (event?.type === 'pointercancel') {
+      this.rasterMoveGesture = null;
+      this.canvas.style.cursor = this.tool === 'move' ? 'move' : this.canvas.style.cursor;
+      this.q<HTMLElement>('#status').textContent = 'Movimiento cancelado.';
+      return;
+    }
+    if (event) this.updateElementMove(this.toDoc(event));
+    const deltaX = Math.round(gesture.currentPoint.x - gesture.startPoint.x);
+    const deltaY = Math.round(gesture.currentPoint.y - gesture.startPoint.y);
+    const layerId = gesture.layerId;
+    this.rasterMoveGesture = null;
+    this.canvas.style.cursor = this.tool === 'move' ? 'move' : this.canvas.style.cursor;
+    if (deltaX === 0 && deltaY === 0) {
+      this.q<HTMLElement>('#status').textContent = 'La capa no cambió de posición.';
+      return;
+    }
+    const layer = this.ctl.find(layerId);
+    if (!layer) return;
+    const label = `Mover elementos de «${layer.name}»`;
+    this.commitLayerContentMove(layer, deltaX, deltaY, label);
+  }
+
+  private commitLayerContentMove(layer: LayerNode, deltaX: number, deltaY: number, label: string): void {
+    if (layer.type === 'vector') {
+      this.commitVectorShapes(layer, translateVectorShapes(layer.vectorShapes ?? [], deltaX, deltaY));
+      this.reportLayerContentMoved(layer);
+      return;
+    }
+    if (layer.type === 'text') {
+      this.commitTextLayerMove(layer, deltaX, deltaY);
+      return;
+    }
+    this.moveRasterLayerContent(layer, deltaX, deltaY, label);
+  }
+
+  private commitTextLayerMove(layer: LayerNode, deltaX: number, deltaY: number): void {
+    if (!this.moveTextLayerContent(layer, deltaX, deltaY)) return;
+    this.refreshAfterLayerPropertyChange();
+    this.reportLayerContentMoved(layer);
+  }
+
+  private moveTextLayerContent(layer: LayerNode, deltaX: number, deltaY: number): boolean {
+    const content = layer.textContent ?? '';
+    const x = (layer.textX ?? 0) + deltaX;
+    const y = (layer.textY ?? 0) + deltaY;
+    const settings = this.textSettingsFromLayer(layer);
+    const pixels = this.rasterizeText(content, x, y, settings);
+    return this.ctl.replaceTextContent(layer.id, this.textLayerPatch(content, x, y, settings), pixels);
+  }
+
+  private moveRasterLayerContent(layer: LayerNode, deltaX: number, deltaY: number, label: string): void {
+    const surface = this.ctl.layerPixels(layer);
+    if (!surface) {
+      this.q<HTMLElement>('#status').textContent = 'No se pudo mover el contenido de esta capa.';
+      return;
+    }
+    try {
+      runEdit(this.ctx, layer.engineId, label, (pixels) => movePixelSurface(pixels, deltaX, deltaY));
+      this.syncUI();
+      this.updateHistoryUI();
+      this.scheduleRefresh();
+      this.reportLayerContentMoved(layer);
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
+  private reportLayerContentMoved(layer: LayerNode): void {
+    this.q<HTMLElement>('#status').textContent = `Se movió «${layer.name}» sin crear una máscara de transformación.`;
+  }
+
+  protected startLayerTransform(): void {
+    const layer = this.active();
+    if (!layer) {
+      this.q<HTMLElement>('#status').textContent = 'Seleccioná una capa para transformarla.';
+      return;
+    }
+    if (!isPixelLayerType(layer.type)) {
+      this.q<HTMLElement>('#status').textContent = 'Esta transformación admite capas de píxeles, texto, imágenes y vectores.';
+      return;
+    }
+    if (this.ctl.isEffectivelyLocked(layer.id) || !this.ctl.isEffectivelyVisible(layer.id)) {
+      this.q<HTMLElement>('#status').textContent = 'La capa está oculta o bloqueada.';
+      return;
+    }
+    if (this.layerTransformSession) this.cancelLayerTransformSession();
+    if (!this.beginLayerTransformSession(layer, false)) return;
+    this.q<HTMLElement>('#status').textContent = 'Transformación activa · arrastrá el marco o sus controles · Enter aplica · Escape cancela.';
+  }
+
+  protected handleTransformSessionKey(event: KeyboardEvent): boolean {
+    if (event.key === 'Escape' && this.selectionBrushGesture) {
+      event.preventDefault();
+      this.selectionBrushGesture = null;
+      this.drawSelectionOverlay();
+      this.q<HTMLElement>('#status').textContent = 'Trazo de selección cancelado.';
+      return true;
+    }
+    if (event.key === 'Escape' && this.selectionGesture) {
+      event.preventDefault();
+      this.selectionGesture = null;
+      this.clearSelectionGesturePreview();
+      return true;
+    }
+    if (event.key === 'Escape' && this.selectionMask) {
+      event.preventDefault();
+      this.clearRasterSelection();
+      this.q<HTMLElement>('#status').textContent = 'Selección eliminada.';
+      return true;
+    }
+    if (this.rasterMoveGesture && event.key === 'Escape') {
+      event.preventDefault();
+      const pointerId = this.rasterMoveGesture.pointerId;
+      this.rasterMoveGesture = null;
+      if (this.canvas.hasPointerCapture(pointerId)) this.canvas.releasePointerCapture(pointerId);
+      this.canvas.style.cursor = this.tool === 'move' ? 'move' : this.canvas.style.cursor;
+      this.q<HTMLElement>('#status').textContent = 'Movimiento cancelado.';
+      return true;
+    }
+    if (!this.layerTransformSession) return false;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      this.cancelLayerTransformSession();
+      this.q<HTMLElement>('#status').textContent = 'Transformación cancelada.';
+      return true;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      this.commitLayerTransformSession();
+      return true;
+    }
+    return false;
+  }
+
+  private beginLayerTransformSession(layer: LayerNode, liveMove: boolean): boolean {
+    if (this.layerTransformSession) this.cancelLayerTransformSession();
+    const originalMasks = cloneLayerMasks(layer.masks);
+    const existing = liveMove
+      ? originalMasks.find((mask): mask is TransformMask => mask.type === 'transform' && mask.enabled)
+      : [...originalMasks].reverse().find((mask): mask is TransformMask => mask.type === 'transform');
+    const template = existing ? { ...existing } : createLayerMask('transform', crypto.randomUUID()) as TransformMask;
+    const baseMasks = existing ? originalMasks.filter((mask) => mask.id !== existing.id) : originalMasks;
+    const sourceBounds = this.getLayerContentBounds(layer);
+    const baseBounds = this.getBoundsAfterTransformMasks(sourceBounds, baseMasks);
+    const currentBounds = existing && existing.enabled
+      ? transformRectWithMask(baseBounds, existing, this.ctl.doc.width, this.ctl.doc.height)
+      : baseBounds;
+    this.layerTransformSession = {
+      layerId: layer.id,
+      originalMasks,
+      baseMasks,
+      template,
+      baseBounds,
+      currentBounds,
+      latestMasks: cloneLayerMasks(originalMasks),
+    };
+    this.createLayerTransformOverlay(liveMove);
+    this.renderLayerTransformOverlay({ vertical: [], horizontal: [] });
+    return true;
+  }
+
+  private getLayerContentBounds(layer: LayerNode): LayerRect {
+    const shapes = layer.vectorShapes ?? [];
+    if (shapes.length) return this.getVectorContentBounds(shapes);
+    const pixels = this.ctl.readPixels(layer);
+    if (!pixels) return { x: 0, y: 0, width: this.ctl.doc.width, height: this.ctl.doc.height };
+    return this.getPixelContentBounds(pixels, this.ctl.doc.width, this.ctl.doc.height);
+  }
+
+  private getVectorContentBounds(shapes: readonly VectorShape[]): LayerRect {
+    const bounds = shapes.map(getVectorShapeBounds);
+    const left = Math.min(...bounds.map((rect) => rect.x));
+    const top = Math.min(...bounds.map((rect) => rect.y));
+    const right = Math.max(...bounds.map((rect) => rect.x + rect.width));
+    const bottom = Math.max(...bounds.map((rect) => rect.y + rect.height));
+    return { x: left, y: top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) };
+  }
+
+  private getPixelContentBounds(pixels: Uint8Array, width: number, height: number): LayerRect {
+    let left = width;
+    let top = height;
+    let right = -1;
+    let bottom = -1;
+    for (let y = 0; y < height; y++) this.scanPixelBoundsRow(pixels, width, y, (x) => {
+      left = Math.min(left, x);
+      top = Math.min(top, y);
+      right = Math.max(right, x);
+      bottom = Math.max(bottom, y);
+    });
+    if (right < left || bottom < top) return { x: 0, y: 0, width, height };
+    return { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
+  }
+
+  private scanPixelBoundsRow(pixels: Uint8Array, width: number, y: number, visit: (x: number) => void): void {
+    const rowStart = y * width * 4;
+    for (let x = 0; x < width; x++) this.visitVisiblePixel(pixels, rowStart, x, visit);
+  }
+
+  private visitVisiblePixel(pixels: Uint8Array, rowStart: number, x: number, visit: (x: number) => void): void {
+    if (pixels[rowStart + x * 4 + 3] > 0) visit(x);
+  }
+
+  private getBoundsAfterTransformMasks(bounds: LayerRect, masks: readonly LayerMask[]): LayerRect {
+    return masks.reduce((current, mask) => {
+      if (mask.type !== 'transform' || !mask.enabled) return current;
+      return transformRectWithMask(current, mask, this.ctl.doc.width, this.ctl.doc.height);
+    }, bounds);
+  }
+
+  private createLayerTransformOverlay(liveMove: boolean): void {
+    this.removeLayerTransformOverlay();
+    const overlay = document.createElement('div');
+    overlay.className = 'layer-transform-overlay';
+    overlay.dataset.liveMove = String(liveMove);
+    const guides = document.createElement('div');
+    guides.className = 'layer-transform-guides';
+    const frame = document.createElement('div');
+    frame.className = 'layer-transform-frame';
+    frame.setAttribute('role', 'group');
+    frame.setAttribute('aria-label', 'Marco de transformación');
+    this.appendTransformHandles(frame);
+    const toolbar = document.createElement('div');
+    toolbar.className = 'layer-transform-toolbar';
+    toolbar.innerHTML = '<button type="button" data-transform-apply>Aplicar</button><button type="button" data-transform-cancel>Cancelar</button>';
+    overlay.append(guides, frame, toolbar);
+    this.q<HTMLElement>('.canvas-stage').append(overlay);
+    this.layerTransformOverlay = overlay;
+    frame.addEventListener('pointerdown', (event) => this.beginTransformOverlayGesture(event));
+    frame.addEventListener('pointermove', (event) => this.updateTransformOverlayGesture(event));
+    frame.addEventListener('pointerup', (event) => this.endTransformOverlayGesture(event));
+    frame.addEventListener('pointercancel', (event) => this.endTransformOverlayGesture(event));
+    overlay.addEventListener('click', (event) => this.handleTransformOverlayAction(event));
+  }
+
+  private appendTransformHandles(frame: HTMLElement): void {
+    const handles: LayerTransformHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+    for (const handle of handles) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'layer-transform-handle';
+      button.dataset.transformHandle = handle;
+      button.setAttribute('aria-label', `Redimensionar desde ${handle}`);
+      frame.append(button);
+    }
+  }
+
+  private handleTransformOverlayAction(event: MouseEvent): void {
+    const target = event.target as HTMLElement;
+    if (target.closest('[data-transform-apply]')) this.commitLayerTransformSession();
+    if (target.closest('[data-transform-cancel]')) this.cancelLayerTransformSession();
+  }
+
+  private beginTransformOverlayGesture(event: PointerEvent): void {
+    if (this.layerTransformOverlay?.dataset.liveMove === 'true') return;
+    const target = event.target as HTMLElement;
+    const handle = target.closest<HTMLElement>('[data-transform-handle]')?.dataset.transformHandle as LayerTransformHandle | undefined;
+    const frame = this.layerTransformOverlay?.querySelector<HTMLElement>('.layer-transform-frame');
+    const session = this.layerTransformSession;
+    if (!frame || !session || event.button !== 0) return;
+    event.preventDefault();
+    const pointer = this.toDocAt(event.clientX, event.clientY);
+    this.layerTransformGesture = {
+      pointerId: event.pointerId,
+      handle: handle ?? 'move',
+      startPoint: pointer,
+      startBounds: { ...session.currentBounds },
+    };
+    frame.setPointerCapture(event.pointerId);
+  }
+
+  private updateTransformOverlayGesture(event: PointerEvent): void {
+    if (!this.layerTransformGesture || event.pointerId !== this.layerTransformGesture.pointerId) return;
+    this.updateLayerTransformGesture(this.toDocAt(event.clientX, event.clientY), event.shiftKey);
+  }
+
+  private updateLayerTransformGesture(point: { x: number; y: number }, keepAspectRatio: boolean): void {
+    const gesture = this.layerTransformGesture;
+    if (!gesture) return;
+    const dx = point.x - gesture.startPoint.x;
+    const dy = point.y - gesture.startPoint.y;
+    const { width, height } = this.ctl.doc;
+    const snapThreshold = this.getLayerTransformSnapThreshold();
+    if (gesture.handle === 'move') {
+      const moved = moveRect(gesture.startBounds, dx, dy);
+      const snapped = snapMoveRect(moved, width, height, snapThreshold);
+      this.applyLayerTransformPreview(snapped.rect, snapped.guides);
+      return;
+    }
+    const resized = resizeRect(gesture.startBounds, gesture.handle, dx, dy, keepAspectRatio);
+    const snapped = snapResizeRect(resized, gesture.handle, width, height, snapThreshold);
+    this.applyLayerTransformPreview(snapped.rect, snapped.guides);
+  }
+
+  private endTransformOverlayGesture(event: PointerEvent): void {
+    if (!this.layerTransformGesture || event.pointerId !== this.layerTransformGesture.pointerId) return;
+    this.layerTransformGesture = null;
+  }
+
+  private getLayerTransformSnapThreshold(): number {
+    const stageRect = this.q<HTMLElement>('.canvas-stage').getBoundingClientRect();
+    const canvasRect = this.canvas.getBoundingClientRect();
+    const display = getDocumentDisplayTransform(stageRect, canvasRect, this.ctl.doc.width, this.ctl.doc.height);
+    return 8 / Math.max(0.01, display.scale);
+  }
+
+  private applyLayerTransformPreview(target: LayerRect, guides: SnapGuides): void {
+    const session = this.layerTransformSession;
+    if (!session) return;
+    const values = createTransformMaskValues(session.baseBounds, target, this.ctl.doc.width, this.ctl.doc.height);
+    const transform: TransformMask = { ...session.template, ...values, enabled: true };
+    const nextMasks = cloneLayerMasks(session.originalMasks);
+    const existingIndex = nextMasks.findIndex((mask) => mask.id === session.template.id);
+    if (existingIndex >= 0) nextMasks[existingIndex] = transform;
+    else nextMasks.push(transform);
+    const layer = this.ctl.find(session.layerId);
+    if (!layer) return this.cancelLayerTransformSession();
+    layer.masks = cloneLayerMasks(nextMasks);
+    session.latestMasks = cloneLayerMasks(nextMasks);
+    session.currentBounds = { ...target };
+    this.ctl.comp.invalidateAll();
+    this.scheduleRefresh();
+    this.renderLayerTransformOverlay(guides);
+  }
+
+  private renderLayerTransformOverlay(guides: SnapGuides): void {
+    const overlay = this.layerTransformOverlay;
+    const session = this.layerTransformSession;
+    if (!overlay || !session) return;
+    const stage = this.q<HTMLElement>('.canvas-stage');
+    const stageRect = stage.getBoundingClientRect();
+    const canvasRect = this.canvas.getBoundingClientRect();
+    const display = getDocumentDisplayTransform(stageRect, canvasRect, this.ctl.doc.width, this.ctl.doc.height);
+    const frame = overlay.querySelector<HTMLElement>('.layer-transform-frame');
+    const guidesRoot = overlay.querySelector<HTMLElement>('.layer-transform-guides');
+    if (!frame || !guidesRoot) return;
+    const bounds = session.currentBounds;
+    frame.style.left = `${display.left + bounds.x * display.scale}px`;
+    frame.style.top = `${display.top + bounds.y * display.scale}px`;
+    frame.style.width = `${Math.max(2, bounds.width * display.scale)}px`;
+    frame.style.height = `${Math.max(2, bounds.height * display.scale)}px`;
+    guidesRoot.replaceChildren();
+    guides.vertical.forEach((position) => this.appendTransformGuide(guidesRoot, 'vertical', display.left + position * display.scale));
+    guides.horizontal.forEach((position) => this.appendTransformGuide(guidesRoot, 'horizontal', display.top + position * display.scale));
+  }
+
+  private appendTransformGuide(root: HTMLElement, orientation: 'vertical' | 'horizontal', position: number): void {
+    const guide = document.createElement('div');
+    guide.className = `layer-transform-guide layer-transform-guide--${orientation}`;
+    if (orientation === 'vertical') guide.style.left = `${position}px`;
+    else guide.style.top = `${position}px`;
+    root.append(guide);
+  }
+
+  private commitLayerTransformSession(label?: string): void {
+    const session = this.layerTransformSession;
+    if (!session) return;
+    const layer = this.ctl.find(session.layerId);
+    if (!layer) return this.cancelLayerTransformSession();
+    const finalMasks = cloneLayerMasks(session.latestMasks);
+    layer.masks = cloneLayerMasks(session.originalMasks);
+    this.removeLayerTransformOverlay();
+    this.layerTransformSession = null;
+    this.layerTransformGesture = null;
+    this.rasterMoveGesture = null;
+    if (this.ctl.replaceLayerMasks(session.layerId, finalMasks, label ?? `Transformar capa «${layer.name}»`)) {
+      this.refreshAfterLayerPropertyChange();
+    } else {
+      this.ctl.comp.invalidateAll();
+      this.scheduleRefresh();
+    }
+    this.canvas.style.cursor = this.tool === 'move' ? 'move' : '';
+    this.q<HTMLElement>('#status').textContent = `Transformación aplicada a «${layer.name}».`;
+  }
+
+  private cancelLayerTransformSession(): void {
+    const session = this.layerTransformSession;
+    if (!session) return;
+    const layer = this.ctl.find(session.layerId);
+    if (layer) layer.masks = cloneLayerMasks(session.originalMasks);
+    this.layerTransformSession = null;
+    this.layerTransformGesture = null;
+    this.rasterMoveGesture = null;
+    this.removeLayerTransformOverlay();
+    this.ctl.comp.invalidateAll();
+    this.scheduleRefresh();
+    this.canvas.style.cursor = this.tool === 'move' ? 'move' : '';
+  }
+
+  private removeLayerTransformOverlay(): void {
+    this.layerTransformOverlay?.remove();
+    this.layerTransformOverlay = null;
+  }
 
   protected setCloneSource(point: { x: number; y: number }): void {
       const layer = this.getEditablePaintLayer();
@@ -812,7 +1704,6 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       this.reportComicPanelCreated('split');
     }
 
-
   private getComicSplitEndpoints(shape: VectorShape): Array<{ x: number; y: number }> {
     if (shape.kind === 'line') return [
       { x: shape.x, y: shape.y },
@@ -916,8 +1807,8 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
   protected createClippedComicLayer(start: { x: number; y: number }, end: { x: number; y: number }): void {
       const bounds = this.normalizeComicBounds(start, end);
       if (bounds.width < 2 || bounds.height < 2) return;
-      const layer = this.ctl.addLayer('paint', `Dibujo de viñeta ${this.ctl.doc.layers.length}`, undefined, -1, { comicClipBounds: bounds });
-      this.activeId = layer.id;
+      const layer = this.ctl.addLayerAbove('paint', `Dibujo de viñeta ${this.ctl.doc.layers.length}`, this.activeId, { comicClipBounds: bounds });
+      this.activateCreatedLayer(layer);
       this.syncUI();
       this.updateHistoryUI();
       this.scheduleRefresh();
@@ -988,6 +1879,34 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       });
       return true;
     }
+
+  private eraseVectorShapeAt(point: { x: number; y: number }): void {
+    const layer = this.active();
+    if (!layer || layer.type !== 'vector') {
+      this.q<HTMLElement>('#status').textContent = 'Seleccioná una capa vectorial para borrar objetos.';
+      return;
+    }
+    if (!this.ctl.isEffectivelyVisible(layer.id) || this.ctl.isEffectivelyLocked(layer.id)) {
+      this.q<HTMLElement>('#status').textContent = 'La capa vectorial está oculta o bloqueada.';
+      return;
+    }
+    const shapes = layer.vectorShapes ?? [];
+    const erasedStroke = eraseVectorStrokeAt(shapes, point, Math.max(5, this.brush.size / 2));
+    if (erasedStroke) {
+      this.commitVectorShapes(layer, erasedStroke.shapes);
+      this.q<HTMLElement>('#status').textContent = erasedStroke.erasedBetweenIntersections
+        ? 'Se borró el tramo vectorial hasta las intersecciones.'
+        : 'Se eliminó el trazo vectorial seleccionado.';
+      return;
+    }
+    const target = findVectorSelectionTarget(point, shapes, (shape) => Math.max(5, shape.strokeWidth / 2), 0);
+    if (!target) {
+      this.q<HTMLElement>('#status').textContent = 'No hay un trazo vectorial debajo del cursor.';
+      return;
+    }
+    this.commitVectorShapes(layer, shapes.filter((shape) => shape.id !== target.shape.id));
+    this.q<HTMLElement>('#status').textContent = 'Se eliminó el objeto vectorial seleccionado.';
+  }
 
   protected getEditablePaintLayer(): LayerNode | null {
       const layer = this.active();
@@ -1062,11 +1981,11 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
     const stageRect = this.q<HTMLElement>('.canvas-stage').getBoundingClientRect();
     const canvasRect = this.canvas.getBoundingClientRect();
     const display = getDocumentDisplayTransform(stageRect, canvasRect, this.ctl.doc.width, this.ctl.doc.height);
-    const shape = this.createVectorShapeFromGesture(gesture.tool, gesture.startPoint, gesture.currentPoint, gesture.points, gesture.id);
+    const shapes = this.createVectorShapesFromGesture(gesture.tool, gesture.startPoint, gesture.currentPoint, gesture.points, gesture.id);
     ctx.save();
     ctx.translate(display.left, display.top);
     ctx.scale(display.scale, display.scale);
-    renderVectorShape(ctx, shape);
+    shapes.forEach((shape) => renderVectorShape(ctx, shape));
     ctx.restore();
   }
 
@@ -1084,13 +2003,16 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
     if (!this.hasMeaningfulVectorGesture(gesture)) return;
     const layer = this.ctl.find(gesture.layerId);
     if (!layer || layer.type !== 'vector') return;
-    const shape = this.createVectorShapeFromGesture(gesture.tool, gesture.startPoint, gesture.currentPoint, gesture.points, gesture.id);
+    const createdShapes = this.createVectorShapesFromGesture(gesture.tool, gesture.startPoint, gesture.currentPoint, gesture.points, gesture.id);
     const shapes = cloneVectorShapes(layer.vectorShapes);
-    shapes.push(shape);
-    this.vectorDirectSelectedId = shape.id;
+    shapes.push(...createdShapes);
+    const primaryShape = createdShapes[0];
+    this.vectorDirectSelectedId = primaryShape?.id ?? null;
     this.commitVectorShapes(layer, shapes);
-    this.drawVectorSelectionOverlay(shape);
-    this.q<HTMLElement>('#status').textContent = `${this.vectorKindLabel(shape.kind)} vectorial creado.`;
+    if (primaryShape) this.drawVectorSelectionOverlay(primaryShape);
+    this.q<HTMLElement>('#status').textContent = createdShapes.length > 1
+      ? `Se crearon ${createdShapes.length} líneas vectoriales.`
+      : `${this.vectorKindLabel(primaryShape.kind)} vectorial creado.`;
   }
 
   private hasMeaningfulVectorGesture(gesture: NonNullable<AppDrawingFeatures['vectorDrawGesture']>): boolean {
@@ -1116,7 +2038,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
     }
 
   private isBrushStrokeTool(): boolean {
-    return this.tool === 'brush' || this.tool === 'eraser' || this.tool === 'clone-stamp' || this.tool === 'smudge' || this.tool === 'liquify';
+    return isBrushStrokeToolId(this.tool);
   }
 
   private prepareInitialBrushDab(point: { x: number; y: number }): void {
@@ -1171,6 +2093,9 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
     }
 
   protected onPointerMove(e: PointerEvent, finalPoint = false): void {
+      if (this.selectionBrushGesture) { this.updateSelectionBrush(this.toDoc(e)); return; }
+      if (this.selectionGesture) { this.updateSelectionGesture(this.toDoc(e)); return; }
+      if (this.rasterMoveGesture) { this.updateElementMove(this.toDoc(e)); return;}
       if (this.vectorDrawGesture) { this.updateVectorDrawingGesture(this.toDoc(e), finalPoint); return; }
       if (this.vectorGesture) { this.updateVectorGesture(this.toDoc(e)); return; }
       if (this.comicPanelStart) { this.drawComicPanelPreview(e); return; }
@@ -1191,7 +2116,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
         this.drawToolPreview(e);
         return;
       }
-      if (this.strokeTool !== 'brush' && this.strokeTool !== 'eraser' && this.strokeTool !== 'clone-stamp' && this.strokeTool !== 'smudge' && this.strokeTool !== 'liquify') return;
+      if (!isBrushStrokeToolId(this.strokeTool)) return;
       let p = this.toDoc(e);
       if (!finalPoint && this.brush.smoothing > 0) {
         const blend = 1 - (this.brush.smoothing / 100) * 0.75;
@@ -1230,7 +2155,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
 
   private canProcessPendingBrushDabs(): boolean {
     return Boolean(this.stroke && this.strokeLayer
-      && this.strokeTool !== null && ['brush', 'eraser', 'clone-stamp', 'smudge', 'liquify'].includes(this.strokeTool));
+      && isBrushStrokeToolId(this.strokeTool));
   }
 
   private cancelPendingBrushDabs(): void {
@@ -1360,9 +2285,20 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
   }
 
   private drawGradientPreview(preview: ToolPreviewContext): void {
-    if (this.brush.gradientType !== 'radial') return this.drawLinePreview(preview);
+    if (this.brush.gradientType === 'linear') return this.drawLinePreview(preview);
     const { ctx, start, end } = preview;
     const radius = Math.max(1, Math.hypot(end.x - start.x, end.y - start.y));
+    if (this.brush.gradientType === 'contour') {
+      const centerX = (start.x + end.x) / 2;
+      const centerY = (start.y + end.y) / 2;
+      ctx.beginPath();
+      ctx.ellipse(centerX, centerY, Math.max(1, Math.abs(end.x - start.x) / 2), Math.max(1, Math.abs(end.y - start.y) / 2), 0, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(centerX, centerY, Math.max(1, Math.abs(end.x - start.x) / 4), Math.max(1, Math.abs(end.y - start.y) / 4), 0, 0, Math.PI * 2);
+      ctx.stroke();
+      return;
+    }
     ctx.beginPath();
     ctx.arc(start.x, start.y, radius, 0, Math.PI * 2);
     ctx.stroke();
@@ -1399,6 +2335,9 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
   }
 
   protected up(e?: PointerEvent): void {
+      if (this.selectionBrushGesture) return this.finishSelectionBrush(e);
+      if (this.selectionGesture) return this.finishSelectionGesture(e);
+      if (this.rasterMoveGesture) return this.finishElementMove(e);
       if (this.vectorDrawGesture) return this.finishVectorDrawingGesture(e);
       if (this.vectorGesture) return this.finishVectorGestureAtPointer(e);
       if (this.comicPanelStart) { this.finishComicPanel(e); return; }
@@ -1438,12 +2377,13 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       const stroke = this.stroke;
       if (!stroke) return;
       const label: Record<Tool, string> = {
-        brush: 'Pincel', eraser: 'Borrador', eyedropper: 'Cuentagotas', line: 'Línea',
-        rectangle: 'Rectángulo', ellipse: 'Elipse', fill: 'Relleno', hand: 'Mover lienzo',
+        brush: 'Pincel', pen: 'Plumilla', pencil: 'Lápiz', airbrush: 'Aerógrafo', decoration: 'Decoración', eraser: 'Borrador', 'dust-removal': 'Eliminar polvo', 'vector-eraser': 'Goma vectorial', eyedropper: 'Cuentagotas', line: 'Línea',
+        rectangle: 'Rectángulo', ellipse: 'Elipse', fill: 'Relleno', hand: 'Mover lienzo', move: 'Mover elementos',
         text: 'Texto', 'vector-select': 'Selección vectorial', 'vector-rectangle': 'Rectángulo vectorial',
         'vector-rounded-rectangle': 'Rectángulo redondeado vectorial', 'vector-ellipse': 'Elipse vectorial', 'vector-line': 'Línea vectorial',
         'vector-polyline': 'Polilínea vectorial', 'vector-pen': 'Pluma vectorial', 'vector-polygon': 'Polígono vectorial',
         'vector-star': 'Estrella vectorial', 'vector-freehand': 'Trazo vectorial libre', 'vector-spiral': 'Espiral vectorial',
+        'vector-parallel-lines': 'Líneas paralelas', 'vector-radial-lines': 'Líneas radiales', 'speech-bubble': 'Bocadillo', flash: 'Flash',
         'pixel-rounded-rectangle': 'Rectángulo redondeado de píxeles', 'pixel-polyline': 'Polilínea de píxeles',
         'pixel-bezier': 'Curva Bézier de píxeles', 'pixel-polygon': 'Polígono de píxeles', 'pixel-star': 'Estrella de píxeles', 'pixel-spiral': 'Espiral de píxeles',
         'clone-stamp': 'Tampón de clonar', 'comic-panel': 'Marco y viñetas', gradient: 'Degradado', smudge: 'Dedo', liquify: 'Licuar',
@@ -1493,6 +2433,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       const operation = this.createFillOperation(point, node);
       if (!operation) return;
       const result = this.executeFillOperation(operation);
+      this.applySelectionToFillResult(operation, result);
       if (result.filled === 0) {
         this.q<HTMLElement>('#status').textContent = 'No se encontraron píxeles dentro de la tolerancia.';
         return;
@@ -1531,6 +2472,9 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
         width, height, original, reference, seedX, seedY, seedColor,
         tolerance: this.brush.tolerance, color,
         opacity: this.brush.opacity / 100, contiguous: this.brush.contiguous,
+        matchMask: this.brush.gapClosure > 0
+          ? createGapClosedMatchMask(reference, width, height, seedColor, this.brush.tolerance, this.brush.gapClosure)
+          : undefined,
       };
     }
 
@@ -1548,6 +2492,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
     }
 
   protected fillMatches(operation: FillOperation, offset: number): boolean {
+      if (operation.matchMask) return operation.matchMask[Math.floor(offset / 4)] === 1;
       const reference = operation.reference;
       const seed = operation.seedColor;
       const difference = Math.max(

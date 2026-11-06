@@ -28,6 +28,8 @@ const GEOMETRY_RENDERERS: Record<VectorKind, GeometryRenderer> = {
   star: drawStar,
   spiral: drawSpiral,
   text: drawText,
+  'speech-bubble': drawSpeechBubble,
+  flash: drawFlash,
 };
 
 export function renderVectorShape(ctx: CanvasRenderingContext2D, shape: VectorShape): void {
@@ -111,6 +113,35 @@ function drawStar(ctx: CanvasRenderingContext2D, shape: VectorShape, _paint: Pai
   const spikes = Math.max(3, Math.min(64, Math.round(shape.starPoints ?? 5)));
   const outer = Math.min(Math.abs(shape.width), Math.abs(shape.height)) / 2;
   drawPolarPath(ctx, shape, spikes * 2, (index) => index % 2 === 0 ? outer : outer * 0.44, (index) => Math.PI * index / spikes - Math.PI / 2);
+  finish();
+}
+
+function drawSpeechBubble(ctx: CanvasRenderingContext2D, shape: VectorShape, _paint: PaintOptions, finish: PathPainter): void {
+  const { x, y, width, height } = shape;
+  const radius = Math.min(Math.max(8, shape.cornerRadius ?? 18), Math.abs(width) / 4, Math.abs(height) / 4);
+  const tailX = x + width * 0.32;
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(tailX + width * 0.05, y + height);
+  ctx.lineTo(tailX - width * 0.04, y + height + Math.max(8, height * 0.2));
+  ctx.lineTo(tailX - width * 0.02, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  finish();
+}
+
+function drawFlash(ctx: CanvasRenderingContext2D, shape: VectorShape, _paint: PaintOptions, finish: PathPainter): void {
+  const spikes = Math.max(8, Math.min(40, Math.round(shape.starPoints ?? 12)));
+  const outer = Math.min(Math.abs(shape.width), Math.abs(shape.height)) / 2;
+  const inner = outer * 0.48;
+  drawPolarPath(ctx, shape, spikes * 2, (index) => index % 2 === 0 ? outer : inner,
+    (index) => Math.PI * index / spikes - Math.PI / 2);
   finish();
 }
 

@@ -131,3 +131,45 @@ test('multiple stroke instances normalize independently and survive native proje
   const restored = unpackNvtsPhoto(packed).doc.layers[0].layerStyles;
   assert.deepEqual(restored.strokes, normalized.strokes);
 });
+
+
+test('all layer-style families remain enabled and contribute their required tile padding', () => {
+  const styles = createDefaultLayerStyles();
+  styles.innerGlow.enabled = true;
+  styles.innerGlow.size = 18;
+  styles.satin.enabled = true;
+  styles.colorOverlay.enabled = true;
+  styles.patternOverlay.enabled = true;
+  assert.equal(hasEnabledLayerStyles(styles), true);
+  assert.equal(getLayerStylePadding(styles), 38);
+});
+
+test('all ten style families and their additional instances survive native serialization', () => {
+  const styles = createDefaultLayerStyles();
+  styles.stroke.enabled = true;
+  styles.strokes = [{ enabled: true, color: '#ff0000', size: 5, opacity: 0.75 }];
+  styles.outerGlow.enabled = true;
+  styles.outerGlows = [{ enabled: true, color: '#00ff00', size: 14, opacity: 0.6 }];
+  styles.dropShadow.enabled = true;
+  styles.dropShadows = [{ enabled: true, color: '#000000', size: 6, distance: 12, angle: 30, opacity: 0.5 }];
+  styles.bevelEmboss.enabled = true;
+  styles.bevelEmbosses = [{ enabled: true, size: 5, depth: 7, angle: 60, altitude: 35, highlightColor: '#ffffff', shadowColor: '#222222', opacity: 0.7 }];
+  styles.gradientOverlay.enabled = true;
+  styles.gradientOverlays = [{ enabled: true, startColor: '#ff0000', endColor: '#0000ff', angle: 35, opacity: 0.8 }];
+  styles.innerShadow.enabled = true;
+  styles.innerShadows = [{ enabled: true, color: '#111111', size: 9, distance: 5, angle: 15, opacity: 0.4 }];
+  styles.innerGlow.enabled = true;
+  styles.innerGlows = [{ enabled: true, color: '#ffeeaa', size: 10, choke: 20, opacity: 0.65 }];
+  styles.satin.enabled = true;
+  styles.satins = [{ enabled: true, color: '#333333', size: 9, distance: 16, angle: 40, opacity: 0.45, invert: true }];
+  styles.colorOverlay.enabled = true;
+  styles.colorOverlays = [{ enabled: true, color: '#ff0088', opacity: 0.75, blendMode: 'screen' }];
+  styles.patternOverlay.enabled = true;
+  styles.patternOverlays = [{ enabled: true, pattern: 'crosshatch', color: '#ffffff', backgroundColor: '#101010', scale: 125, angle: 15, opacity: 0.7, blendMode: 'overlay' }];
+
+  const packed = packNvtsPhoto(makeDocument(styles), () => null);
+  const restored = unpackNvtsPhoto(packed).doc.layers[0].layerStyles;
+  assert.deepEqual(restored, normalizeLayerStyles(styles));
+  assert.equal(restored.patternOverlays[0].pattern, 'crosshatch');
+  assert.equal(restored.satins[0].invert, true);
+});

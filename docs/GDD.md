@@ -33,7 +33,7 @@ The new-project selector currently offers 36 presets for social media content, s
 
 - Brush and eraser, with size and opacity; brush options also include hardness, spacing, and smoothing.
 - Eyedropper, including an option to sample the merged visible result.
-- Line, rectangle, and ellipse drawing on pixel layers.
+- Line, rectangle, and ellipse drawing on pixel layers. Raster and vector drawing tools automatically select an editable compatible layer when the selected layer is incompatible, or create a new visible layer above the current selection so the result is not hidden behind foreground content.
 - Clone Stamp for copying pixels from an Alt-clicked source point into a paint layer.
 - Comic frame/panel tool that creates a full-page frame or draggable rectangular panels on vector layers.
 - Bucket fill with tolerance, contiguous/non-contiguous behavior, opacity, and optional merged sampling. Large-image safety limits are enforced by the current implementation.
@@ -100,21 +100,21 @@ Acceptance expectations: opacity spans 0–100%; controls reflect the selected l
 
 ### Non-destructive Layer Styles
 
-The Version 1.0 Layer Styles MVP comprises Stroke, Outer Glow, Drop Shadow, and Bevel/Emboss. Color Overlay and Gradient Overlay are outside this scope unless added through a separate product-scope decision.
+The Layer Styles scope includes Stroke, Drop Shadow, Inner Shadow, Outer Glow, Inner Glow, Bevel/Emboss, Satin, Color Overlay, Gradient Overlay, and Pattern Overlay. Each effect family supports enabled state and its implemented parameters; every family can contain multiple independent instances where supported by the shared model and renderer. Pattern Overlay provides built-in diagonal, grid, dots, checkerboard, and crosshatch motifs. The implementation is an approximation, not exact feature parity with Photoshop.
 
 Acceptance expectations:
 
-- Applying layer styles creates or updates a persistent `Máscara de estilos` on the layer; the mask can be enabled or disabled and reopened for editing.
-- Each included effect can be enabled or disabled and exposes its supported parameters.
+- Applying layer styles creates or updates a persistent `Style Mask` on the layer; the mask can be enabled or disabled and reopened for editing.
+- Each included effect can be enabled or disabled and exposes its supported parameters. Additional instances retain their own independent settings and serialize with the document.
 - Effect previews/compositing do not overwrite the layer's source pixel buffer.
 - Effects apply to the supported layer alpha without changing unrelated layer data.
 - Applying style edits is one coherent document mutation and follows the editor's undo/redo behavior.
 - The renderer accounts for effect expansion around tile edges.
 - Layer types that cannot meaningfully render an effect have a defined, safe behavior.
 
-Filters stored in a `Máscara de filtro` can be selected for editing in the shared Filters window. Applying changes updates the selected filter entry in the mask, keeps the operation non-destructive, and preserves other filters in the same mask.
+All masks on the selected layer are listed in the single right-side `Layer Masks` panel. Each mask has an expandable entry with its own controls; filter-stack entries are edited inline in this same panel. Mask changes are staged for preview, can be committed with Apply as one undoable operation, or discarded with Cancel. The canvas preview offers the original view, a 50/50 before-and-after split, and the edited result.
 
-The current Bevel/Emboss implementation is an approximation based on alpha-derived gradients; product documentation must not imply exact parity with Photoshop or other mature graphics applications.
+The current Bevel/Emboss, Satin, Inner Glow, and Pattern Overlay implementations are approximations; product documentation must not imply exact parity with Photoshop or other mature graphics applications.
 
 ### Native project persistence and compatibility
 
@@ -162,7 +162,7 @@ Cloud synchronization, real Google Drive/Dropbox integrations, collaboration, AI
 - Comic Manager is a project/page organizer, not a multipage document engine. It does not currently create PDF/CBZ packages or final print/digital exports.
 - Plugins are not isolated in a security sandbox and the API is not yet stable.
 - There is no cloud sync, collaboration, AI gateway, paid-plan/credits system, RAW workflow, PSD support, or color-managed 16/32-bit pipeline in this prototype.
-- The Layer Effects panel exposes opacity/blend mode plus editable Stroke, Outer Glow, Drop Shadow, and Bevel/Emboss controls. Rendering and `.nvtsphoto` metadata support are implemented but still require full browser/CI verification; Color Overlay and Gradient Overlay are not included in this slice.
+- The Layer Effects panel exposes ten style families: Stroke, Outer Glow, Drop Shadow, Inner Shadow, Inner Glow, Bevel/Emboss, Satin, Color Overlay, Gradient Overlay, and Pattern Overlay. Each family can be enabled, edited, and extended with additional independently configured instances. Styles are stored in the `Style Mask`; the renderer is an approximation rather than exact Photoshop parity and still requires full browser/CI verification.
 
 ## Suggested roadmap
 
@@ -220,3 +220,43 @@ Implementation note: these architecture changes are integrated incrementally; co
 ## Development tracking
 
 Jira owns the Version 1.0 implementation backlog, subtasks, priorities, assignment, status, and completion evidence. This GDD owns product intent, scope boundaries, user-visible behavior, and acceptance expectations. When scope changes, update this document; when implementation work or its status changes, update Jira. Do not maintain a second ticket list in this file.
+
+
+## Startup readiness and first document
+
+- Creating a new project installs its initial document before editor controls and panels perform their first document-dependent synchronization.
+- A successful startup must show the initial canvas and allow the user to immediately draw, create shapes, add text, and edit layers.
+
+
+## Layer movement and mask comparison behavior
+
+- The Move tool repositions raster pixels, text coordinates, and vector geometry directly without adding, removing, or modifying transform masks. Non-destructive transform masks are created only by the explicit Transform command.
+- Before, split before/after, and after comparison controls are visible only while the Layer Masks panel is open. The before snapshot and split rendering preserve their full-canvas and half-canvas meanings.
+- Canvas letterboxing remains transparent in WebGPU and WebGL2 so the workspace background is visible around the document.
+
+### Selection, brushes, and tool shortcuts
+
+The editor shall provide rectangle, ellipse, lasso, and contiguous magic-wand selections. Raster selection masks constrain painting, erasing, gradients, fills, and rasterized shapes. Selection can be cleared explicitly or with Escape. Brush presets are grouped into Sketch, Inking, Decoration, Texture, and Painting. Layer and mask deletion behavior is independently configurable. Layer and mask rows support drag-and-drop ordering, and every available toolbar tool must expose a keyboard shortcut.
+
+
+## Additional illustration workflow implemented
+
+- **Delete behavior:** users can independently configure Delete for a selected layer and selected mask to either remove the object or clear its content. Delete is ignored while a text-entry control has focus.
+- **Layer organization:** layer and mask entries can be reordered by dragging them in the Layers panel. Supported drop positions are before, after, and inside a layer/group.
+- **Move versus transform:** the Move tool changes the layer's existing content (raster pixels, vector geometry, or text position) and must not create a transform mask. A transform mask is created only by the explicit non-destructive transform command.
+- **Brush library:** presets are organized into Sketch, Inking, Decoration, Texture, and Painting. The catalog includes graphite, colored layout pencils, G/Maru/Saji-style pens, comic ink, stamps, paper/stone texture, watercolor, gouache, acrylic, and blending presets.
+- **Selection and correction:** rectangular, elliptical, lasso, polygonal, selection-brush and selection-erase workflows; vector-line simplification; fill gap closure; contour gradient; and smudge/blur/mixer/wet modes.
+- **Tool access:** each registered tool has a keyboard shortcut and its button tooltip displays the key combination.
+
+The visual ruler overlay supports linear, curved, two-point perspective, fisheye, parallel, radial, and concentric guides. Interactive ruler anchors, editable ruler objects, stroke snapping, painted grayscale mask coverage, and advanced selection refinements remain future work; the current ruler guides are references only and are not represented as snapping controls.
+
+
+### Vector eraser and ruler references
+
+- On line, polyline, and freehand vector paths, the vector eraser removes the segment between the nearest intersections with other supported line paths. An isolated path is removed in full. Other vector figures fall back to whole-object deletion.
+- Visual rulers are available as non-exported overlays: linear, curved, perspective, fisheye, parallel, radial, and concentric. They do not constrain or snap brush strokes yet.
+- Each of the 72 brush presets belongs to Sketch, Inking, Decoration, Texture, or Painting. Presets reuse the shared stroke engine and vary tip, texture, opacity, size, spacing, and smoothing data.
+
+## Shared Application Object Model
+
+NVTS applications may reuse the framework-independent `@nvts/app-object` model from NVTS-Shared-Core. The model provides a minimal lifecycle and metadata base plus specialized application, tool, panel, document, layer, plugin, and command abstractions. Applications must not force every class to inherit from `AppObject`; data records, pure functions, services, adapters, and framework components remain independent when inheritance does not add value.

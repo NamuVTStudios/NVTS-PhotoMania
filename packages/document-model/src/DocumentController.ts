@@ -175,8 +175,18 @@ export class DocumentController {
     return node;
   }
 
-  addFileLayer(name: string, pixels: Uint8Array, sourceName: string, sourceLinkId?: string, sourceLastModified?: number, sourceFileSize?: number): LayerNode {
-    const node = this.add('file', name, undefined, -1, { sourceName, sourceLinkId, sourceLastModified, sourceFileSize });
+  /** Inserts a new layer directly above the selected layer in the layer-panel order. */
+  addLayerAbove(type: LayerType, name: string | undefined, referenceLayerId?: string, extras: Partial<LayerNode> = {}): LayerNode {
+    const position = this.getLayerInsertionPointAbove(referenceLayerId);
+    return this.addLayer(type, name, position.parentId, position.index, extras);
+  }
+
+  addFileLayer(
+    name: string, pixels: Uint8Array, sourceName: string, sourceLinkId?: string,
+    sourceLastModified?: number, sourceFileSize?: number, referenceLayerId?: string,
+  ): LayerNode {
+    const position = this.getLayerInsertionPointAbove(referenceLayerId);
+    const node = this.add('file', name, position.parentId, position.index, { sourceName, sourceLinkId, sourceLastModified, sourceFileSize });
     const surface = this.layerPixels(node);
     if (!surface || !surface.loadFromRGBA(pixels)) {
       this.removeRaw(node.id);
@@ -194,6 +204,43 @@ export class DocumentController {
       this.recordStructure(`Crear grupo «${name}»`, () => this.removeRaw(node.id), () => this.restoreRaw(snapshot), snapshot.memoryBytes);
     }
     return node;
+  }
+
+  /** Agrupa la capa seleccionada dentro de un grupo nuevo como una única acción de historial. */
+  groupLayer(id: string, name = 'Grupo'): LayerNode | null {
+    const node = this.nodes.get(id);
+    if (!node || node.type === 'group') return null;
+    const parentId = this.parentOf(node)?.id ?? undefined;
+    const originalIndex = this.siblingsOf(node).indexOf(node);
+    if (originalIndex < 0) return null;
+    const previousReplayState = this.replaying;
+    let group: LayerNode | null = null;
+    let moved = false;
+    this.replaying = true;
+    try {
+      group = this.add('group', name, parentId, originalIndex);
+      moved = this.moveToParentRaw(id, group.id, 0);
+    } finally {
+      this.replaying = previousReplayState;
+    }
+    if (!group) return null;
+    if (!moved) {
+      this.removeRaw(group.id);
+      return null;
+    }
+    const snapshot = this.snapshot(group);
+    if (!this.replaying) {
+      this.recordStructure(
+        `Agrupar «${node.name}»`,
+        () => {
+          this.moveToParentRaw(id, parentId, originalIndex);
+          this.removeRaw(group!.id);
+        },
+        () => this.restoreGroupedLayer(snapshot, id),
+        snapshot.memoryBytes,
+      );
+    }
+    return group;
   }
 
   /** Sustituye la imagen incrustada de una capa de archivo como una sola acción de historial. */
@@ -405,6 +452,23 @@ export class DocumentController {
   }
 
 
+  /** Mueve una capa respecto de otra sin que la UI tenga que conocer el árbol interno. */
+  moveLayerRelative(sourceId: string, targetId: string, position: 'before' | 'after' | 'inside'): boolean {
+    const source = this.nodes.get(sourceId);
+    const target = this.nodes.get(targetId);
+    if (!source || !target || sourceId === targetId) return false;
+    if (position === 'inside') {
+      if (target.type !== 'group') return false;
+      return this.moveLayerToParent(sourceId, target.id, target.children.length);
+    }
+    const parent = this.parentOf(target);
+    const siblings = parent ? parent.children : this.doc.layers;
+    const targetIndex = siblings.indexOf(target);
+    if (targetIndex < 0) return false;
+    const destinationIndex = position === 'before' ? targetIndex + 1 : targetIndex;
+    return this.moveLayerToParent(sourceId, parent?.id ?? null, destinationIndex);
+  }
+
   private getMoveLayerLabel(node: LayerNode, parent: LayerNode | null | undefined): string {
     if (!parent) return `Mover «${node.name}» a la raíz`;
     return `Mover «${node.name}» al grupo «${parent.name}»`;
@@ -515,6 +579,47 @@ export class DocumentController {
     return true;
   }
 
+  replaceLayerMasks(id: string, masks: readonly LayerMask[], label = 'Aplicar cambios de máscaras de capa'): boolean {
+    const node = this.nodes.get(id);
+    if (!node) return false;
+    const before = cloneLayerMasks(node.masks);
+    const after = cloneLayerMasks(masks);
+    if (JSON.stringify(before) === JSON.stringify(after)) return true;
+    this.applyMasksRaw(id, after);
+    this.recordMaskChange(id, label, before, after);
+    return true;
+  }
+
+  /** Commits mask and property changes as one undoable document transaction. */
+  replaceLayerMasksAndProps(
+    id: string,
+    masks: readonly LayerMask[],
+    patch: LayerPatch,
+    label = 'Aplicar cambios no destructivos de capa',
+  ): boolean {
+    const node = this.nodes.get(id);
+    if (!node) return false;
+    const beforeProps = clonePatch(node);
+    const beforeMasks = cloneLayerMasks(node.masks);
+    const afterProps: LayerPatch = { ...beforeProps, ...patch };
+    const afterMasks = cloneLayerMasks(masks);
+    const hasChanges = JSON.stringify(beforeProps) !== JSON.stringify(afterProps)
+      || JSON.stringify(beforeMasks) !== JSON.stringify(afterMasks);
+    if (!hasChanges) return true;
+    const applyState = (props: LayerPatch, nextMasks: readonly LayerMask[]) => {
+      this.applyPatchRaw(id, props);
+      this.applyMasksRaw(id, [...nextMasks]);
+    };
+    applyState(afterProps, afterMasks);
+    this.recordStructure(
+      label,
+      () => applyState(beforeProps, beforeMasks),
+      () => applyState(afterProps, afterMasks),
+      this.metadataBytes({ beforeProps, afterProps, beforeMasks, afterMasks }) + 128,
+    );
+    return true;
+  }
+
   removeMask(id: string, maskId: string): boolean {
     const node = this.nodes.get(id);
     if (!node?.masks?.some((mask) => mask.id === maskId)) return false;
@@ -522,6 +627,55 @@ export class DocumentController {
     const after = before.filter((mask) => mask.id !== maskId);
     this.applyMasksRaw(id, after);
     this.recordMaskChange(id, 'Eliminar máscara', before, after);
+    return true;
+  }
+
+  /** Restablece los datos de una máscara sin eliminar su identidad ni su estado de activación. */
+  clearMaskContent(id: string, maskId: string): boolean {
+    const node = this.nodes.get(id);
+    const current = node?.masks?.find((mask) => mask.id === maskId);
+    if (!node || !current) return false;
+    const empty = createLayerMask(current.type, current.id);
+    empty.enabled = current.enabled;
+    if (empty.type === 'filter') empty.filters = [];
+    const next = cloneLayerMasks(node.masks).map((mask) => mask.id === maskId ? empty : mask);
+    return this.replaceLayerMasks(id, next, `Borrar contenido de máscara de ${getLayerMaskLabel(current.type)}`);
+  }
+
+  /** Reubica una máscara entre capas y conserva la operación en el historial como un único cambio. */
+  moveMaskRelative(
+    sourceLayerId: string,
+    maskId: string,
+    targetLayerId: string,
+    targetMaskId: string | null,
+    position: 'before' | 'after' | 'inside',
+  ): boolean {
+    const source = this.nodes.get(sourceLayerId);
+    const target = this.nodes.get(targetLayerId);
+    const sourceMask = source?.masks?.find((mask) => mask.id === maskId);
+    if (!source || !target || !sourceMask || !isPixelLayerType(target.type)) return false;
+    const beforeSource = cloneLayerMasks(source.masks);
+    const beforeTarget = sourceLayerId === targetLayerId ? beforeSource : cloneLayerMasks(target.masks);
+    const sourceWithoutMask = beforeSource.filter((mask) => mask.id !== maskId);
+    const targetList = sourceLayerId === targetLayerId ? sourceWithoutMask : beforeTarget;
+    const targetIndex = targetMaskId ? targetList.findIndex((mask) => mask.id === targetMaskId) : targetList.length;
+    if (targetMaskId && targetIndex < 0) return false;
+    const insertAt = position === 'before' ? targetIndex : position === 'after' ? targetIndex + 1 : targetList.length;
+    const afterTarget = [...targetList.slice(0, insertAt), sourceMask, ...targetList.slice(insertAt)];
+    const afterSource = sourceLayerId === targetLayerId ? afterTarget : sourceWithoutMask;
+    if (JSON.stringify(beforeSource) === JSON.stringify(afterSource)
+      && JSON.stringify(beforeTarget) === JSON.stringify(afterTarget)) return true;
+    const apply = (sourceMasks: LayerMask[], targetMasks: LayerMask[]) => {
+      this.applyMasksRaw(sourceLayerId, sourceMasks);
+      if (sourceLayerId !== targetLayerId) this.applyMasksRaw(targetLayerId, targetMasks);
+    };
+    apply(afterSource, afterTarget);
+    this.recordStructure(
+      `Mover máscara de «${source.name}» a «${target.name}»`,
+      () => apply(beforeSource, beforeTarget),
+      () => apply(afterSource, afterTarget),
+      this.metadataBytes([beforeSource, beforeTarget, afterSource, afterTarget]),
+    );
     return true;
   }
 
@@ -576,6 +730,37 @@ export class DocumentController {
     return true;
   }
 
+  /** Vacía el contenido de una capa con una única acción de historial, sin quitar la capa. */
+  clearLayerContent(id: string): boolean {
+    const node = this.nodes.get(id);
+    if (!node || !isPixelLayerType(node.type)) return false;
+    const surface = this.layerPixels(node);
+    if (!surface) return false;
+    const beforePatch = clonePatch(node);
+    const afterPatch: LayerPatch = {
+      ...(node.type === 'vector' ? { vectorShapes: [] } : {}),
+      ...(node.type === 'text' ? { textContent: '' } : {}),
+    };
+    const beforePixels = this.readPixels(node) ?? new Uint8Array(this.doc.width * this.doc.height * 4);
+    const afterPixels = new Uint8Array(this.doc.width * this.doc.height * 4);
+    if (beforePixels.every((value) => value === 0)
+      && (node.type !== 'vector' || (node.vectorShapes?.length ?? 0) === 0)
+      && (node.type !== 'text' || !node.textContent)) return true;
+    const apply = (patch: LayerPatch, pixels: Uint8Array) => {
+      this.applyPatchRaw(id, patch);
+      this.layerPixels(node)?.loadFromRGBA(pixels);
+      this.comp.invalidateAll();
+    };
+    apply(afterPatch, afterPixels);
+    this.recordStructure(
+      `Borrar contenido de «${node.name}»`,
+      () => apply(beforePatch, beforePixels),
+      () => apply(afterPatch, afterPixels),
+      beforePixels.byteLength + afterPixels.byteLength + this.metadataBytes([beforePatch, afterPatch]),
+    );
+    return true;
+  }
+
   get canUndo(): boolean { this.syncPixelHistory(); return this.undoStack.length > 0; }
   get canRedo(): boolean { this.syncPixelHistory(); return this.redoStack.length > 0; }
   get undoLabel(): string {
@@ -600,9 +785,8 @@ export class DocumentController {
     if (this.replaying) return;
     this.redoStack = [];
     this.undoStack.push({ kind: 'pixels', label });
-    this.publishChange('pixels', label);
-    this.syncPixelHistory();
     this.trimStructureHistory();
+    this.publishChange('pixels', label);
   }
 
   undo(): 'pixels' | 'structure' | null {
@@ -691,9 +875,8 @@ export class DocumentController {
     this.redoStack = [];
     const command = new CallbackDocumentCommand(label, undo, redo, Math.max(0, memoryBytes));
     this.undoStack.push({ kind: 'structure', command });
-    this.publishChange(changeKind, label);
     this.trimStructureHistory();
-    this.syncPixelHistory();
+    this.publishChange(changeKind, label);
   }
 
   private metadataBytes(value: unknown): number {
@@ -852,6 +1035,18 @@ export class DocumentController {
     const parent = snapshot.parentId ? this.nodes.get(snapshot.parentId) ?? null : null;
     this.insertRestoredNode(snapshot.node, parent, snapshot.index, snapshot.pixels);
   }
+  private restoreGroupedLayer(snapshot: LayerSnapshot, layerId: string): void {
+    const emptySnapshot: LayerSnapshot = {
+      ...snapshot,
+      node: { ...snapshot.node, children: [] },
+      pixels: new Map(),
+    };
+    this.restoreRaw(emptySnapshot);
+    const group = this.nodes.get(snapshot.node.id);
+    if (!group) return;
+    if (this.moveToParentRaw(layerId, group.id, 0)) return;
+    this.removeRaw(group.id);
+  }
   private insertRestoredNode(src: LayerNode, parent: LayerNode | null, index: number, pixels: Map<string, Uint8Array>): LayerNode {
     // HistoryManager references deleted engineIds, so reuse them when they are available.
     const engineId = this.resolveRestoredEngineId(src.engineId);
@@ -934,4 +1129,13 @@ export class DocumentController {
     return find(this.doc.layers, null) ?? null;
   }
   private siblingsOf(n: LayerNode): LayerNode[] { return this.parentOf(n)?.children ?? this.doc.layers; }
+
+  private getLayerInsertionPointAbove(referenceLayerId?: string): { parentId?: string; index: number } {
+    const reference = referenceLayerId ? this.nodes.get(referenceLayerId) : undefined;
+    if (!reference) return { parentId: undefined, index: -1 };
+    const siblings = this.siblingsOf(reference);
+    const referenceIndex = siblings.indexOf(reference);
+    if (referenceIndex < 0) return { parentId: undefined, index: -1 };
+    return { parentId: this.parentOf(reference)?.id, index: referenceIndex + 1 };
+  }
 }

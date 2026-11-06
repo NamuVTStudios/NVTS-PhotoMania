@@ -23,7 +23,7 @@ export abstract class AppVectorFeatures extends AppLayerPanelFeatures {
       return ({
         rectangle: 'Rectángulo', 'rounded-rectangle': 'Rectángulo redondeado', ellipse: 'Elipse', line: 'Línea',
         polygon: 'Polígono', polyline: 'Polilínea', bezier: 'Curva Bézier', freehand: 'Trazo libre',
-        star: 'Estrella', spiral: 'Espiral', text: 'Texto artístico',
+        star: 'Estrella', spiral: 'Espiral', text: 'Texto artístico', 'speech-bubble': 'Bocadillo', flash: 'Flash',
       } as const)[kind];
     }
 
@@ -62,12 +62,50 @@ export abstract class AppVectorFeatures extends AppLayerPanelFeatures {
     return shape;
   }
 
+  protected createVectorShapesFromGesture(
+    tool: VectorDrawingToolId,
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+    points: Array<{ x: number; y: number }>,
+    id: string,
+  ): VectorShape[] {
+    if (tool === 'vector-parallel-lines') return this.createParallelLineShapes(start, end, id);
+    if (tool === 'vector-radial-lines') return this.createRadialLineShapes(start, end, id);
+    return [this.createVectorShapeFromGesture(tool, start, end, points, id)];
+  }
+
+  private createParallelLineShapes(start: { x: number; y: number }, end: { x: number; y: number }, id: string): VectorShape[] {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const length = Math.max(1, Math.hypot(dx, dy));
+    const normal = { x: -dy / length, y: dx / length };
+    const count = 7;
+    const spacing = Math.max(4, Math.min(24, length * 0.04));
+    return Array.from({ length: count }, (_, index) => {
+      const offset = (index - (count - 1) / 2) * spacing;
+      const lineStart = { x: start.x + normal.x * offset, y: start.y + normal.y * offset };
+      const lineEnd = { x: end.x + normal.x * offset, y: end.y + normal.y * offset };
+      return this.createVectorShapeFromGesture('vector-line', lineStart, lineEnd, [], index === 0 ? id : crypto.randomUUID());
+    });
+  }
+
+  private createRadialLineShapes(center: { x: number; y: number }, edge: { x: number; y: number }, id: string): VectorShape[] {
+    const radius = Math.max(1, Math.hypot(edge.x - center.x, edge.y - center.y));
+    const count = 16;
+    return Array.from({ length: count }, (_, index) => {
+      const angle = (Math.PI * 2 * index) / count;
+      const endpoint = { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius };
+      return this.createVectorShapeFromGesture('vector-line', center, endpoint, [], index === 0 ? id : crypto.randomUUID());
+    });
+  }
+
   private getVectorDrawingKind(tool: VectorDrawingToolId): VectorShape['kind'] {
     const kinds: Record<VectorDrawingToolId, VectorShape['kind']> = {
       'vector-rectangle': 'rectangle', 'vector-rounded-rectangle': 'rounded-rectangle',
       'vector-ellipse': 'ellipse', 'vector-line': 'line', 'vector-pen': 'bezier',
       'vector-polygon': 'polygon', 'vector-star': 'star', 'vector-freehand': 'freehand',
       'vector-polyline': 'polyline', 'vector-spiral': 'spiral',
+      'vector-parallel-lines': 'line', 'vector-radial-lines': 'line', 'speech-bubble': 'speech-bubble', flash: 'flash',
     };
     return kinds[tool];
   }

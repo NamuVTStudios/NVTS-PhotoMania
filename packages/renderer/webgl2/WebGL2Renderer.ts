@@ -34,6 +34,16 @@ function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLSh
   return sh;
 }
 
+function flipRows(source: Uint8Array, width: number, height: number): Uint8Array {
+  const rowBytes = width * 4;
+  const output = new Uint8Array(source.length);
+  for (let row = 0; row < height; row++) {
+    const sourceStart = (height - row - 1) * rowBytes;
+    output.set(source.subarray(sourceStart, sourceStart + rowBytes), row * rowBytes);
+  }
+  return output;
+}
+
 export class WebGL2Renderer implements RendererBackend {
   readonly kind = 'webgl2' as const;
   private tex: WebGLTexture | null = null;
@@ -50,7 +60,7 @@ export class WebGL2Renderer implements RendererBackend {
   ) {}
 
   static create(canvas: HTMLCanvasElement): WebGL2Renderer {
-    const gl = canvas.getContext('webgl2', { premultipliedAlpha: true, antialias: false });
+    const gl = canvas.getContext('webgl2', { premultipliedAlpha: true, antialias: false, preserveDrawingBuffer: true });
     if (!gl) throw new Error('WebGL2 no disponible');
 
     const prog = gl.createProgram()!;
@@ -91,6 +101,27 @@ export class WebGL2Renderer implements RendererBackend {
 
   setOpacity(value: number): void { this.opacity = Math.min(1, Math.max(0, value)); }
 
+  async capturePixels(): Promise<{ width: number; height: number; pixels: Uint8Array }> {
+    if (!this.tex || this.texW <= 0 || this.texH <= 0) throw new Error('La textura WebGL2 todavía no está disponible.');
+    const gl = this.gl;
+    const framebuffer = gl.createFramebuffer();
+    if (!framebuffer) throw new Error('No se pudo crear el framebuffer de captura.');
+    const previous = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.tex, 0);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+      restoreCaptureFramebuffer(gl, previous, framebuffer);
+      throw new Error('La textura WebGL2 no está lista para lectura.');
+    }
+    try {
+      const raw = new Uint8Array(this.texW * this.texH * 4);
+      gl.readPixels(0, 0, this.texW, this.texH, gl.RGBA, gl.UNSIGNED_BYTE, raw);
+      return { width: this.texW, height: this.texH, pixels: flipRows(raw, this.texW, this.texH) };
+    } finally {
+      restoreCaptureFramebuffer(gl, previous, framebuffer);
+    }
+  }
+
   render(): void {
     if (!this.tex) return;
     const size = this.resizeCanvasToDisplaySize();
@@ -122,7 +153,7 @@ export class WebGL2Renderer implements RendererBackend {
   }
 
   private configureCanvasBlending(): void {
-    this.gl.clearColor(0.12, 0.12, 0.12, 1);
+    this.gl.clearColor(0, 0, 0, 0);
     this.gl.clear(this.gl.COLOR_BUFFER_BIT);
     this.gl.enable(this.gl.BLEND);
     this.gl.blendFunc(this.gl.ONE, this.gl.ONE_MINUS_SRC_ALPHA);
@@ -143,4 +174,13 @@ export class WebGL2Renderer implements RendererBackend {
     this.gl.deleteProgram(this.prog);
     this.gl.getExtension('WEBGL_lose_context')?.loseContext();
   }
+}
+
+function restoreCaptureFramebuffer(
+  gl: WebGL2RenderingContext,
+  previous: WebGLFramebuffer | null,
+  framebuffer: WebGLFramebuffer,
+): void {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, previous);
+  gl.deleteFramebuffer(framebuffer);
 }

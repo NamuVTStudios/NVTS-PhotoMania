@@ -26,13 +26,22 @@ test('el catálogo registra todas las herramientas y sus clases base correspondi
   const tools = catalog.createToolCatalog();
   const [base, raster, vectors] = toolClasses;
   assert.deepEqual([...tools.keys()].sort(), [
-    'brush', 'clone-stamp', 'comic-panel', 'ellipse', 'eraser', 'eyedropper',
-    'fill', 'gradient', 'hand', 'line', 'liquify', 'rectangle', 'smudge', 'text',
-    'vector-select', 'vector-rectangle', 'vector-rounded-rectangle', 'vector-ellipse', 'vector-line',
-    'vector-pen', 'vector-polygon', 'vector-star', 'vector-freehand', 'vector-polyline', 'vector-spiral',
-    'pixel-rounded-rectangle', 'pixel-polyline', 'pixel-bezier', 'pixel-polygon', 'pixel-star', 'pixel-spiral',
+    'airbrush', 'brush', 'clone-stamp', 'comic-panel', 'decoration', 'dust-removal', 'ellipse', 'eraser', 'eyedropper',
+    'fill', 'flash', 'gradient', 'hand', 'line', 'liquify', 'magic-wand', 'move', 'pen', 'pencil',
+    'pixel-bezier', 'pixel-polygon', 'pixel-polyline', 'pixel-rounded-rectangle', 'pixel-spiral', 'pixel-star', 'rectangle',
+    'select-ellipse', 'select-lasso', 'select-polygon', 'select-rectangle', 'selection-brush', 'selection-clear', 'selection-erase',
+    'smudge', 'speech-bubble', 'text', 'vector-ellipse', 'vector-eraser', 'vector-freehand', 'vector-line',
+    'vector-line-correction', 'vector-parallel-lines', 'vector-pen', 'vector-polygon', 'vector-polyline', 'vector-radial-lines',
+    'vector-rectangle', 'vector-rounded-rectangle', 'vector-select', 'vector-spiral', 'vector-star',
   ].sort());
   assert.ok(tools.get('clone-stamp') instanceof raster.ToolsRaster);
+  assert.ok(tools.get('brush') instanceof raster.ToolsRaster);
+  assert.ok(tools.get('pen') instanceof raster.ToolsRaster);
+  assert.ok(tools.get('pencil') instanceof raster.ToolsRaster);
+  assert.ok(tools.get('airbrush') instanceof raster.ToolsRaster);
+  assert.ok(tools.get('decoration') instanceof raster.ToolsRaster);
+  assert.ok(tools.get('vector-eraser') instanceof vectors.ToolsVectors);
+  assert.ok(tools.get('vector-line-correction') instanceof vectors.ToolsVectors);
   assert.ok(tools.get('comic-panel') instanceof vectors.ToolsVectors);
   assert.ok(tools.get('vector-rectangle') instanceof vectors.ToolsVectors);
   assert.ok(tools.get('vector-star') instanceof vectors.ToolsVectors);

@@ -1,4 +1,4 @@
-import type { LayerStyleBevelEmboss, LayerStyleDropShadow, LayerStyleOuterGlow, LayerStyles } from '@nvts/shared';
+import type { BlendMode, LayerStyleBevelEmboss, LayerStyleColorOverlay, LayerStyleDropShadow, LayerStyleInnerGlow, LayerStyleOuterGlow, LayerStylePatternOverlay, LayerStyleSatin, LayerStyles } from '@nvts/shared';
 
 interface LayerStyleCanvases {
   source: HTMLCanvasElement;
@@ -12,9 +12,20 @@ interface RgbaColor { red: number; green: number; blue: number }
 const CANVAS_CACHE = new WeakMap<HTMLCanvasElement, LayerStyleCanvases>();
 const STROKE_DIRECTIONS = 16;
 
+const CANVAS_BLEND_MODES: Record<BlendMode, GlobalCompositeOperation> = {
+  normal: 'source-over',
+  multiply: 'multiply',
+  screen: 'screen',
+  overlay: 'overlay',
+};
+
+function toCanvasBlendMode(mode: BlendMode): GlobalCompositeOperation {
+  return CANVAS_BLEND_MODES[mode];
+}
+
 export function hasEnabledLayerStyles(styles?: LayerStyles): boolean {
   if (!styles) return false;
-  return getStrokeInstances(styles).some((stroke) => stroke.enabled) || getOuterGlowInstances(styles).some((effect) => effect.enabled) || getDropShadowInstances(styles).some((effect) => effect.enabled) || getBevelInstances(styles).some((effect) => effect.enabled) || [styles.gradientOverlay, ...(styles.gradientOverlays ?? [])].some((effect) => effect?.enabled) || [styles.innerShadow, ...(styles.innerShadows ?? [])].some((effect) => effect?.enabled);
+  return getStrokeInstances(styles).some((stroke) => stroke.enabled) || getOuterGlowInstances(styles).some((effect) => effect.enabled) || getDropShadowInstances(styles).some((effect) => effect.enabled) || getBevelInstances(styles).some((effect) => effect.enabled) || [styles.gradientOverlay, ...(styles.gradientOverlays ?? [])].some((effect) => effect?.enabled) || [styles.innerShadow, ...(styles.innerShadows ?? [])].some((effect) => effect?.enabled) || [styles.innerGlow, ...(styles.innerGlows ?? [])].some((effect) => effect?.enabled) || [styles.satin, ...(styles.satins ?? [])].some((effect) => effect?.enabled) || [styles.colorOverlay, ...(styles.colorOverlays ?? [])].some((effect) => effect?.enabled) || [styles.patternOverlay, ...(styles.patternOverlays ?? [])].some((effect) => effect?.enabled);
 }
 
 export function getLayerStylePadding(styles?: LayerStyles): number {
@@ -25,6 +36,7 @@ export function getLayerStylePadding(styles?: LayerStyles): number {
     getShadowPadding(styles),
     getBevelPadding(styles),
     ...[styles.innerShadow, ...(styles.innerShadows ?? [])].filter((effect) => effect.enabled).map((effect) => Math.ceil(effect.size * 2 + effect.distance + 2)),
+    ...[styles.innerGlow, ...(styles.innerGlows ?? [])].filter((effect) => effect.enabled).map((effect) => Math.ceil(effect.size * 2 + 2)),
   );
 }
 
@@ -77,6 +89,10 @@ export function applyLayerStyles(canvas: HTMLCanvasElement, styles?: LayerStyles
   drawSourceOver(canvas, source.source);
   getBevelInstances(styles!).forEach((effect) => renderBevel(canvas, source, effect));
   [styles!.gradientOverlay, ...(styles!.gradientOverlays ?? [])].forEach((effect) => renderGradientOverlay(canvas, source, effect));
+  [styles!.colorOverlay, ...(styles!.colorOverlays ?? [])].forEach((effect) => renderColorOverlay(canvas, source, effect));
+  [styles!.patternOverlay, ...(styles!.patternOverlays ?? [])].forEach((effect) => renderPatternOverlay(canvas, source, effect));
+  [styles!.innerGlow, ...(styles!.innerGlows ?? [])].forEach((effect) => renderInnerGlow(canvas, source, effect));
+  [styles!.satin, ...(styles!.satins ?? [])].forEach((effect) => renderSatin(canvas, source, effect));
   [styles!.innerShadow, ...(styles!.innerShadows ?? [])].forEach((effect) => renderInnerShadow(canvas, source, effect));
 }
 
@@ -90,6 +106,205 @@ function renderGradientOverlay(target: HTMLCanvasElement, resources: LayerStyleC
   context.fillStyle = gradient; context.globalAlpha = style.opacity; context.fillRect(0, 0, overlay.width, overlay.height); context.globalAlpha = 1;
   context.globalCompositeOperation = 'destination-in'; context.drawImage(resources.alphaMask, 0, 0); context.globalCompositeOperation = 'source-over';
   contextOf(target).drawImage(overlay, 0, 0);
+}
+
+
+function renderColorOverlay(target: HTMLCanvasElement, resources: LayerStyleCanvases, style: LayerStyleColorOverlay): void {
+  if (!style.enabled || style.opacity <= 0) return;
+  const overlay = resources.effect;
+  const context = contextOf(overlay);
+  clearCanvas(overlay);
+  context.fillStyle = style.color;
+  context.fillRect(0, 0, overlay.width, overlay.height);
+  context.globalCompositeOperation = 'destination-in';
+  context.drawImage(resources.alphaMask, 0, 0);
+  context.globalCompositeOperation = 'source-over';
+  const targetContext = contextOf(target);
+  targetContext.save();
+  targetContext.globalAlpha = style.opacity;
+  targetContext.globalCompositeOperation = toCanvasBlendMode(style.blendMode);
+  targetContext.drawImage(overlay, 0, 0);
+  targetContext.restore();
+}
+
+function renderPatternOverlay(target: HTMLCanvasElement, resources: LayerStyleCanvases, style: LayerStylePatternOverlay): void {
+  if (!style.enabled || style.opacity <= 0) return;
+  const overlay = resources.effect;
+  const context = contextOf(overlay);
+  clearCanvas(overlay);
+  const tile = createPatternTile(style);
+  const pattern = context.createPattern(tile, 'repeat');
+  if (!pattern) return;
+  const span = Math.hypot(overlay.width, overlay.height);
+  context.save();
+  context.translate(overlay.width / 2, overlay.height / 2);
+  context.rotate(style.angle * Math.PI / 180);
+  context.fillStyle = pattern;
+  context.globalAlpha = style.opacity;
+  context.fillRect(-span, -span, span * 2, span * 2);
+  context.restore();
+  context.globalAlpha = 1;
+  context.globalCompositeOperation = 'destination-in';
+  context.drawImage(resources.alphaMask, 0, 0);
+  context.globalCompositeOperation = 'source-over';
+  const targetContext = contextOf(target);
+  targetContext.save();
+  targetContext.globalCompositeOperation = toCanvasBlendMode(style.blendMode);
+  targetContext.drawImage(overlay, 0, 0);
+  targetContext.restore();
+}
+
+function createPatternTile(style: LayerStylePatternOverlay): HTMLCanvasElement {
+  const tile = document.createElement('canvas');
+  const size = Math.max(6, Math.min(96, Math.round(24 * style.scale / 100)));
+  tile.width = size;
+  tile.height = size;
+  const context = contextOf(tile);
+  context.fillStyle = style.backgroundColor;
+  context.fillRect(0, 0, size, size);
+  context.strokeStyle = style.color;
+  context.fillStyle = style.color;
+  context.lineWidth = Math.max(1, size / 12);
+  if (style.pattern === 'dots') {
+    context.beginPath();
+    context.arc(size / 2, size / 2, Math.max(1, size / 10), 0, Math.PI * 2);
+    context.fill();
+  }
+  if (style.pattern === 'checkerboard') {
+    context.fillRect(0, 0, size / 2, size / 2);
+    context.fillRect(size / 2, size / 2, size / 2, size / 2);
+  }
+  if (style.pattern === 'grid') {
+    context.beginPath();
+    context.moveTo(0, 0); context.lineTo(0, size); context.moveTo(size / 2, 0); context.lineTo(size / 2, size);
+    context.moveTo(0, 0); context.lineTo(size, 0); context.moveTo(0, size / 2); context.lineTo(size, size / 2);
+    context.stroke();
+  }
+  if (style.pattern === 'diagonal' || style.pattern === 'crosshatch') {
+    drawDiagonalPattern(context, size, style.pattern);
+  }
+  return tile;
+}
+
+function drawDiagonalPattern(
+  context: CanvasRenderingContext2D,
+  size: number,
+  pattern: LayerStylePatternOverlay['pattern'],
+): void {
+  context.beginPath();
+  context.moveTo(-size / 2, size / 2); context.lineTo(size / 2, -size / 2);
+  context.moveTo(0, size); context.lineTo(size, 0);
+  context.moveTo(size / 2, size * 1.5); context.lineTo(size * 1.5, size / 2);
+  if (pattern === 'crosshatch') drawCrosshatchLines(context, size);
+  context.stroke();
+}
+
+function drawCrosshatchLines(context: CanvasRenderingContext2D, size: number): void {
+  context.moveTo(-size / 2, size / 2); context.lineTo(size / 2, size * 1.5);
+  context.moveTo(0, 0); context.lineTo(size, size);
+  context.moveTo(size / 2, -size / 2); context.lineTo(size * 1.5, size / 2);
+}
+
+function renderInnerGlow(target: HTMLCanvasElement, resources: LayerStyleCanvases, style: LayerStyleInnerGlow): void {
+  if (!style.enabled || style.opacity <= 0 || style.size <= 0) return;
+  const effect = resources.effect;
+  const context = contextOf(effect);
+  clearCanvas(effect);
+  context.filter = `blur(${Math.max(0.5, style.size / 2)}px)`;
+  context.drawImage(resources.alphaMask, 0, 0);
+  context.filter = 'none';
+  const blurred = context.getImageData(0, 0, effect.width, effect.height);
+  const source = contextOf(resources.alphaMask).getImageData(0, 0, effect.width, effect.height);
+  const output = context.createImageData(effect.width, effect.height);
+  const color = parseHexColor(style.color);
+  const threshold = style.choke * 2.55;
+  for (let index = 0; index < source.data.length; index += 4) {
+    writeInnerGlowPixel(output.data, index, source.data[index + 3], blurred.data[index + 3], color, style.opacity, threshold);
+  }
+  context.putImageData(output, 0, 0);
+  contextOf(target).drawImage(effect, 0, 0);
+}
+
+function writeInnerGlowPixel(
+  output: Uint8ClampedArray,
+  index: number,
+  sourceAlpha: number,
+  blurredAlpha: number,
+  color: RgbaColor,
+  opacity: number,
+  threshold: number,
+): void {
+  if (sourceAlpha === 0) return;
+  const edge = Math.max(0, sourceAlpha - blurredAlpha - threshold);
+  const alpha = Math.round(edge * opacity);
+  if (alpha === 0) return;
+  output[index] = color.red;
+  output[index + 1] = color.green;
+  output[index + 2] = color.blue;
+  output[index + 3] = alpha;
+}
+
+function renderSatin(target: HTMLCanvasElement, resources: LayerStyleCanvases, style: LayerStyleSatin): void {
+  if (!style.enabled || style.opacity <= 0) return;
+  const width = resources.alphaMask.width;
+  const height = resources.alphaMask.height;
+  const alpha = contextOf(resources.alphaMask).getImageData(0, 0, width, height).data;
+  const effect = resources.effect;
+  const context = contextOf(effect);
+  const output = context.createImageData(width, height);
+  const color = parseHexColor(style.color);
+  const radians = style.angle * Math.PI / 180;
+  const offsetX = Math.round(Math.cos(radians) * style.distance);
+  const offsetY = Math.round(Math.sin(radians) * style.distance);
+  const radius = Math.max(1, Math.round(style.size / 2));
+  const pixelContext = { alpha, width, height, offsetX, offsetY, radius, color, invert: style.invert, opacity: style.opacity, output: output.data };
+  for (let y = 0; y < height; y++) renderSatinRow(y, pixelContext);
+  clearCanvas(effect);
+  context.putImageData(output, 0, 0);
+  contextOf(target).drawImage(effect, 0, 0);
+}
+
+type SatinPixelContext = {
+  alpha: Uint8ClampedArray;
+  width: number;
+  height: number;
+  offsetX: number;
+  offsetY: number;
+  radius: number;
+  color: RgbaColor;
+  invert: boolean;
+  opacity: number;
+  output: Uint8ClampedArray;
+};
+
+function renderSatinRow(y: number, pixelContext: SatinPixelContext): void {
+  for (let x = 0; x < pixelContext.width; x++) writeSatinPixel(x, y, pixelContext);
+}
+
+function writeSatinPixel(x: number, y: number, pixelContext: SatinPixelContext): void {
+  const index = (y * pixelContext.width + x) * 4;
+  const ownAlpha = pixelContext.alpha[index + 3];
+  if (ownAlpha === 0) return;
+  const left = readMaskAlpha(pixelContext.alpha, pixelContext.width, pixelContext.height, x - pixelContext.offsetX - pixelContext.radius, y - pixelContext.offsetY - pixelContext.radius);
+  const right = readMaskAlpha(pixelContext.alpha, pixelContext.width, pixelContext.height, x + pixelContext.offsetX + pixelContext.radius, y + pixelContext.offsetY + pixelContext.radius);
+  const intensity = getSatinIntensity(left, right, pixelContext.invert);
+  const edgeStrength = Math.min(1, intensity * 1.8);
+  const outputAlpha = Math.round(ownAlpha * edgeStrength * pixelContext.opacity);
+  if (outputAlpha === 0) return;
+  pixelContext.output[index] = pixelContext.color.red;
+  pixelContext.output[index + 1] = pixelContext.color.green;
+  pixelContext.output[index + 2] = pixelContext.color.blue;
+  pixelContext.output[index + 3] = outputAlpha;
+}
+
+function getSatinIntensity(left: number, right: number, invert: boolean): number {
+  const intensity = Math.abs(left - right) / 255;
+  return invert ? 1 - intensity : intensity;
+}
+
+function readMaskAlpha(alpha: Uint8ClampedArray, width: number, height: number, x: number, y: number): number {
+  if (x < 0 || y < 0 || x >= width || y >= height) return 0;
+  return alpha[(y * width + x) * 4 + 3];
 }
 
 function renderInnerShadow(target: HTMLCanvasElement, resources: LayerStyleCanvases, style: LayerStyles['innerShadow']): void {

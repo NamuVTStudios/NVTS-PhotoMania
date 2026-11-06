@@ -15,6 +15,7 @@ const POINT_BOUNDS_KINDS = new Set<VectorShape['kind']>(['line', 'polygon', 'pol
 /** Returns a normalized frame for the rendered path, not a stale x/y/width/height cache. */
 export function getVectorShapeBounds(shape: VectorShape): VectorBounds {
   if (shape.kind === 'bezier' && shape.points?.length) return boundsFromBezier(shape.points, shape);
+  if (shape.kind === 'speech-bubble') return { x: shape.x, y: shape.y, width: shape.width, height: shape.height + Math.max(8, shape.height * 0.2) };
   if (POINT_BOUNDS_KINDS.has(shape.kind) && shape.points?.length) {
     return boundsFromPoints(shape.points.map(({ x, y }) => ({ x, y })), shape);
   }

@@ -56,6 +56,32 @@ function spiralPath(shape: VectorShape, centerX: number, centerY: number): strin
   }).join(' ');
 }
 
+function flashPoints(shape: VectorShape, centerX: number, centerY: number): string {
+  const spikes = Math.max(8, Math.min(40, Math.round(shape.starPoints ?? 12)));
+  const outer = Math.min(Math.abs(shape.width), Math.abs(shape.height)) / 2;
+  const inner = outer * 0.48;
+  return Array.from({ length: spikes * 2 }, (_, index) => {
+    const radius = index % 2 === 0 ? outer : inner;
+    const angle = Math.PI * index / spikes - Math.PI / 2;
+    return `${centerX + Math.cos(angle) * radius},${centerY + Math.sin(angle) * radius}`;
+  }).join(' ');
+}
+
+function renderSpeechBubble(shape: VectorShape, context: SvgContext): string {
+  const { x, y, width, height } = shape;
+  const radius = Math.min(Math.max(8, shape.cornerRadius ?? 18), Math.abs(width) / 4, Math.abs(height) / 4);
+  const tailX = x + width * 0.32;
+  const tailY = y + height + Math.max(8, height * 0.2);
+  const path = [
+    `M ${x + radius} ${y}`, `H ${x + width - radius}`, `Q ${x + width} ${y} ${x + width} ${y + radius}`,
+    `V ${y + height - radius}`, `Q ${x + width} ${y + height} ${x + width - radius} ${y + height}`,
+    `H ${tailX + width * 0.05}`, `L ${tailX - width * 0.04} ${tailY}`, `L ${tailX - width * 0.02} ${y + height}`,
+    `H ${x + radius}`, `Q ${x} ${y + height} ${x} ${y + height - radius}`, `V ${y + radius}`,
+    `Q ${x} ${y} ${x + radius} ${y}`, 'Z',
+  ].join(' ');
+  return `<path d="${path}" ${context.style}${context.transform}/>`;
+}
+
 function pathData(shape: VectorShape): string {
   const points = shape.points ?? [{ x: shape.x, y: shape.y }, { x: shape.x + shape.width, y: shape.y + shape.height }];
   let path = `M ${points[0].x} ${points[0].y}`;
@@ -117,6 +143,8 @@ const SHAPE_RENDERERS: Record<VectorShape['kind'], ShapeRenderer> = {
   star: (shape, { centerX, centerY, style, transform }) => `<polygon points="${starPoints(shape, centerX, centerY)}" ${style}${transform}/>`,
   spiral: (shape, { centerX, centerY, transform }) => `<path d="${spiralPath(shape, centerX, centerY)}" ${getShapeStyle(shape, true)}${transform}/>`,
   text: (shape, { style, transform }) => renderText(shape, style, transform),
+  'speech-bubble': renderSpeechBubble,
+  flash: (shape, { centerX, centerY, style, transform }) => `<polygon points="${flashPoints(shape, centerX, centerY)}" ${style}${transform}/>` ,
 };
 
 /** Serializes one native vector shape as SVG while dispatching by its shape strategy. */

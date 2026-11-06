@@ -9,10 +9,12 @@ export interface AdvancedBrushSettings {
   contiguous: boolean;
   sampleMerged: boolean;
   sampleRadius: 1 | 3 | 5;
+  gapClosure: 0 | 1 | 2;
   shapeFill: boolean;
   lineCap: CanvasLineCap;
   lineJoin: CanvasLineJoin;
-  gradientType: 'linear' | 'radial';
+  gradientType: 'linear' | 'radial' | 'contour';
+  smudgeMode: 'smudge' | 'blur' | 'mixer' | 'wet';
   gradientReverse: boolean;
   panSensitivity: number;
   zoomIncrement: number;
