@@ -1,0 +1,20 @@
+{
+    "name": "@nvts/photomania-android",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "build:web": "pnpm --dir ../.. build",
+        "add:android": "cap add android",
+        "sync": "cap sync android",
+        "open": "cap open android",
+        "build:android": "pnpm run sync && cap build android",
+        "build": "pnpm run build:android"
+    },
+    "dependencies": {
+        "@capacitor/android": "^7.0.0",
+        "@capacitor/core": "^7.0.0"
+    },
+    "devDependencies": {
+        "@capacitor/cli": "^7.0.0"
+    }
+}

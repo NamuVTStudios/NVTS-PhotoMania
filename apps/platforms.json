@@ -1,0 +1,26 @@
+{
+    "schemaVersion": 1,
+    "program": "NVTS-PhotoMania",
+    "platforms": {
+        "web": {
+            "path": "web",
+            "kind": "browser-app",
+            "build": "pnpm --dir apps/web build"
+        },
+        "windows": {
+            "path": "windows",
+            "kind": "tauri-desktop-app",
+            "build": "pnpm --dir apps/windows build"
+        },
+        "linux": {
+            "path": "linux",
+            "kind": "tauri-desktop-app",
+            "build": "pnpm --dir apps/linux build"
+        },
+        "android": {
+            "path": "android",
+            "kind": "capacitor-android-app",
+            "build": "pnpm --dir apps/android build"
+        }
+    }
+}

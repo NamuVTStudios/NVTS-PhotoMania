@@ -190,6 +190,28 @@ test('pixel undo and redo restore the exact RGBA value', () => {
   assert.deepEqual(readPixel(controller, layer, 2, 3), [20, 40, 60, 255]);
 });
 
+test('pixel and structural actions undo and redo in their original chronological order', () => {
+  const controller = createController();
+  const layer = controller.addRaster('Historial combinado');
+  controller.clearHistory();
+
+  recordPixelAction(controller, layer, () => writePixel(controller, layer, 4, 5, [30, 60, 90, 255]), 'Trazo');
+  controller.setProps(layer.id, { opacity: 0.5 });
+
+  assert.equal(controller.undo(), 'structure');
+  assert.equal(controller.find(layer.id).opacity, 1);
+  assert.deepEqual(readPixel(controller, layer, 4, 5), [30, 60, 90, 255]);
+
+  assert.equal(controller.undo(), 'pixels');
+  assert.deepEqual(readPixel(controller, layer, 4, 5), [0, 0, 0, 0]);
+
+  assert.equal(controller.redo(), 'pixels');
+  assert.deepEqual(readPixel(controller, layer, 4, 5), [30, 60, 90, 255]);
+
+  assert.equal(controller.redo(), 'structure');
+  assert.equal(controller.find(layer.id).opacity, 0.5);
+});
+
 test('new structural edits discard pixel redo from both history stacks', () => {
   const controller = createController();
   const layer = controller.addRaster('Píxeles');

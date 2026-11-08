@@ -29,12 +29,14 @@ test('PixiJS runtime is consumed through the PhotoMania renderer boundary', asyn
   assert.match(source, /application\.init\(options\)/);
 });
 
-test('Duplicate and rename layer commands exist only in the Layer menu', async () => {
+test('Duplicate and rename layer commands remain only in the unchanged Layer menu', async () => {
   const source = await readFile(resolve(projectRoot, 'packages/ui/src/components/ShellTemplates.ts'), 'utf8');
-  const editMenu = source.split('id="edit-menu-dropdown"')[1].split('</div>')[0];
-  assert.doesNotMatch(editMenu, /Duplicar capa|Cambiar nombre de capa|edit-duplicate-layer|edit-rename-layer/);
-  assert.match(source, /data-layer-action="duplicate"/);
-  assert.match(source, /data-layer-action="rename"/);
+  assert.match(source, /renderDeclaredMenu\(MENU_DEFINITIONS\.edit, uiIcon\)/);
+  assert.match(source, /data-layer-action=\"duplicate\"/);
+  assert.match(source, /data-layer-action=\"rename\"/);
+  const definitions = await import(pathToFileURL(resolve(projectRoot, 'packages/ui/src/menus/MenuDefinitions.mjs')));
+  const editItems = definitions.MENU_DEFINITIONS.edit.items.flatMap((item) => item.submenu ?? [item]);
+  assert.doesNotMatch(JSON.stringify(editItems), /Duplicar capa|Cambiar nombre de capa|edit-duplicate-layer|edit-rename-layer/);
   const bindings = await readFile(resolve(projectRoot, 'packages/ui/src/app/AppEventFeatures.ts'), 'utf8');
   assert.doesNotMatch(bindings, /#edit-duplicate-layer|#edit-rename-layer/);
 });

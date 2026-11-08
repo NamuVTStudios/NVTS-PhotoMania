@@ -1,9 +1,11 @@
-import { TEMPLATES } from '@nvts/templates';
+import { TEMPLATES, type Template } from '@nvts/templates';
+import { createTemplateGallery } from '@nvts/shared-ui';
 import { PREFERENCES_PANEL_TEMPLATE, wirePreferences } from '../panels/PreferencesPanel';
 import { PLUGINS_PANEL_TEMPLATE, wirePlugins } from '../panels/PluginsPanel';
 import { RecentProjectsPanel } from '../panels/RecentProjectsPanel';
 import { HOME_TEMPLATE } from '../components/ShellTemplates';
 import { WorkspaceManager } from '../managers/WorkspaceManager';
+import { MenuInteractionController } from '../menus/MenuInteractionController';
 
 type HomeSection = 'new' | 'open' | 'recent';
 type LaunchProject = (name: string, width: number, height: number, file?: File) => Promise<void>;
@@ -18,8 +20,8 @@ export class HomeScreenController {
   private recentProjects!: RecentProjectsPanel;
   private openPreferences: () => void = () => {};
   private homeStatus!: HTMLElement;
-  private templateGallery!: HTMLElement;
-  private categorySelect!: HTMLSelectElement;
+  private templateGalleryHost!: HTMLElement;
+  private templateGallery!: ReturnType<typeof createTemplateGallery>;
   private sectionTitle!: HTMLElement;
 
   constructor(private readonly root: HTMLElement, private readonly launchProject: LaunchProject) {}
@@ -40,8 +42,7 @@ export class HomeScreenController {
 
   private cacheElements(): void {
     this.homeStatus = this.q<HTMLElement>('#home-status');
-    this.templateGallery = this.q<HTMLElement>('#home-template-grid');
-    this.categorySelect = this.q<HTMLSelectElement>('#home-category');
+    this.templateGalleryHost = this.q<HTMLElement>('#home-template-gallery');
     this.sectionTitle = this.q<HTMLElement>('#home-section-title');
   }
 
@@ -107,6 +108,9 @@ export class HomeScreenController {
     const menus = this.getHomeMenus();
     menus.forEach((menu) => this.bindOneHomeMenu(menu, menus));
     document.addEventListener('pointerdown', (event) => this.closeHomeMenusOutsideClick(event, menus));
+    const menuInteractions = new MenuInteractionController(this.root);
+    menuInteractions.mount();
+    menuInteractions.setDocumentAvailable(false);
   }
 
   private getHomeMenus(): HomeMenu[] {
@@ -126,13 +130,80 @@ export class HomeScreenController {
       menu.button.setAttribute('aria-expanded', String(willOpen));
     });
     menu.dropdown.addEventListener('click', (event) => {
-      if ((event.target as HTMLElement).closest('button[role^="menuitem"]')) this.closeHomeMenu(menu);
+      const item = (event.target as HTMLElement).closest<HTMLButtonElement>('button[role^="menuitem"]');
+      if (item && !item.classList.contains('submenu-trigger')) this.closeHomeMenu(menu);
     });
-    menu.dropdown.addEventListener('keydown', (event) => {
-      if (event.key !== 'Escape') return;
+    menu.dropdown.addEventListener('keydown', (event) => this.handleHomeMenuKeyboard(menu, event));
+  }
+
+  private handleHomeMenuKeyboard(menu: HomeMenu, event: KeyboardEvent): void {
+    const target = event.target as HTMLElement;
+    const activeDropdown = target.closest<HTMLElement>('.file-menu-dropdown');
+    if (!activeDropdown || !menu.dropdown.contains(activeDropdown)) return;
+    const trigger = target.closest<HTMLButtonElement>('button[role^="menuitem"]');
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (activeDropdown.classList.contains('submenu-dropdown')) {
+        activeDropdown.hidden = true;
+        const parent = this.root.querySelector<HTMLButtonElement>(`[aria-controls="${activeDropdown.id}"]`);
+        parent?.setAttribute('aria-expanded', 'false');
+        parent?.focus();
+        return;
+      }
       this.closeHomeMenu(menu);
       menu.button.focus();
-    });
+      return;
+    }
+
+    if (event.key === 'ArrowRight' && trigger?.classList.contains('submenu-trigger')) {
+      event.preventDefault();
+      const id = trigger.getAttribute('aria-controls');
+      const submenu = id ? this.root.querySelector<HTMLElement>(`#${CSS.escape(id)}`) : null;
+      if (!submenu) return;
+      submenu.hidden = false;
+      trigger.setAttribute('aria-expanded', 'true');
+      this.focusHomeMenuItem(submenu);
+      return;
+    }
+
+    if (event.key === 'ArrowLeft' && activeDropdown.classList.contains('submenu-dropdown')) {
+      event.preventDefault();
+      activeDropdown.hidden = true;
+      const parent = this.root.querySelector<HTMLButtonElement>(`[aria-controls="${activeDropdown.id}"]`);
+      parent?.setAttribute('aria-expanded', 'false');
+      parent?.focus();
+      return;
+    }
+
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const items = Array.from(activeDropdown.querySelectorAll<HTMLButtonElement>('button[role^="menuitem"]'))
+      .filter((button) => button.closest('.file-menu-dropdown') === activeDropdown && !button.disabled && !this.hasHiddenMenuAncestor(button));
+    if (!items.length) return;
+    event.preventDefault();
+    const index = items.indexOf(trigger as HTMLButtonElement);
+    if (event.key === 'Home') items[0].focus();
+    else if (event.key === 'End') items.at(-1)?.focus();
+    else {
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      const start = index < 0 ? (direction > 0 ? -1 : 0) : index;
+      items[(start + direction + items.length) % items.length].focus();
+    }
+  }
+
+  private focusHomeMenuItem(dropdown: HTMLElement): void {
+    const first = Array.from(dropdown.querySelectorAll<HTMLButtonElement>('button[role^="menuitem"]'))
+      .find((button) => button.closest('.file-menu-dropdown') === dropdown && !button.disabled && !this.hasHiddenMenuAncestor(button));
+    first?.focus();
+  }
+
+  private hasHiddenMenuAncestor(element: HTMLElement): boolean {
+    let current: HTMLElement | null = element;
+    while (current) {
+      if (current.hidden) return true;
+      current = current.parentElement;
+    }
+    return false;
   }
 
   private closeHomeMenusOutsideClick(event: PointerEvent, menus: HomeMenu[]): void {
@@ -190,7 +261,7 @@ export class HomeScreenController {
   }
 
   private setEditorOnlyMenuActionsUnavailable(): void {
-    ['#menu-image', '#menu-layer', '#menu-select', '#menu-filter', '#menu-view', '#menu-help'].forEach((selector) => {
+    ['#menu-layer', '#menu-filter', '#menu-view'].forEach((selector) => {
       this.q<HTMLButtonElement>(selector).onclick = () => {
         this.homeStatus.textContent = 'Esta opción estará disponible después de crear o abrir un documento.';
       };
@@ -198,42 +269,28 @@ export class HomeScreenController {
   }
 
   private bindTemplateGallery(): void {
-    this.categorySelect.onchange = () => this.renderTemplates();
+    this.templateGallery = createTemplateGallery({
+      templates: TEMPLATES,
+      selectedId: this.selectedTemplate.id,
+      label: 'Plantillas de documento',
+      filterLabel: 'Categoría',
+      allCategoriesLabel: 'Todas',
+      onSelect: (template) => this.selectTemplate(template as Template),
+    });
+    this.templateGalleryHost.replaceChildren(this.templateGallery.element);
   }
 
   private renderTemplates(): void {
-    const category = this.categorySelect.value;
-    const templates = TEMPLATES.filter((template) => category === 'Todas' || template.category === category);
-    this.templateGallery.replaceChildren(...templates.map((template) => this.createTemplateCard(template)));
+    this.templateGallery.setTemplates(TEMPLATES);
+    this.templateGallery.selectTemplate(this.selectedTemplate.id, false);
   }
 
-  private createTemplateCard(template: (typeof TEMPLATES)[number]): HTMLButtonElement {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'template-card' + (this.selectedTemplate.id === template.id ? ' selected' : '');
-    button.setAttribute('aria-pressed', String(this.selectedTemplate.id === template.id));
-    const preview = document.createElement('span');
-    preview.className = `template-preview preview-${template.preview}`;
-    preview.innerHTML = '<span class="preview-paper"></span>';
-    const icon = document.createElement('span');
-    icon.className = 'template-icon';
-    icon.textContent = template.icon;
-    const name = document.createElement('strong');
-    name.textContent = template.title;
-    const dimensions = document.createElement('small');
-    dimensions.textContent = `${template.width} × ${template.height} px`;
-    button.append(preview, icon, name, dimensions);
-    button.onclick = () => this.selectTemplate(template);
-    return button;
-  }
-
-  private selectTemplate(template: (typeof TEMPLATES)[number]): void {
+  private selectTemplate(template: Template): void {
     this.selectedTemplate = template;
     this.width = template.width;
     this.height = template.height;
     this.q<HTMLInputElement>('#home-width').value = String(this.width);
     this.q<HTMLInputElement>('#home-height').value = String(this.height);
-    this.renderTemplates();
   }
 
   private bindDimensionControls(): void {

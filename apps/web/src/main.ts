@@ -1,3 +1,5 @@
+import '@nvts/shared-ui/styles/theme.css';
+import '@nvts/shared-ui/styles/components.css';
 import { App } from '@nvts/ui';
 import './styles.css';
 

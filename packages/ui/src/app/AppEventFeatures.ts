@@ -15,16 +15,21 @@ import type { WorkspaceId } from '../workspaces';
 import type { Tool, MenuEntry, PanelVisibilityEntry } from './AppBase';
 import type { ToolTarget } from '../tools/ToolsBase';
 import { readPreferences } from '../panels/PreferencesPanel';
+import { MenuInteractionController } from '../menus/MenuInteractionController';
+import type { FilterKind } from '@nvts/shared';
 
 export abstract class AppEventFeatures extends AppVectorFeatures {
   protected abstract handleTransformSessionKey(event: KeyboardEvent): boolean;
   protected abstract startLayerTransform(): void;
+  protected abstract clearSelectionFromMenu(): void;
+  protected abstract clearHistoryFromMenu(): void;
 
   protected bind(): void {
       this.bindPluginAndLayerPanels();
       this.wireComicManager();
       this.initializeToolPanels();
       this.bindMenuDropdowns();
+      new MenuInteractionController(this.root).mount();
       this.bindEditMenuActions();
       this.bindWorkspaceSelector();
       this.bindPanelVisibilityMenu();
@@ -143,8 +148,22 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
     }
 
   protected bindEditMenuActions(): void {
-      this.q<HTMLButtonElement>('#edit-undo')?.addEventListener('click', () => this.doUndo());
-      this.q<HTMLButtonElement>('#edit-redo')?.addEventListener('click', () => this.doRedo());
+      this.root.addEventListener('click', (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const item = target.closest<HTMLButtonElement>('[data-menu-action]');
+        if (!item || item.disabled) return;
+        this.runDeclaredMenuAction(item.dataset.menuAction ?? '', item.dataset.filterKind as FilterKind | undefined);
+      });
+    }
+
+  protected runDeclaredMenuAction(action: string, filterKind?: FilterKind): void {
+      if (action === 'undo') return this.doUndo();
+      if (action === 'redo') return this.doRedo();
+      if (action === 'clear-history') return this.clearHistoryFromMenu();
+      if (action === 'transform-layer') return this.runLayerMenuAction('transform');
+      if (action === 'deselect') return this.clearSelectionFromMenu();
+      if (action === 'open-filter-panel' && filterKind) this.openFilterPanelForMenu(filterKind);
     }
 
   protected bindMenuDropdowns(): void {
@@ -162,11 +181,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
           if (!item || item.classList.contains('submenu-trigger')) return;
           this.closeMenu(menu);
         });
-        menu.dropdown.addEventListener('keydown', (event) => {
-          if (event.key !== 'Escape') return;
-          this.closeMenu(menu);
-          menu.button.focus();
-        });
+        menu.dropdown.addEventListener('keydown', (event) => this.handleMenuKeyboard(menu, event));
       }
       this.bindLayerTypeSubmenu();
       document.addEventListener('pointerdown', (event) => {
@@ -177,6 +192,76 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
         });
       });
     }
+
+  private handleMenuKeyboard(menu: MenuEntry, event: KeyboardEvent): void {
+      const target = event.target as HTMLElement;
+      const activeDropdown = target.closest<HTMLElement>('.file-menu-dropdown');
+      if (!activeDropdown || !menu.dropdown.contains(activeDropdown)) return;
+      const trigger = target.closest<HTMLButtonElement>('button[role^="menuitem"]');
+
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        if (activeDropdown.classList.contains('submenu-dropdown')) {
+          activeDropdown.hidden = true;
+          const parent = this.root.querySelector<HTMLButtonElement>(`[aria-controls="${activeDropdown.id}"]`);
+          parent?.setAttribute('aria-expanded', 'false');
+          parent?.focus();
+          return;
+        }
+        this.closeMenu(menu);
+        menu.button.focus();
+        return;
+      }
+
+      if (event.key === 'ArrowRight' && trigger?.classList.contains('submenu-trigger')) {
+        event.preventDefault();
+        const id = trigger.getAttribute('aria-controls');
+        const submenu = id ? this.root.querySelector<HTMLElement>(`#${CSS.escape(id)}`) : null;
+        if (!submenu) return;
+        submenu.hidden = false;
+        trigger.setAttribute('aria-expanded', 'true');
+        this.focusFirstMenuItem(submenu);
+        return;
+      }
+
+      if (event.key === 'ArrowLeft' && activeDropdown.classList.contains('submenu-dropdown')) {
+        event.preventDefault();
+        activeDropdown.hidden = true;
+        const parent = this.root.querySelector<HTMLButtonElement>(`[aria-controls="${activeDropdown.id}"]`);
+        parent?.setAttribute('aria-expanded', 'false');
+        parent?.focus();
+        return;
+      }
+
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+      const items = Array.from(activeDropdown.querySelectorAll<HTMLButtonElement>('button[role^="menuitem"]'))
+        .filter((button) => button.closest('.file-menu-dropdown') === activeDropdown && !button.disabled && !this.hasHiddenAncestor(button));
+      if (!items.length) return;
+      event.preventDefault();
+      const index = items.indexOf(trigger as HTMLButtonElement);
+      if (event.key === 'Home') items[0].focus();
+      else if (event.key === 'End') items.at(-1)?.focus();
+      else {
+        const direction = event.key === 'ArrowDown' ? 1 : -1;
+        const start = index < 0 ? (direction > 0 ? -1 : 0) : index;
+        items[(start + direction + items.length) % items.length].focus();
+      }
+    }
+
+  private focusFirstMenuItem(dropdown: HTMLElement): void {
+    const first = Array.from(dropdown.querySelectorAll<HTMLButtonElement>('button[role^="menuitem"]'))
+      .find((button) => button.closest('.file-menu-dropdown') === dropdown && !button.disabled && !this.hasHiddenAncestor(button));
+    first?.focus();
+  }
+
+  private hasHiddenAncestor(element: HTMLElement): boolean {
+    let current: HTMLElement | null = element;
+    while (current) {
+      if (current.hidden) return true;
+      current = current.parentElement;
+    }
+    return false;
+  }
 
   private bindLayerTypeSubmenu(): void {
     const button = this.q<HTMLButtonElement>('#menu-new-layer-types');
@@ -789,8 +874,10 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
 
   protected handleDocumentShortcut(event: KeyboardEvent, mod: boolean, key: string): boolean {
       if (!mod) return this.handleLayerFunctionShortcut(event, key);
+      if ((key === 'z' || key === 'y') && this.isTypingTarget(event.target as HTMLElement | null)) return false;
       if (key === 'z') return this.handleUndoRedoShortcut(event);
       if (key === 'y') { event.preventDefault(); this.doRedo(); return true; }
+      if (key === 't' && event.shiftKey && !event.altKey && !this.isTypingTarget(event.target as HTMLElement | null)) { event.preventDefault(); this.runLayerMenuAction('transform'); return true; }
       if (key === 's') { event.preventDefault(); void this.save(event.shiftKey); return true; }
       if (key === 'o') { event.preventDefault(); void this.open(); return true; }
       if (key === 'n' && !event.shiftKey && !event.altKey) { event.preventDefault(); this.promptNew(); return true; }

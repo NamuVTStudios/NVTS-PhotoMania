@@ -19,6 +19,7 @@ test('Panel encapsula visibilidad y ofrece la API compartida show/hide', () => {
   const element = {
     id: 'test-panel',
     hidden: true,
+    dataset: {},
     setAttribute(name, value) { attributes.set(name, value); },
   };
   const root = { querySelector(selector) { return selector === '#test-panel' ? element : null; } };

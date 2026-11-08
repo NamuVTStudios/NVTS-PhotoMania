@@ -23,9 +23,21 @@ test('drawing tools create a visible compatible layer instead of refusing incomp
   assert.ok(events.includes("this.ctl.addLayerAbove(type, name, active.id)"));
   assert.ok(events.includes('this.ctl.addLayer(type, name)'));
   assert.ok(events.includes('No reutilizar una capa compatible que pueda estar debajo de la capa activa'));
-  assert.ok(state.includes("'#rail-brush', '#rail-eraser', '#rail-line'"));
+  for (const selector of ["'#rail-brush'", "'#rail-eraser'", "'#rail-line'"]) {
+    assert.ok(state.includes(selector), `missing disabled-state binding for ${selector}`);
+  }
   assert.ok(state.includes("], false);"));
   assert.ok(state.includes("'#rail-vector-rectangle', '#rail-vector-rounded-rectangle'"));
+});
+
+test('undo and redo finish queued pointer-up edits before navigating history', async () => {
+  const drawing = await read('packages/ui/src/app/AppDrawingFeatures.ts');
+  const file = await read('packages/ui/src/app/AppFileFeatures.ts');
+  const events = await read('packages/ui/src/app/AppEventFeatures.ts');
+  assert.ok(drawing.includes('protected prepareHistoryNavigation(): boolean'));
+  assert.ok(drawing.includes('while (this.hasPendingBrushDabs()) this.processNextBrushDab()'));
+  assert.ok(file.includes('!this.prepareHistoryNavigation()'));
+  assert.ok(events.includes("(key === 'z' || key === 'y') && this.isTypingTarget"));
 });
 
 test('new text and standard layers are not inserted into hidden or locked groups', async () => {
@@ -147,7 +159,8 @@ test('normal move flow does not use transform masks and transform remains an exp
   assert.equal(beginMove.includes('beginLayerTransformSession'), false);
   assert.equal(moveMethod.includes('createLayerMask'), false);
   assert.equal(moveMethod.includes('replaceLayerMasks'), false);
-  assert.equal(events.includes("if (key === 't' && event.shiftKey && !event.altKey)"), false);
+  assert.ok(events.includes("if (key === 't' && event.shiftKey && !event.altKey && !this.isTypingTarget(event.target as HTMLElement | null))"));
+  assert.ok(events.includes("this.runLayerMenuAction('transform')"));
 });
 
 test('mask rows do not wrap their draggable content in a blocking button', async () => {

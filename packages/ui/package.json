@@ -13,6 +13,7 @@
     "@nvts/templates": "workspace:*",
     "@nvts/wasm-bindings": "workspace:*",
     "@nvts/image-processing": "workspace:*",
-    "@nvts/vector": "workspace:*"
+    "@nvts/vector": "workspace:*",
+    "@nvts/shared-ui": "link:../../../NVTS-Shared-UI"
   }
 }

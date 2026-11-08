@@ -1,5 +1,9 @@
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
+import { getSharedPackageFsAllow } from '../../../NVTS-Shared-Core/tooling/vite/shared-package-fs.mjs';
+
+const appRoot = fileURLToPath(new URL('.', import.meta.url));
+const sharedPackageFsAllow = getSharedPackageFsAllow(appRoot);
 
 export default defineConfig({
   base: '/NVTS-PhotoMania/',
@@ -7,6 +11,9 @@ export default defineConfig({
   publicDir: 'public',
 
   server: {
+    fs: {
+      allow: sharedPackageFsAllow,
+    },
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
@@ -17,6 +24,9 @@ export default defineConfig({
     // Prioriza las fuentes TypeScript frente a artefactos JavaScript antiguos junto a ellas.
     extensions: ['.ts', '.tsx', '.mts', '.js', '.jsx', '.mjs', '.json'],
     alias: {
+      '@nvts/shared-core/templates': fileURLToPath(
+        new URL('../../../NVTS-Shared-Core/packages/templates/src/index.mjs', import.meta.url)
+      ),
       // Resolver directamente los paquetes del monorepo evita fallos cuando Vite
       // analiza imports internos antes de que pnpm cree enlaces en node_modules.
       '@nvts/wasm-bindings': fileURLToPath(

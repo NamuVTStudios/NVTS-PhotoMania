@@ -1,0 +1,30 @@
+{
+    "$schema": "https://schema.tauri.app/config/2",
+    "productName": "NVTS-PhotoMania",
+    "version": "0.1.0",
+    "identifier": "com.namuvt.nvts.photomania.linux",
+    "build": {
+        "beforeDevCommand": "pnpm --dir ../.. dev",
+        "devUrl": "http://localhost:5173",
+        "beforeBuildCommand": "pnpm --dir ../.. build",
+        "frontendDist": "../../web/dist"
+    },
+    "app": {
+        "windows": [
+            {
+                "title": "NVTS-PhotoMania",
+                "width": 1280,
+                "height": 820,
+                "minWidth": 900,
+                "minHeight": 600
+            }
+        ],
+        "security": {
+            "csp": null
+        }
+    },
+    "bundle": {
+        "active": true,
+        "targets": "all"
+    }
+}

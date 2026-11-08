@@ -1014,6 +1014,15 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
     if (ctx) ctx.clearRect(0, 0, preview.width, preview.height);
   }
 
+  protected clearSelectionFromMenu(): void {
+    if (!this.selectionMask) {
+      this.q<HTMLElement>('#status').textContent = 'No hay una selección activa.';
+      return;
+    }
+    this.clearRasterSelection();
+    this.q<HTMLElement>('#status').textContent = 'Selección eliminada.';
+  }
+
   private clearRasterSelection(): void {
     this.selectionMask = null;
     this.selectionMaskWidth = 0;
@@ -2217,6 +2226,45 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       this.finishStroke(tool);
     }
 
+  /** Completes committed pointer-up work before navigating document history. */
+  protected prepareHistoryNavigation(): boolean {
+    if (this.layerTransformGesture) return this.blockHistoryNavigation();
+    if (this.layerTransformSession) this.cancelLayerTransformSession();
+    if (this.colorizeStroke) this.finishColorizeStroke();
+
+    if (this.stroke) {
+      if (!this.pendingStrokeFinish) return this.blockHistoryNavigation();
+      try {
+        while (this.hasPendingBrushDabs()) this.processNextBrushDab();
+        this.compactPendingBrushDabs();
+        this.finishQueuedStrokeIfReady();
+      } catch (error) {
+        this.abortStroke(error);
+        return false;
+      }
+    }
+
+    if (this.hasUncommittedCanvasGesture()) return this.blockHistoryNavigation();
+    return !this.stroke;
+  }
+
+  private hasUncommittedCanvasGesture(): boolean {
+    return Boolean(
+      this.selectionBrushGesture
+      || this.selectionGesture
+      || this.rasterMoveGesture
+      || this.vectorDrawGesture
+      || this.vectorGesture
+      || this.comicPanelStart
+      || this.layerTransformGesture,
+    );
+  }
+
+  private blockHistoryNavigation(): false {
+    this.q<HTMLElement>('#status').textContent = 'Terminá o cancelá la operación actual antes de deshacer o rehacer.';
+    return false;
+  }
+
   protected drawToolPreview(e: PointerEvent): void {
     if (!this.shapeStart) return;
     const context = this.prepareToolPreviewContext(e);
@@ -2387,6 +2435,9 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
         'pixel-rounded-rectangle': 'Rectángulo redondeado de píxeles', 'pixel-polyline': 'Polilínea de píxeles',
         'pixel-bezier': 'Curva Bézier de píxeles', 'pixel-polygon': 'Polígono de píxeles', 'pixel-star': 'Estrella de píxeles', 'pixel-spiral': 'Espiral de píxeles',
         'clone-stamp': 'Tampón de clonar', 'comic-panel': 'Marco y viñetas', gradient: 'Degradado', smudge: 'Dedo', liquify: 'Licuar',
+        'select-polygon': 'Selección poligonal', 'selection-brush': 'Pincel de selección', 'selection-erase': 'Borrar selección',
+        'select-rectangle': 'Selección rectangular', 'select-ellipse': 'Selección elíptica', 'select-lasso': 'Lazo de selección',
+        'magic-wand': 'Varita mágica', 'selection-clear': 'Limpiar selección', 'vector-line-correction': 'Corrección de línea vectorial',
       };
       try {
         stroke.end(label[tool ?? 'brush']);
@@ -2468,12 +2519,15 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
         reference[seed], reference[seed + 1], reference[seed + 2], reference[seed + 3],
       ];
       const color: [number, number, number] = [this.brush.rgb[0], this.brush.rgb[1], this.brush.rgb[2]];
+      const gapClosureRadius = this.brush.gapClosure === 1 || this.brush.gapClosure === 2
+        ? this.brush.gapClosure
+        : null;
       return {
         width, height, original, reference, seedX, seedY, seedColor,
         tolerance: this.brush.tolerance, color,
         opacity: this.brush.opacity / 100, contiguous: this.brush.contiguous,
-        matchMask: this.brush.gapClosure > 0
-          ? createGapClosedMatchMask(reference, width, height, seedColor, this.brush.tolerance, this.brush.gapClosure)
+        matchMask: gapClosureRadius !== null
+          ? createGapClosedMatchMask(reference, width, height, seedColor, this.brush.tolerance, gapClosureRadius)
           : undefined,
       };
     }

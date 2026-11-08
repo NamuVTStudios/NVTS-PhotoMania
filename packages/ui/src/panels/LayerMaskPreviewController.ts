@@ -95,14 +95,41 @@ export class LayerMaskPreviewController {
     this.previewCanvas.style.visibility = showSnapshot ? 'visible' : 'hidden';
     this.divider.hidden = !showSplit;
     this.beforeLabel.hidden = !canShowBefore || (selectedMode !== 'split' && selectedMode !== 'before');
-    this.afterLabel.hidden = !previewVisible || selectedMode === 'before' || (selectedMode === 'split' && !canShowBefore);
+    this.afterLabel.hidden = !previewVisible || selectedMode === 'before';
     this.stage.classList.toggle('mask-preview-before', selectedMode === 'before' && canShowBefore);
     this.stage.classList.toggle('mask-preview-split', showSplit);
   }
 
   syncCanvasTransform(): void {
-    this.previewCanvas.style.transform = this.sourceCanvas.style.transform;
+    const width = this.getSourceCanvasDisplaySize('width');
+    const height = this.getSourceCanvasDisplaySize('height');
+
+    // The source canvas is a flex item centered by .canvas-stage. The preview
+    // canvas is absolutely positioned, so mirror that same centered layout box
+    // before applying the exact same pan/zoom transform.
+    this.previewCanvas.style.position = 'absolute';
+    this.previewCanvas.style.left = '50%';
+    this.previewCanvas.style.top = '50%';
+    this.previewCanvas.style.right = 'auto';
+    this.previewCanvas.style.bottom = 'auto';
+    this.previewCanvas.style.width = `${width}px`;
+    this.previewCanvas.style.height = `${height}px`;
+    this.previewCanvas.style.marginLeft = `${-width / 2}px`;
+    this.previewCanvas.style.marginTop = `${-height / 2}px`;
+    this.previewCanvas.style.objectFit = 'contain';
+    this.previewCanvas.style.transform = this.sourceCanvas.style.transform || 'none';
     this.previewCanvas.style.transformOrigin = this.sourceCanvas.style.transformOrigin || 'center center';
+  }
+
+  private getSourceCanvasDisplaySize(dimension: 'width' | 'height'): number {
+    const inlineSize = Number.parseFloat(this.sourceCanvas.style[dimension]);
+    if (Number.isFinite(inlineSize) && inlineSize > 0) return inlineSize;
+
+    const layoutSize = dimension === 'width' ? this.sourceCanvas.offsetWidth : this.sourceCanvas.offsetHeight;
+    if (layoutSize > 0) return layoutSize;
+
+    const intrinsicSize = dimension === 'width' ? this.sourceCanvas.width : this.sourceCanvas.height;
+    return Math.max(1, intrinsicSize);
   }
 
   hide(): void {

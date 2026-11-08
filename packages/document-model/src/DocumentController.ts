@@ -238,7 +238,7 @@ export class DocumentController extends DocumentObject {
       this.recordStructure(
         `Agrupar «${node.name}»`,
         () => {
-          this.moveToParentRaw(id, parentId, originalIndex);
+          this.moveToParentRaw(id, parentId ?? null, originalIndex);
           this.removeRaw(group!.id);
         },
         () => this.restoreGroupedLayer(snapshot, id),

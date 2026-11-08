@@ -145,12 +145,24 @@ function createVectorShapeButton(
   return button;
 }
 
+const VECTOR_SHAPE_ICON_NAMES: Record<VectorShape['kind'], string> = {
+  rectangle: 'shape-rectangle',
+  'rounded-rectangle': 'shape-rounded-rectangle',
+  ellipse: 'shape-ellipse',
+  line: 'shape-line',
+  polygon: 'shape-polygon',
+  polyline: 'shape-polyline',
+  bezier: 'shape-bezier',
+  freehand: 'shape-freehand',
+  star: 'shape-star',
+  spiral: 'shape-spiral',
+  text: 'shape-text',
+  'speech-bubble': 'speech-bubble',
+  flash: 'flash',
+};
+
 function getVectorShapeIconName(kind: VectorShape['kind']): string {
-  return ({
-    rectangle: 'shape-rectangle', 'rounded-rectangle': 'shape-rounded-rectangle', ellipse: 'shape-ellipse',
-    line: 'shape-line', polygon: 'shape-polygon', polyline: 'shape-polyline', bezier: 'shape-bezier',
-    freehand: 'shape-freehand', star: 'shape-star', spiral: 'shape-spiral', text: 'shape-text',
-  } as const)[kind];
+  return VECTOR_SHAPE_ICON_NAMES[kind];
 }
 
 function syncSelectedVectorShape(root: HTMLElement, shapes: VectorShape[], selectedId: string | null): void {

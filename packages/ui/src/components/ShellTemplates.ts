@@ -1,4 +1,6 @@
 // Shared application shell markup used by the welcome screen and editor.
+import { MENU_DEFINITIONS } from '../menus/MenuDefinitions.mjs';
+import { renderDeclaredMenu } from '../menus/MenuMarkupRenderer';
 export const LOGO_URL = `${import.meta.env.BASE_URL}branding/nvts-photo-mania-icon.svg`;
 export const LOGO_PNG_URL = `${import.meta.env.BASE_URL}branding/nvts-photo-mania-icon.png`;
 
@@ -32,17 +34,8 @@ export const MAIN_MENU = `<nav class="menus" aria-label="Menú principal">
         <button id="b-export-jpeg" class="menu-item" role="menuitem" type="button">${menuLabel('export-jpeg', 'Exportar composición como JPEG…')}<kbd>Ctrl+Alt+Shift+E</kbd></button>
       </div>
     </div>
-    <div class="menu-wrap">
-      <button id="menu-edit" aria-haspopup="menu" aria-expanded="false" aria-controls="edit-menu-dropdown">${uiIcon('edit')}<span>Editar</span></button>
-      <div id="edit-menu-dropdown" class="file-menu-dropdown" role="menu" aria-label="Editar" hidden>
-        <button id="edit-undo" class="menu-item" role="menuitem" type="button">${menuLabel('history', 'Deshacer')}<kbd>Ctrl+Z</kbd></button>
-        <button id="edit-redo" class="menu-item" role="menuitem" type="button">${menuLabel('history', 'Rehacer')}<kbd>Ctrl+Y</kbd></button>
-        <div class="menu-divider" role="separator"></div>
-        <div class="menu-divider" role="separator"></div>
-        <button id="b-preferences" class="menu-item" role="menuitem" type="button">${menuLabel('preferences', 'Preferencias…')}<kbd>Ctrl+,</kbd></button>
-      </div>
-    </div>
-    <button id="menu-image">${uiIcon('image')}<span>Imagen</span></button>
+    ${renderDeclaredMenu(MENU_DEFINITIONS.edit, uiIcon)}
+    ${renderDeclaredMenu(MENU_DEFINITIONS.image, uiIcon)}
     <div class="menu-wrap">
       <button id="menu-layer" aria-haspopup="menu" aria-expanded="false" aria-controls="layer-menu-dropdown">${uiIcon('layer')}<span>Capa</span></button>
       <div id="layer-menu-dropdown" class="file-menu-dropdown" role="menu" aria-label="Capa" hidden>
@@ -76,7 +69,8 @@ export const MAIN_MENU = `<nav class="menus" aria-label="Menú principal">
         <button class="menu-item danger" role="menuitem" data-layer-action="delete" type="button">${menuLabel('delete', 'Eliminar capa')}<kbd>Shift+Delete</kbd></button>
       </div>
     </div>
-    <button id="menu-select">${uiIcon('select')}<span>Seleccionar</span></button><button id="menu-filter">${uiIcon('filter')}<span>Filtro</span></button>
+    ${renderDeclaredMenu(MENU_DEFINITIONS.select, uiIcon)}
+    <button id="menu-filter">${uiIcon('filter')}<span>Filtro</span></button>
     <div class="menu-wrap view-menu-wrap">
       <button id="menu-view" aria-haspopup="menu" aria-expanded="false" aria-controls="view-menu-dropdown">${uiIcon('view')}<span>Ver</span></button>
       <div id="view-menu-dropdown" class="file-menu-dropdown" role="menu" aria-label="Ver" hidden>
@@ -118,7 +112,7 @@ export const MAIN_MENU = `<nav class="menus" aria-label="Menú principal">
         <button id="workspace-reset-defaults" class="menu-item" role="menuitem" type="button">${menuLabel('workspace', 'Restaurar espacio de trabajo actual')}</button>
       </div>
     </div>
-    <button id="menu-help">${uiIcon('help')}<span>Ayuda</span></button>
+    ${renderDeclaredMenu(MENU_DEFINITIONS.help, uiIcon)}
   </nav>`;
 
 export const HOME_TEMPLATE = `
@@ -140,8 +134,7 @@ export const HOME_TEMPLATE = `
       <section class="home-main">
         <section data-home-view="new" class="home-view">
           <div class="home-section-head"><h2 id="home-section-title">Nuevo proyecto</h2><span>Elegí una plantilla para empezar</span></div>
-          <div class="home-template-toolbar"><label for="home-category">${uiIcon('workspace')}Categoría</label><select id="home-category"><option>Todas</option><option>Redes sociales</option><option>Pantallas</option><option>Impresión</option><option>Cómic e ilustración</option><option>Storyboard</option><option>Animación 2D</option><option>Animación vertical</option><option>Texturas</option></select></div>
-          <div id="home-template-grid" class="home-template-grid"></div>
+          <div id="home-template-gallery"></div>
           <div class="home-create-settings"><label class="home-field home-name-field"><span class="home-field-label">${uiIcon('project-name')}Nombre del proyecto</span><input id="home-project-name" maxlength="120" value="Sin título" /></label><div class="home-dimensions"><label class="home-field"><span class="home-field-label">${uiIcon('ruler-horizontal')}Ancho</span><input id="home-width" type="number" min="1" max="8192" value="1920" /></label><label class="home-lock"><input id="home-lock" type="checkbox" checked aria-label="Mantener proporción"/>${uiIcon('ratio-lock')}</label><label class="home-field"><span class="home-field-label">${uiIcon('ruler-vertical')}Alto</span><input id="home-height" type="number" min="1" max="8192" value="1080" /></label><span class="home-px">px</span><button id="home-create" class="home-primary"><span>Crear proyecto</span>${uiIcon('arrow-right')}</button></div>
           </div>
         </section>

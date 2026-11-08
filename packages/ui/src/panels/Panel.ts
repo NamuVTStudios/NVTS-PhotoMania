@@ -9,7 +9,7 @@ export abstract class Panel extends PanelObject {
     const element = root.querySelector<HTMLElement>(selector);
     if (!element) throw new Error(`No se encontró el panel requerido: ${selector}`);
 
-    super(element.id || selector.replace(/^#/, ''), element.dataset.panelName || element.id || selector);
+    super(element.id || selector.replace(/^#/, ''), element.dataset?.panelName || element.id || selector);
     this.root = root;
     this.element = element;
     if (element.hidden) this.hide();

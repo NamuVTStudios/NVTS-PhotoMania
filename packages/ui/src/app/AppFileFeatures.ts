@@ -9,15 +9,22 @@ import { documentNameFromFile } from './AppUtilities';
 
 export class AppFileFeatures extends AppSamplingFeatures {
   protected doUndo(): void {
-      if (this.stroke || this.blockForUnappliedMaskChanges('deshacer')) return;
+      if (!this.prepareHistoryNavigation() || this.blockForUnappliedMaskChanges('deshacer')) return;
       this.handleHistoryResult(this.ctl.undo());
       this.updateHistoryUI();
     }
 
   protected doRedo(): void {
-      if (this.stroke || this.blockForUnappliedMaskChanges('rehacer')) return;
+      if (!this.prepareHistoryNavigation() || this.blockForUnappliedMaskChanges('rehacer')) return;
       this.handleHistoryResult(this.ctl.redo());
       this.updateHistoryUI();
+    }
+
+  protected clearHistoryFromMenu(): void {
+      if (!this.prepareHistoryNavigation() || this.blockForUnappliedMaskChanges('vaciar el historial')) return;
+      this.ctl.clearHistory();
+      this.updateHistoryUI();
+      this.q<HTMLElement>('#status').textContent = 'Se eliminó el historial de deshacer. Esta acción no se puede deshacer.';
     }
 
   protected handleHistoryResult(kind: 'pixels' | 'structure' | null): void {

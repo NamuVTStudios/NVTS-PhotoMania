@@ -44,7 +44,7 @@ function createPreviewHarness(snapshotProvider) {
     value: 'after', disabled: false,
     addEventListener(_name, handler) { this.changeHandler = handler; },
   };
-  const sourceCanvas = { width: 320, height: 180, style: { transform: 'translate(4px, 2px) scale(1.5)', transformOrigin: 'center center', visibility: '' } };
+  const sourceCanvas = { width: 320, height: 180, style: { width: '240px', height: '135px', transform: 'translate(4px, 2px) scale(1.5)', transformOrigin: 'center center', visibility: '' } };
   const previewCanvas = { width: 0, height: 0, style: { visibility: 'hidden' }, getContext: () => context };
   const previewClip = { hidden: true, style: { setProperty(name, value) { this[name] = value; } }, classList: createClassList() };
   const divider = { hidden: true };
@@ -83,6 +83,13 @@ test('mask preview keeps a captured before image and correctly switches before, 
     assert.equal(harness.modeControl.disabled, false);
     assert.equal(harness.previewCanvas.width, 320);
     assert.equal(harness.previewCanvas.height, 180);
+    assert.equal(harness.previewCanvas.style.width, '240px');
+    assert.equal(harness.previewCanvas.style.height, '135px');
+    assert.equal(harness.previewCanvas.style.left, '50%');
+    assert.equal(harness.previewCanvas.style.top, '50%');
+    assert.equal(harness.previewCanvas.style.marginLeft, '-120px');
+    assert.equal(harness.previewCanvas.style.marginTop, '-67.5px');
+    assert.equal(harness.previewCanvas.style.transform, harness.sourceCanvas.style.transform);
     assert.equal(harness.calls.some(([name]) => name === 'drawImage'), true);
 
     harness.modeControl.value = 'before';

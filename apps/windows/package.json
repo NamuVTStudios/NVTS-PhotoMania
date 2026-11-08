@@ -1,0 +1,13 @@
+{
+    "name": "@nvts/photomania-windows",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "tauri dev",
+        "build": "tauri build",
+        "build:web": "pnpm --dir ../.. build"
+    },
+    "devDependencies": {
+        "@tauri-apps/cli": "^2.0.0"
+    }
+}

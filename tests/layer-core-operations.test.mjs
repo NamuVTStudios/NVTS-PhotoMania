@@ -203,6 +203,7 @@ test('mask canvas preview switches between before, split, and after without edit
   canvas.style = { transform: 'translate(0px, 0px) scale(1)', transformOrigin: 'center center', visibility: '' };
   const controller = new LayerMaskPreviewController(root, canvas);
   controller.mount();
+  controller.setPanelVisible(true);
 
   assert.equal(controller.captureBefore(), true);
   const mode = elements.get('#mask-preview-mode');
@@ -233,7 +234,8 @@ test('mask canvas preview switches between before, split, and after without edit
   assert.equal(clip.hidden, true);
   assert.equal(divider.hidden, true);
   assert.equal(beforeLabel.hidden, true);
-  assert.equal(afterLabel.hidden, true);
+  // The after-only canvas is the active result, so its label remains visible.
+  assert.equal(afterLabel.hidden, false);
 
   controller.hide();
   // The control is nested inside the toolbar; hiding its parent hides the

@@ -1,3 +1,4 @@
+import { ThemeController } from '@nvts/shared-ui';
 import { clearRecentProjects } from '@nvts/storage';
 import { uiIcon } from '../components/ShellTemplates';
 
@@ -18,7 +19,7 @@ export const PREFERENCES_PANEL_TEMPLATE = `
       <p class="preferences-note">Al desactivar esta opción, PhotoMania borra las copias y la lista guardadas para esta función.</p>
     </section>
     <section data-preference-content="appearance" hidden><h3>Apariencia</h3>
-      <div class="preference-row"><span><strong>Tema de la interfaz</strong><small>Cambiá entre la apariencia oscura y la clara.</small></span><select id="pref-theme"><option value="dark">Tema oscuro</option><option value="light">Tema claro</option></select></div>
+      <div class="preference-row"><span><strong>Tema de la interfaz</strong><small>Cambiá entre la apariencia oscura y la clara.</small></span><select id="pref-theme"><option value="system">Automático (sistema)</option><option value="light">Tema claro</option><option value="dark">Tema oscuro</option></select></div>
     </section>
     <section data-preference-content="editing" hidden><h3>Edición</h3>
       <p class="preferences-note">Los cambios de edición se registran en el historial del documento. Podés deshacerlos y rehacerlos desde el menú Editar.</p>
@@ -32,10 +33,11 @@ export const PREFERENCES_PANEL_TEMPLATE = `
 </aside>`;
 
 const PREFERENCES_KEY = 'nvts-photomania-preferences';
-type UiTheme = 'dark' | 'light';
+type UiTheme = 'dark' | 'light' | 'system';
 export type DeleteBehavior = 'remove' | 'clear';
 export interface AppPreferences { rememberRecentProjects: boolean; theme: UiTheme; layerDeleteBehavior: DeleteBehavior; maskDeleteBehavior: DeleteBehavior }
-const DEFAULT_PREFERENCES: AppPreferences = { rememberRecentProjects: false, theme: 'dark', layerDeleteBehavior: 'remove', maskDeleteBehavior: 'remove' };
+const DEFAULT_PREFERENCES: AppPreferences = { rememberRecentProjects: false, theme: 'system', layerDeleteBehavior: 'remove', maskDeleteBehavior: 'remove' };
+const themeController = new ThemeController({ storageKey: 'nvts-photomania-theme', defaultPreference: 'system' });
 
 export function readPreferences(): AppPreferences {
   let raw: string | null;
@@ -51,7 +53,7 @@ function parsePreferences(raw: string | null): AppPreferences {
   catch { return { ...DEFAULT_PREFERENCES }; }
   return {
     rememberRecentProjects: parsed.rememberRecentProjects === true,
-    theme: parsed.theme === 'light' ? 'light' : 'dark',
+    theme: parsed.theme === 'light' || parsed.theme === 'dark' || parsed.theme === 'system' ? parsed.theme : 'system',
     layerDeleteBehavior: parsed.layerDeleteBehavior === 'clear' ? 'clear' : 'remove',
     maskDeleteBehavior: parsed.maskDeleteBehavior === 'clear' ? 'clear' : 'remove',
   };
@@ -60,7 +62,7 @@ function parsePreferences(raw: string | null): AppPreferences {
 export function writePreferences(prefs: AppPreferences): void {
   try { localStorage.setItem(PREFERENCES_KEY, JSON.stringify(prefs)); }
   catch (error) { console.warn('No se pudieron guardar las preferencias:', error); }
-  document.documentElement.dataset.theme = prefs.theme;
+  themeController.setPreference(prefs.theme, { persist: false });
 }
 
 export async function initializePreferences(): Promise<AppPreferences> {
@@ -72,7 +74,7 @@ export async function initializePreferences(): Promise<AppPreferences> {
     // Las entradas generadas por versiones anteriores no se consideran consentimiento para guardar recientes.
     await clearRecentProjects().catch((error) => console.warn('No se pudieron limpiar los recientes anteriores:', error));
   }
-  document.documentElement.dataset.theme = prefs.theme;
+  themeController.setPreference(prefs.theme, { persist: false });
   return prefs;
 }
 
@@ -170,7 +172,7 @@ async function savePreferences(
 function readPreferenceControls(elements: PreferenceElements): AppPreferences {
   return {
     rememberRecentProjects: elements.recent.checked,
-    theme: elements.theme.value === 'light' ? 'light' : 'dark',
+    theme: elements.theme.value === 'light' || elements.theme.value === 'dark' || elements.theme.value === 'system' ? elements.theme.value : 'system',
     layerDeleteBehavior: elements.layerDeleteBehavior.value === 'clear' ? 'clear' : 'remove',
     maskDeleteBehavior: elements.maskDeleteBehavior.value === 'clear' ? 'clear' : 'remove',
   };

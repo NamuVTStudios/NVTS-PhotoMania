@@ -25,8 +25,8 @@ This document describes the current repository implementation. It is not a promi
 | `packages/shared` | Shared document-format constants and types | `nvtsphoto.ts` |
 | `packages/document-model` | Layer/document tree, pixel bridge, structural actions, integrated undo/redo | `DocumentController.ts`, `EditSession.ts`, `types.ts` |
 | `packages/storage` | `.nvtsphoto` serialization, file open/save, recent projects, linked-image handles | `NvtsPhotoIO.ts`, `RecentProjects.ts` |
-| `packages/templates` | UI-independent, reusable document preset definitions for NVTS programs | `src/types.ts`, individual preset modules, `src/index.ts` |
-| `packages/ui` | Application entry point, startup orchestration, feature modules, toolbar, panels, workspaces, preferences and plugins; consumes `@nvts/templates` | `App.ts`, `app/*.ts`, `managers/*.ts`, `panels/*.ts`, `workspaces/*.ts` |
+| `packages/templates` | Per-program catalogue that composes common immutable presets from Shared Core with PhotoMania-specific comic, animation, and texture definitions | `src/index.ts`, specialist preset modules |
+| `packages/ui` | Application entry point, startup orchestration, feature modules, toolbar, panels, workspaces, preferences and plugins; consumes the template registry and Shared UI gallery | `App.ts`, `app/*.ts`, `managers/*.ts`, `panels/*.ts`, `workspaces/*.ts` |
 | `apps/web` | Vite entry point, index HTML, global styles, public assets/Wasm runtime | `src/main.ts`, `src/styles.css`, `vite.config.ts` |
 
 ## NVTS Shared Core integration (target architecture)
@@ -41,9 +41,11 @@ The first safe integration stage is to stabilize the shared contracts and native
 
 ## Shared template package
 
-`@nvts/templates` is a workspace package intentionally kept separate from `@nvts/ui` so other NVTS applications can reuse document presets without importing PhotoMania's UI. The package has no runtime dependencies: its public API is TypeScript data only. `TemplateDef` defines a stable ID, title, category, default pixel dimensions, icon token, gallery preview shape, and optional print profile metadata (finished dimensions, bleed, safe margins, binding margins, reading direction, and color workflow). `printProfile.ts` converts millimetres to pixels and calculates canvas, trim, and safe-area rectangles. Each preset lives in a separate module under `packages/templates/src/`; `index.ts` exports both the complete read-only `TEMPLATES` catalog and individual named definitions.
+`@nvts/templates` remains a workspace package separate from `@nvts/ui`, but its runtime model is now owned by `NVTS-Shared-Core`. `TemplateDef` aliases the shared `TemplateDefinition` contract. Shared Core provides the immutable `Template` value object, validation, inheritance resolution, `TemplateRegistry`, generic standard-format catalogs, and explicit per-product template assignments. `Template` implements the stable `id`, `name`, and `kind` metadata contract from `AppObject`, but it does not extend `AppObject` because preset definitions do not require a live-object initialization/disposal lifecycle.
 
-When adding a preset, create a module conforming to `TemplateDef`, export the definition from the package index, and add it to the catalog. A consuming workspace package should declare `@nvts/templates` as a `workspace:*` dependency. Vite and the root TypeScript paths are configured to resolve the package in this monorepo.
+PhotoMania composes all 19 reusable Shared Core presets (social media, screen/video, A4, animation, storyboard, and UV/2D texture) with 17 local comic, manga, and manhwa presets. Generic definitions must be authored once in Shared Core and assigned to products by documented domain need; programs without a matching reusable preset keep their own domain-specific template model. The local `@nvts/templates` package is only an aggregation layer and exposes the composed read-only `TEMPLATES` catalogue. `printProfile.ts` continues to convert millimetres to pixels and calculate canvas, trim, and safe-area rectangles.
+
+The home-screen selector is rendered by `createTemplateGallery` from `NVTS-Shared-UI`. The gallery owns only reusable selection UI; PhotoMania's `HomeScreenController` remains responsible for applying the selected template's dimensions and metadata when creating a document. Do not duplicate generic template definitions in PhotoMania or Shared UI; keep only product-specific definitions in the local aggregation package.
 
 ## Runtime data model
 
@@ -313,7 +315,7 @@ Version 1.0 validation covers clean dependency installation, TypeScript checks, 
 
 ## Storyboarding and animation panels
 
-`packages/ui/src/panels/StoryboardPanel.ts` implements an editable shot list, persists its data in `localStorage`, and exports it as `storyboard.json`. `packages/ui/src/panels/AnimationTimelinePanel.ts` implements tracks and keyframe cells with local persistence. Cells can be selected with a click, and keyframes can be toggled with a double-click. Shared templates live in `packages/templates/src/` as `.ts` modules; `package.json` and other configuration files keep the `.json` extension and valid JSON syntax. Playback is currently a UI preview, not an animation renderer.
+`packages/ui/src/panels/StoryboardPanel.ts` implements an editable shot list, persists its data in `localStorage`, and exports it as `storyboard.json`. `packages/ui/src/panels/AnimationTimelinePanel.ts` implements tracks and keyframe cells with local persistence. Cells can be selected with a click, and keyframes can be toggled with a double-click. Reusable animation and storyboard presets are catalogued in Shared Core; `packages/templates/src/` contains only PhotoMania-specific comic, manga, and manhwa definitions. Playback is currently a UI preview, not an animation renderer.
 
 ## Incremental refactoring conventions
 
@@ -470,3 +472,7 @@ The document canvas is the only non-overlay flex item inside `.canvas-stage`. To
 ### Shared Core module resolution
 
 CanvasKit, OpenImageIO, and OpenColorIO are exposed through explicit package export maps in `NVTS-Shared-Core/package.json`. Vite aliases map both canonical public specifiers and physical-layout compatibility specifiers to the executable `index.mjs` entrypoints. TypeScript paths map the same specifiers to their corresponding `index.d.ts` declarations. This keeps runtime resolution and static typing aligned and avoids relying on declaration files as runtime modules.
+
+### Shared template model
+
+The `Template` value object, validation, inheritance resolver, and `TemplateRegistry` are provided by `NVTS-Shared-Core`. `Template` is intentionally not an `AppObject` subclass because a template is immutable preset data rather than a live object with an initialize/dispose lifecycle. PhotoMania receives all 19 generic presets assigned by Shared Core and composes them with its 17 local comic, manga, and manhwa presets. The new-project selector uses `createTemplateGallery` from `NVTS-Shared-UI`; the UI component renders and selects a preset while PhotoMania's document controller remains responsible for applying its dimensions and metadata.

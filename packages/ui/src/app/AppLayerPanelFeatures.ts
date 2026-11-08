@@ -1037,6 +1037,36 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
       return FILTER_LABELS[kind];
     }
 
+  protected openFilterPanelForMenu(kind: FilterKind): void {
+      const layer = this.active();
+      if (!layer) {
+        this.q<HTMLElement>('#status').textContent = 'Seleccioná una capa para abrir este ajuste.';
+        return;
+      }
+      if (this.ctl.isEffectivelyLocked(layer.id)) {
+        this.q<HTMLElement>('#status').textContent = 'La capa o su grupo está bloqueado.';
+        return;
+      }
+      if (layer.type !== 'filter' && !isPixelLayerType(layer.type)) {
+        this.q<HTMLElement>('#status').textContent = 'Este ajuste requiere una capa de píxeles o una capa de filtro.';
+        return;
+      }
+
+      const editableFilterLayer = layer.type === 'filter';
+      this.activeId = layer.id;
+      this.filterEditLayerId = editableFilterLayer ? layer.id : null;
+      this.prepareFilterEditor(
+        layer.name,
+        kind,
+        layer.filterStrength ?? 1,
+        editableFilterLayer
+          ? 'Este ajuste es no destructivo y afecta a las capas inferiores. Podés cambiarlo más tarde.'
+          : 'Este filtro se aplicará a los píxeles de la capa seleccionada y se podrá deshacer.',
+        editableFilterLayer ? 'Capa de filtro editable' : 'Filtro sobre la capa seleccionada',
+      );
+      this.showRightEditor('filters-panel');
+    }
+
   protected openDestructiveFilterPanel(): void {
       const layer = this.active();
       if (layer?.type === 'filter') { this.openFilterEditor(layer); return; }

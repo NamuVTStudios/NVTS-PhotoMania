@@ -1,26 +1,27 @@
 {
-  "name": "nvts-photomania",
-  "private": true,
-  "type": "module",
-  "packageManager": "pnpm@12.9.1",
-  "scripts": {
-    "build:wasm": "node tools/build-wasm.mjs",
-    "dev": "node tools/build-wasm.mjs && node tools/run-vite.mjs dev",
-    "build": "node tools/build-wasm.mjs && node tools/run-vite.mjs build",
-    "preview": "node tools/run-vite.mjs preview",
-    "typecheck": "tsc -p tsconfig.json",
-    "test": "node tools/build-wasm.mjs && node --test --test-concurrency=1",
-    "audit:control-flow": "node tools/audit-control-flow.mjs"
-  },
-  "devDependencies": {
-    "@types/node": "^26.6.5",
-    "@types/wicg-file-system-access": "^2023.10.5",
-    "@webgpu/types": "^0.1.40",
-    "typescript": "^5.6.0",
-    "vite": "^5.4.0"
-  },
-  "dependencies": {
-    "@nvts/app-object": "link:../NVTS-Shared-Core/packages/app-object",
-    "@nvts/shared-core": "link:../NVTS-Shared-Core"
-  }
+    "name": "nvts-photomania",
+    "private": true,
+    "type": "module",
+    "packageManager": "pnpm@12.9.1",
+    "scripts": {
+        "build:wasm": "node tools/build-wasm.mjs",
+        "dev": "node tools/build-wasm.mjs && node tools/run-vite.mjs dev",
+        "build": "node tools/build-wasm.mjs && node tools/run-vite.mjs build",
+        "preview": "node tools/run-vite.mjs preview",
+        "typecheck": "tsc -p tsconfig.json",
+        "test": "node tools/build-wasm.mjs && node --test --test-concurrency=1",
+        "audit:control-flow": "node tools/audit-control-flow.mjs"
+    },
+    "devDependencies": {
+        "@types/node": "^26.6.5",
+        "@types/wicg-file-system-access": "^2023.10.5",
+        "@webgpu/types": "^0.1.40",
+        "typescript": "^5.6.0",
+        "vite": "^5.4.0"
+    },
+    "dependencies": {
+        "@nvts/app-object": "link:../NVTS-Shared-Core/packages/app-object",
+        "@nvts/shared-core": "link:../NVTS-Shared-Core",
+        "@nvts/shared-ui": "link:../NVTS-Shared-UI"
+    }
 }

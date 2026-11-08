@@ -102,7 +102,7 @@ The refactoring is incremental: modules that only define data, render a view, or
 
 ## Current capabilities
 
-- **Document templates:** the 36 document presets (social posts/stories, screen sizes, A4, US/European comics, manga/manhwa, animation, and UV/2D textures) are maintained as individual modules in the shared `@nvts/templates` workspace package so other NVTS apps can reuse them. Related print presets support optional `extendsId` inheritance; `resolveTemplateInheritance` resolves parent fields, merges print metadata, and rejects missing parents or cycles before the catalog is exposed.
+- **Document templates:** all reusable social-media, screen, print, animation, storyboard, and texture presets are defined once in `NVTS-Shared-Core/packages/templates/`. PhotoMania consumes the templates assigned to it and adds only its product-specific comic, manga, and manhwa presets through the local `@nvts/templates` aggregation package.
 - **Canvas and navigation:** fit-to-window view, zoom with controls or Ctrl/Meta + mouse wheel, panning with the Hand tool or Space + drag, and responsive canvas sizing.
 - **Drawing tools:** brush, eraser, clone stamp, eyedropper, line, rectangle, ellipse, bucket fill, text, gradient, smudge, liquify, vector selection, a comic frame/panel tool, editable vector rectangle, rounded rectangle, ellipse, line, Bézier pen, polygon, star, freehand, polyline and spiral, plus rasterized pixel counterparts for rounded rectangle, polyline, Bézier curve, polygon, star and spiral. The existing pixel line, rectangle, ellipse and brush also cover the matching simple vector forms. Clone Stamp uses `Alt + click` to set the source point, then samples only the source patch needed for each dab and paints into the selected paint layer. Same-layer cloning preserves original snapshots only for touched 256×256 tiles, with a 64 MiB per-stroke guard. Comic mode creates a full-page outer frame on click or individual rectangular panels by dragging; both are editable vector shapes and participate in document history. The brush exposes size, opacity, hardness, spacing, and smoothing controls; the clone stamp reuses size/opacity controls; the comic tool exposes frame/panel/split mode, border width, one-or-two straight split lines, and the spacing between parallel dividers. Tool and vector-shape icons are individual SVG assets in `apps/web/src/icons/tools/`. Menus, the welcome screen, timeline controls, comic manager, filter/effect panels, and dialog close buttons use the collection of 95 SVG assets in `apps/web/public/icons/ui/`; CSS masks inherit the active text color and remain legible in both themes. Google Drive and Dropbox display their SVG logos but remain marked as future integrations until their cloud APIs are implemented.
 - **Non-destructive layer masks:** affine transform masks, colorization masks with editable color strokes, filter masks with per-layer filter stacks, and style masks. The single right-side **Layer Masks** panel lists every mask attached to the selected layer and keeps each mask type’s controls inside its own expandable entry in that same panel. Changes preview on the canvas and remain staged until **Apply changes** commits them as one undoable action; **Cancel** restores the original mask collection. The canvas preview can show the original result, a 50/50 before-and-after split, or the edited result. A `Style Mask` is created when layer styles are applied, and mask metadata is saved in `.nvtsphoto`. Colorization currently uses a line-barrier region fill and is limited to 4 million document pixels. Filter masks apply to the entire layer and their filter stacks are edited inline in the Layer Masks panel. Painted grayscale coverage and advanced warp transforms are not implemented yet.
@@ -386,25 +386,15 @@ NVTS-PhotoMania/
 │   │   └── package.json
 │   ├── templates/
 │   │   ├── src/
-│   │   │   ├── 4k-uhd.ts
-│   │   │   ├── a4.ts
 │   │   │   ├── aizoban.ts
-│   │   │   ├── animation-2d.ts
-│   │   │   ├── animation-vertical.ts
-│   │   │   ├── animation-web.ts
 │   │   │   ├── bunkoban.ts
 │   │   │   ├── comic-eu-album.ts
 │   │   │   ├── comic-eu.ts
 │   │   │   ├── comic-us.ts
 │   │   │   ├── doujinshi-b5.ts
-│   │   │   ├── facebook-post.ts
-│   │   │   ├── facebook-story.ts
-│   │   │   ├── full-hd.ts
 │   │   │   ├── graphic-novel.ts
 │   │   │   ├── index.ts
 │   │   │   ├── inheritance.ts
-│   │   │   ├── instagram-post.ts
-│   │   │   ├── instagram-story.ts
 │   │   │   ├── kanzenban.ts
 │   │   │   ├── manga-b5.ts
 │   │   │   ├── manga.ts
@@ -413,19 +403,10 @@ NVTS-PhotoMania/
 │   │   │   ├── printProfile.ts
 │   │   │   ├── shinchoban.ts
 │   │   │   ├── soshuhen.ts
-│   │   │   ├── storyboard-horizontal.ts
-│   │   │   ├── storyboard-vertical.ts
 │   │   │   ├── tankobon.ts
-│   │   │   ├── texture-2d-wide.ts
-│   │   │   ├── texture-2d.ts
-│   │   │   ├── texture-uv-4k.ts
-│   │   │   ├── texture-uv.ts
-│   │   │   ├── tiktok-post.ts
-│   │   │   ├── tiktok-story.ts
 │   │   │   ├── types.ts
 │   │   │   ├── webtoon-vertical.ts
 │   │   │   ├── wideban.ts
-│   │   │   └── youtube-thumb.ts
 │   │   └── package.json
 │   ├── ui/
 │   │   ├── src/
@@ -669,9 +650,9 @@ These managers are intentionally not all Singletons. Their instances are lightwe
 
 ## Shared template catalog
 
-The `@nvts/templates` workspace package contains reusable document presets independent of the PhotoMania UI. Each preset is defined in its own file under `packages/templates/src/`; `types.ts` defines the shared `TemplateDef` contract and `index.ts` exports the full `TEMPLATES` catalog plus individual named presets. The package contains plain TypeScript data and does not import UI code, browser APIs, the engine, or the document model.
+The local `@nvts/templates` workspace package is an aggregation layer for PhotoMania-specific comic, manga, and manhwa formats. All generic reusable definitions (social media, screen/video, A4 print, animation, storyboard, and 2D/UV texture presets) are authored once in `NVTS-Shared-Core/packages/templates/` and assigned to compatible products through `PROGRAM_TEMPLATE_ASSIGNMENTS`.
 
-PhotoMania consumes the catalog via `import { TEMPLATES } from '@nvts/templates'`. To add a preset, create a module that exports a `TemplateDef`, then export and add it to the catalog in `packages/templates/src/index.ts`. Another NVTS application can declare `"@nvts/templates": "workspace:*"` in its package dependencies and import the same catalog or individual presets without depending on `@nvts/ui`.
+PhotoMania consumes its assigned Shared Core definitions and composes them with the local specialist definitions via `createProgramTemplateRegistry`. To add a reusable preset, add it to the appropriate Shared Core catalog and assign its ID only to products that need it. To add a PhotoMania-only preset, add a specialist module under `packages/templates/src/`.
 
 ## Data flow and document format
 
@@ -753,7 +734,7 @@ The plugin API is an **initial, version-0.1 interface**, not a stable compatibil
 
 ## Storyboarding and animation workspaces
 
-The shared `@nvts/templates` package includes `storyboard-horizontal.ts` (1920×1080), `storyboard-vertical.ts` (1080×1920), and `animation-vertical.ts` (1080×1920). These are TypeScript modules, not text files; package manifests and configuration remain real `.json` files.
+Shared Core also owns the generic Full HD/4K, A4, animation, storyboard, social-media, and UV/2D texture presets. Products request only the definitions assigned to their documented workflows.
 
 Each workspace is configured in its own TypeScript file under `packages/ui/src/workspaces/` (`GeneralWorkspace.ts`, `DigitalIllustrationWorkspace.ts`, `VectorIllustrationWorkspace.ts`, `ImageManipulationWorkspace.ts`, `ComicsWorkspace.ts`, `StoryboardingWorkspace.ts`, and `AnimationWorkspace.ts`). `index.ts` is only the shared registry.
 

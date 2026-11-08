@@ -76,6 +76,9 @@
       ],
       "@nvts/shared-core/libraries/imaging/opencolorio": [
         "../NVTS-Shared-Core/libraries/imaging/opencolorio/index.d.ts"
+      ],
+      "@nvts/shared-core/templates": [
+        "../NVTS-Shared-Core/packages/templates/src/index.d.ts"
       ]
     }
   },
