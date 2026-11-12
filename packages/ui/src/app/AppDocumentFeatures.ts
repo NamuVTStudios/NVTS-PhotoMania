@@ -527,46 +527,9 @@ export abstract class AppDocumentFeatures extends AppBase {
         return transformed;
       }
       const result = mask.showOutput ? colorizePixels(transformed, this.ctl.doc.width, this.ctl.doc.height, mask) : transformed;
-      const output = mask.editStrokes ? this.drawColorizeStrokes(result, mask) : result;
-      this.colorizeOutputCache.set(cacheKey, output);
-      return output;
+      this.colorizeOutputCache.set(cacheKey, result);
+      return result;
     }
-
-  protected drawColorizeStrokes(source: Uint8Array, mask: Extract<LayerMask, { type: 'colorize' }>): Uint8Array {
-      const { width, height } = this.ctl.doc;
-      const canvas = this.createPixelCanvas(width, height, source);
-      const context = canvas.getContext('2d')!;
-      context.globalAlpha = 0.7;
-      for (const stroke of mask.strokes) this.drawColorizeStroke(context, stroke);
-      return this.readSamplingCanvas(canvas, width, height);
-    }
-
-  private drawColorizeStroke(context: CanvasRenderingContext2D, stroke: Extract<LayerMask, { type: 'colorize' }>['strokes'][number]): void {
-    this.configureColorizeStroke(context, stroke);
-    if (stroke.points.length === 1) return this.drawColorizeDot(context, stroke);
-    this.drawColorizePath(context, stroke);
-  }
-
-  private configureColorizeStroke(context: CanvasRenderingContext2D, stroke: Extract<LayerMask, { type: 'colorize' }>['strokes'][number]): void {
-    context.strokeStyle = stroke.color;
-    context.fillStyle = stroke.color;
-    context.lineWidth = stroke.radius * 2;
-    context.lineCap = 'round';
-    context.lineJoin = 'round';
-  }
-
-  private drawColorizeDot(context: CanvasRenderingContext2D, stroke: Extract<LayerMask, { type: 'colorize' }>['strokes'][number]): void {
-    context.beginPath();
-    context.arc(stroke.points[0].x, stroke.points[0].y, stroke.radius, 0, Math.PI * 2);
-    context.fill();
-  }
-
-  private drawColorizePath(context: CanvasRenderingContext2D, stroke: Extract<LayerMask, { type: 'colorize' }>['strokes'][number]): void {
-    context.beginPath();
-    context.moveTo(stroke.points[0].x, stroke.points[0].y);
-    for (const point of stroke.points.slice(1)) context.lineTo(point.x, point.y);
-    context.stroke();
-  }
 
   protected applyTransformMasksToTile(node: LayerNode, backing: TiledLayer, tile: FilterTile, rgba: Uint8Array): Uint8Array {
       const masks = node.masks?.filter((mask): mask is Extract<LayerMask, { type: 'transform' }> => mask.enabled && mask.type === 'transform') ?? [];

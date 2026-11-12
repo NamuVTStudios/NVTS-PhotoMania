@@ -6,7 +6,7 @@ import {
 } from '@nvts/storage';
 import { readPreferences } from './PreferencesPanel';
 import { Panel } from './Panel';
-import { uiIcon } from '../components/ShellTemplates';
+import { NVTS_PHOTO_FILE_ICON_URL, uiIcon } from '../components/ShellTemplates';
 
 type LaunchProject = (name: string, width: number, height: number, file?: File) => Promise<void>;
 type RecentContextMenu = { container: HTMLDivElement; removeButton: HTMLButtonElement };
@@ -128,14 +128,16 @@ export class RecentProjectsPanel extends Panel {
     button.type = 'button';
     const preview = document.createElement('span');
     preview.className = 'recent-preview';
-    const paper = document.createElement('span');
-    paper.className = 'recent-paper';
-    paper.style.aspectRatio = `${item.width} / ${item.height}`;
-    preview.append(paper);
+    const fileTypeIcon = document.createElement('img');
+    fileTypeIcon.className = 'recent-file-type-icon';
+    fileTypeIcon.src = NVTS_PHOTO_FILE_ICON_URL;
+    fileTypeIcon.alt = 'Formato de proyecto PMD';
+    fileTypeIcon.loading = 'lazy';
+    preview.append(fileTypeIcon);
     const label = document.createElement('strong');
     label.textContent = item.name;
     const meta = document.createElement('small');
-    meta.textContent = `${item.width} × ${item.height} px · ${new Date(item.updatedAt).toLocaleDateString()}`;
+    meta.textContent = `PMD · ${item.width} × ${item.height} px · ${new Date(item.updatedAt).toLocaleDateString()}`;
     button.append(preview, label, meta);
     button.oncontextmenu = (event) => this.openContextMenu(event, item.id);
     button.onclick = () => { void this.openProject(item, button); };

@@ -1,16 +1,13 @@
 import { Panel } from './Panel';
 import { uiIcon } from '../components/ShellTemplates';
 
-/** Línea de tiempo de animación: pistas y fotogramas clave básicos. */
 export const ANIMATION_TIMELINE_PANEL_TEMPLATE = `
 <section id="animation-timeline-panel" class="dock-panel animation-timeline-panel" hidden aria-label="Línea de tiempo de animación">
-  <header><strong class="panel-title-icon">${uiIcon('timeline')}<span>Línea de tiempo de animación</span></strong><div class="panel-spacer"></div><label class="timeline-fps">FPS <input id="timeline-fps" type="number" min="1" max="120" value="24"></label><button id="timeline-add-track" type="button">${uiIcon('plus')}<span>Pista</span></button></header>
-  <div class="timeline-toolbar"><button id="timeline-first" type="button" title="Primer fotograma" aria-label="Primer fotograma">${uiIcon('frame-first')}</button><button id="timeline-prev" type="button" title="Fotograma anterior" aria-label="Fotograma anterior">${uiIcon('frame-previous')}</button><button id="timeline-play" type="button">${uiIcon('play')}<span>Reproducir</span></button><button id="timeline-next" type="button" title="Fotograma siguiente" aria-label="Fotograma siguiente">${uiIcon('frame-next')}</button><label>Fotograma <input id="timeline-current" type="number" min="1" value="1"></label><span id="timeline-status" role="status">Fotograma 1 · 24 FPS</span></div>
+  <header><strong class="panel-title-icon">${uiIcon('timeline')}<span>Línea de tiempo de animación</span></strong><div class="panel-spacer"></div><label class="timeline-fps">FPS <input id="timeline-fps" type="number" min="1" max="120" value="24"></label><button id="timeline-add-frame" type="button">${uiIcon('plus')}<span>Fotograma</span></button></header>
+  <div class="timeline-toolbar"><button id="timeline-first" type="button" title="Primer fotograma" aria-label="Primer fotograma">${uiIcon('frame-first')}</button><button id="timeline-prev" type="button" title="Fotograma anterior" aria-label="Fotograma anterior">${uiIcon('frame-previous')}</button><button id="timeline-play" type="button">${uiIcon('play')}<span>Reproducir</span></button><button id="timeline-next" type="button" title="Fotograma siguiente" aria-label="Fotograma siguiente">${uiIcon('frame-next')}</button><label>Fotograma <input id="timeline-current" type="number" min="1" max="48" value="1"></label><span id="timeline-status" role="status">Fotograma 1 · 24 FPS</span></div>
   <div class="timeline-scroll"><div id="timeline-grid" class="timeline-grid"></div></div>
-  <p class="panel-hint">Pistas y celdas de fotogramas clave. Esta primera versión organiza la exposición; la reproducción todavía no renderiza una secuencia animada del lienzo.</p>
+  <p class="panel-hint">Cada fotograma utiliza su propia capa de pintura. Al cambiar de celda se activa su capa; los trazos de los demás fotogramas permanecen separados.</p>
 </section>`;
-
-type TimelineTrack = { id: string; name: string; keys: number[] };
 
 interface TimelineElements {
   grid: HTMLElement;
@@ -20,7 +17,8 @@ interface TimelineElements {
   play: HTMLButtonElement;
 }
 
-/** Connects timeline controls and keeps timeline state local to this panel. */
+const MAX_VISIBLE_FRAMES = 48;
+
 export function wireAnimationTimelinePanel(root: HTMLElement): void {
   const elements = getTimelineElements(root);
   if (!elements || elements.play.dataset.wired) return;
@@ -29,8 +27,7 @@ export function wireAnimationTimelinePanel(root: HTMLElement): void {
 }
 
 function getRulerFrameLabel(frame: number): string {
-  if (frame % 4 === 1) return String(frame);
-  return '·';
+  return frame % 4 === 1 ? String(frame) : '·';
 }
 
 function getTimelineElements(root: HTMLElement): TimelineElements | null {
@@ -44,8 +41,9 @@ function getTimelineElements(root: HTMLElement): TimelineElements | null {
 }
 
 class AnimationTimelineController extends Panel {
-  private readonly storageKey = 'nvts-photomania-timeline-v1';
-  private tracks: TimelineTrack[] = [];
+  private readonly storageKey = 'nvts-photomania-timeline-v2';
+  private readonly createdFrames = new Set<number>([1]);
+  private playbackTimer: number | null = null;
   private playing = false;
 
   constructor(root: HTMLElement, private readonly elements: TimelineElements) {
@@ -53,35 +51,40 @@ class AnimationTimelineController extends Panel {
   }
 
   mount(): void {
-    this.loadTracks();
-    this.bindTrackActions();
+    this.loadFrames();
+    this.bindFrameActions();
     this.bindFrameNavigation();
     this.bindPlayback();
     this.render();
   }
 
-  private loadTracks(): void {
+  private loadFrames(): void {
     try {
-      const saved = JSON.parse(localStorage.getItem(this.storageKey) || '[]') as TimelineTrack[];
-      this.tracks = Array.isArray(saved) ? saved : [];
+      const saved = JSON.parse(localStorage.getItem(this.storageKey) || '[1]') as number[];
+      saved.filter((frame) => Number.isInteger(frame) && frame >= 1 && frame <= MAX_VISIBLE_FRAMES)
+        .forEach((frame) => this.createdFrames.add(frame));
     } catch {
-      this.tracks = [];
+      this.createdFrames.clear();
+      this.createdFrames.add(1);
     }
-    if (!this.tracks.length) this.tracks = [{ id: 'track-1', name: 'Capa 1', keys: [1] }];
   }
 
-  private persist(): void {
+  private persistFrames(): void {
     try {
-      localStorage.setItem(this.storageKey, JSON.stringify(this.tracks));
+      localStorage.setItem(this.storageKey, JSON.stringify(this.getSortedFrames()));
     } catch {
-      // La persistencia de la línea de tiempo es opcional.
+      // The frame layers remain in the document even when browser storage is unavailable.
     }
+  }
+
+  private getSortedFrames(): number[] {
+    return [...this.createdFrames].sort((left, right) => left - right);
   }
 
   private render(): void {
     this.elements.grid.replaceChildren();
     this.renderRuler();
-    this.tracks.forEach((track) => this.renderTrack(track));
+    this.renderFrameTrack();
     this.updateStatus();
   }
 
@@ -89,7 +92,7 @@ class AnimationTimelineController extends Panel {
     const ruler = document.createElement('div');
     ruler.className = 'timeline-ruler';
     ruler.append(document.createElement('span'));
-    for (let frame = 1; frame <= 48; frame++) {
+    for (let frame = 1; frame <= MAX_VISIBLE_FRAMES; frame++) {
       const cell = document.createElement('span');
       cell.textContent = getRulerFrameLabel(frame);
       ruler.append(cell);
@@ -97,81 +100,75 @@ class AnimationTimelineController extends Panel {
     this.elements.grid.append(ruler);
   }
 
-  private renderTrack(track: TimelineTrack): void {
+  private renderFrameTrack(): void {
     const row = document.createElement('div');
     row.className = 'timeline-track';
     const name = document.createElement('strong');
-    name.textContent = track.name;
+    name.textContent = 'Dibujo';
     row.append(name);
-    for (let frame = 1; frame <= 48; frame++) row.append(this.createFrameCell(track, frame));
+    for (let frame = 1; frame <= MAX_VISIBLE_FRAMES; frame++) row.append(this.createFrameCell(frame));
     this.elements.grid.append(row);
   }
 
-  private createFrameCell(track: TimelineTrack, frame: number): HTMLButtonElement {
+  private createFrameCell(frame: number): HTMLButtonElement {
     const cell = document.createElement('button');
     cell.type = 'button';
-    cell.className = this.getFrameClass(track, frame);
-    cell.title = `Fotograma ${frame}`;
-    cell.setAttribute('aria-label', `${track.name}, fotograma ${frame}`);
+    const isCreated = this.createdFrames.has(frame);
+    const isCurrent = Number(this.elements.current.value) === frame;
+    cell.className = `timeline-cell${isCreated ? ' keyframe' : ''}${isCurrent ? ' current-frame' : ''}`;
+    cell.title = isCreated ? `Editar fotograma ${frame}` : `Crear fotograma ${frame}`;
+    cell.setAttribute('aria-label', isCreated ? `Fotograma ${frame}` : `Crear fotograma ${frame}`);
+    cell.setAttribute('aria-pressed', String(isCurrent));
     cell.addEventListener('click', () => this.selectFrame(frame));
-    cell.addEventListener('dblclick', () => this.toggleKeyframe(track, frame));
     return cell;
   }
 
-  private getFrameClass(track: TimelineTrack, frame: number): string {
-    const keyframe = track.keys.includes(frame) ? ' keyframe' : '';
-    const current = Number(this.elements.current.value) === frame ? ' current-frame' : '';
-    return `timeline-cell${keyframe}${current}`;
-  }
-
   private selectFrame(frame: number): void {
-    this.elements.current.value = String(frame);
-    this.updateStatus();
+    const target = this.clampFrame(frame);
+    const previous = Number(this.elements.current.value) || 1;
+    this.createdFrames.add(target);
+    this.elements.current.value = String(target);
+    this.persistFrames();
+    this.dispatchFrameChange(target, previous);
     this.render();
   }
 
-  private toggleKeyframe(track: TimelineTrack, frame: number): void {
-    track.keys = track.keys.includes(frame)
-      ? track.keys.filter((value) => value !== frame)
-      : [...track.keys, frame].sort((a, b) => a - b);
-    this.persist();
-    this.render();
+  private dispatchFrameChange(frame: number, previousFrame: number): void {
+    this.root.dispatchEvent(new CustomEvent('nvts:animation-frame-change', {
+      bubbles: true,
+      detail: { frame, previousFrame },
+    }));
+  }
+
+  private clampFrame(frame: number): number {
+    return Math.max(1, Math.min(MAX_VISIBLE_FRAMES, Math.floor(frame) || 1));
   }
 
   private updateStatus(): void {
-    const frame = Math.max(1, Number(this.elements.current.value) || 1);
-    const fps = Math.max(1, Number(this.elements.fps.value) || 24);
-    this.elements.status.textContent = `Fotograma ${frame} · ${fps} FPS`;
+    const frame = this.clampFrame(Number(this.elements.current.value));
+    const fps = Math.max(1, Math.min(120, Number(this.elements.fps.value) || 24));
+    this.elements.status.textContent = `Fotograma ${frame} · ${fps} FPS · ${this.createdFrames.size} celdas`;
   }
 
-  private bindTrackActions(): void {
-    this.root.querySelector('#timeline-add-track')?.addEventListener('click', () => this.addTrack());
+  private bindFrameActions(): void {
+    this.root.querySelector('#timeline-add-frame')?.addEventListener('click', () => this.addFrame());
   }
 
-  private addTrack(): void {
-    this.tracks.push({
-      id: `track-${Date.now()}`,
-      name: `Capa ${this.tracks.length + 1}`,
-      keys: [Math.max(1, Number(this.elements.current.value) || 1)],
-    });
-    this.persist();
-    this.render();
+  private addFrame(): void {
+    const next = this.getSortedFrames().at(-1)! + 1;
+    if (next > MAX_VISIBLE_FRAMES) {
+      this.elements.status.textContent = `Límite de ${MAX_VISIBLE_FRAMES} fotogramas visibles alcanzado.`;
+      return;
+    }
+    this.selectFrame(next);
   }
 
   private bindFrameNavigation(): void {
-    this.elements.current.addEventListener('change', () => {
-      this.elements.current.value = String(Math.max(1, Math.min(9999, Number(this.elements.current.value) || 1)));
-      this.render();
-    });
+    this.elements.current.addEventListener('change', () => this.selectFrame(Number(this.elements.current.value)));
     this.elements.fps.addEventListener('change', () => this.updateStatus());
-    this.root.querySelector('#timeline-first')?.addEventListener('click', () => this.goToFrame(1));
-    this.root.querySelector('#timeline-prev')?.addEventListener('click', () => this.goToFrame(Math.max(1, Number(this.elements.current.value) - 1)));
-    this.root.querySelector('#timeline-next')?.addEventListener('click', () => this.goToFrame(Number(this.elements.current.value) + 1));
-  }
-
-  private goToFrame(frame: number): void {
-    this.elements.current.value = String(frame);
-    this.render();
+    this.root.querySelector('#timeline-first')?.addEventListener('click', () => this.selectFrame(1));
+    this.root.querySelector('#timeline-prev')?.addEventListener('click', () => this.selectFrame(Number(this.elements.current.value) - 1));
+    this.root.querySelector('#timeline-next')?.addEventListener('click', () => this.selectFrame(Number(this.elements.current.value) + 1));
   }
 
   private bindPlayback(): void {
@@ -179,18 +176,28 @@ class AnimationTimelineController extends Panel {
   }
 
   private togglePlayback(): void {
-    this.playing = !this.playing;
-    this.elements.play.innerHTML = this.playing
-      ? `${uiIcon('pause')}<span>Pausar</span>`
-      : `${uiIcon('play')}<span>Reproducir</span>`;
-    this.elements.status.textContent = this.playing
-      ? 'Vista previa temporal activa (sin render de lienzo)'
-      : `Fotograma ${this.elements.current.value} · ${this.elements.fps.value} FPS`;
-    if (!this.playing) return;
-    window.setTimeout(() => this.stopPlaybackPreview(), 500);
+    if (this.playing) {
+      this.stopPlayback();
+      return;
+    }
+    const frames = this.getSortedFrames();
+    if (frames.length < 2) {
+      this.elements.status.textContent = 'Creá al menos dos fotogramas para reproducir.';
+      return;
+    }
+    this.playing = true;
+    this.elements.play.innerHTML = `${uiIcon('pause')}<span>Pausar</span>`;
+    let index = Math.max(0, frames.indexOf(Number(this.elements.current.value)));
+    const fps = Math.max(1, Math.min(120, Number(this.elements.fps.value) || 24));
+    this.playbackTimer = window.setInterval(() => {
+      index = (index + 1) % frames.length;
+      this.selectFrame(frames[index]);
+    }, 1000 / fps);
   }
 
-  private stopPlaybackPreview(): void {
+  private stopPlayback(): void {
+    if (this.playbackTimer !== null) window.clearInterval(this.playbackTimer);
+    this.playbackTimer = null;
     this.playing = false;
     this.elements.play.innerHTML = `${uiIcon('play')}<span>Reproducir</span>`;
     this.updateStatus();

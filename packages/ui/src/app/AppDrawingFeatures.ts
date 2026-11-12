@@ -1,6 +1,8 @@
 // Drawing tools, brush strokes and fill operations.
 import { AppEventFeatures } from './AppEventFeatures';
-import { type StampOperation } from '@nvts/image-processing';
+import { getBrushTextureSample, type StampOperation } from '@nvts/image-processing';
+import { readBrushPointerSample, interpolateBrushPointerSample, getPressureScale, getTiltAngle, isCurrentStrokePointer } from '../tools/TabletInput';
+import type { BrushPointerSample } from '../tools/TabletInput';
 import { CloneStampStrategy, ContiguousFillStrategy, EraserStrategy, EyedropperStrategy, GlobalFillStrategy, PaintBrushStrategy, TextCreationStrategy, VectorSelectionStrategy, type BrushStrategy, type CloneStampOperation, type ImmediateToolStrategy } from './EditorStrategies';
 import { containsLayerType, runEdit, StrokeSession, type LayerNode } from '@nvts/document-model';
 import { cloneLayerMasks, cloneVectorShapes, createLayerMask, getVectorShapeBounds, isPixelLayerType, type LayerMask, type TransformMask, type VectorShape } from '@nvts/shared';
@@ -91,7 +93,19 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       };
     }
 
-  protected toDoc(e: PointerEvent): { x: number; y: number } { return this.toDocAt(e.clientX, e.clientY); }
+  protected toDoc(e: PointerEvent): { x: number; y: number } {
+    const point = this.toDocAt(e.clientX, e.clientY);
+    if (!this.isRulerSnapTool()) return point;
+    const rect = this.canvas.getBoundingClientRect();
+    const scale = Math.min(rect.width / Math.max(1, this.ctl.doc.width), rect.height / Math.max(1, this.ctl.doc.height));
+    const tolerance = 11 / Math.max(0.01, scale);
+    return this.comicGuideOverlay?.snapPoint(point, tolerance) ?? point;
+  }
+
+  private isRulerSnapTool(): boolean {
+    return isBrushStrokeToolId(this.tool) || isVectorDrawingTool(this.tool) || isPixelShapeTool(this.tool)
+      || this.tool === 'line' || this.tool === 'rectangle' || this.tool === 'ellipse' || this.tool === 'gradient';
+  }
 
   protected onDocument(p: { x: number; y: number }): boolean {
       return p.x >= 0 && p.y >= 0 && p.x < this.ctl.doc.width && p.y < this.ctl.doc.height;
@@ -477,8 +491,15 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
   protected createStampOperation(x: number, y: number): StampOperation | null {
       const region = this.getStampRegion(x, y);
       if (!region) return null;
-      const radius = Math.max(0.5, this.brush.size / 2);
+      const pressureScale = this.tabletInputPreferences.pressureAffectsSize
+        ? getPressureScale(this.currentBrushSample, this.tabletInputPreferences.pressureCurve) : 1;
+      const radius = Math.max(0.5, (this.brush.size / 2) * pressureScale);
       const hardEdge = radius * (this.brush.hardness / 100);
+      const pressureOpacity = this.tabletInputPreferences.pressureAffectsOpacity
+        ? this.currentBrushSample.pressure : 1;
+      const materialAngle = this.tabletInputPreferences.tiltControlsAngle
+        && this.currentBrushSample.pointerType === 'pen'
+        ? getTiltAngle(this.currentBrushSample) : 0.35;
       return {
         region,
         centerX: x,
@@ -488,15 +509,21 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
         fadeWidth: Math.max(0.5, radius + 0.5 - hardEdge),
         erase: this.strokeTool === 'eraser',
         color: [this.brush.rgb[0], this.brush.rgb[1], this.brush.rgb[2]],
-        opacity: this.brush.opacity / 100,
+        opacity: (this.brush.opacity / 100) * pressureOpacity,
         tipShape: this.brush.tipShape,
         texture: this.brush.texture,
+        material: this.brush.material,
+        materialAngle,
+        texturePattern: this.brush.texturePattern,
+        textureSeed: this.brush.textureSeed,
       };
     }
 
   protected getStampRegion(x: number, y: number): PixelRegion | null {
       const { width, height } = this.ctl.doc;
-      const radius = Math.max(0.5, this.brush.size / 2);
+      const pressureScale = this.tabletInputPreferences.pressureAffectsSize
+        ? getPressureScale(this.currentBrushSample, this.tabletInputPreferences.pressureCurve) : 1;
+      const radius = Math.max(0.5, (this.brush.size / 2) * pressureScale);
       const left = Math.max(0, Math.floor(x - radius - 1));
       const top = Math.max(0, Math.floor(y - radius - 1));
       const right = Math.min(width, Math.ceil(x + radius + 1));
@@ -761,6 +788,8 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
 
   protected down(event: PointerEvent): void {
       if (this.stroke || this.isPanning) return;
+      this.currentBrushSample = readBrushPointerSample(event);
+      this.lastBrushSample = this.currentBrushSample;
       if (this.tryBeginPanning(event)) return;
       if (event.button !== 0) return;
       const point = this.toDoc(event);
@@ -2029,6 +2058,9 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
   }
 
   protected beginPaintStroke(event: PointerEvent, point: { x: number; y: number }, layer: LayerNode): void {
+      this.activeStrokePointerId = event.pointerId;
+      this.activeStrokePointerType = event.pointerType === 'pen' || event.pointerType === 'touch' ? event.pointerType : 'mouse';
+      this.strokePointerEnded = false;
       this.canvas.setPointerCapture(event.pointerId);
       this.stroke = new StrokeSession(this.ctx, layer.engineId);
       this.strokeLayer = this.ctl.layerPixels(layer);
@@ -2059,6 +2091,9 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       if (this.tool !== 'brush') return false;
       const mask = layer.masks?.find((candidate) => candidate.type === 'colorize' && candidate.enabled && candidate.editStrokes);
       if (!mask || mask.type !== 'colorize') return false;
+      this.activeStrokePointerId = event.pointerId;
+      this.activeStrokePointerType = event.pointerType === 'pen' || event.pointerType === 'touch' ? event.pointerType : 'mouse';
+      this.strokePointerEnded = false;
       this.canvas.setPointerCapture(event.pointerId);
       this.colorizeStroke = { color: this.foregroundHex(), radius: Math.max(1, this.brush.size / 2), points: [{ ...point }] };
       this.colorizeStrokeLayerId = layer.id;
@@ -2066,6 +2101,18 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       this.last = point;
       this.q<HTMLElement>('#status').textContent = 'Pintando una marca de colorización.';
       return true;
+    }
+
+  protected cancelColorizeStroke(): void {
+      this.colorizeStroke = null;
+      this.colorizeStrokeLayerId = null;
+      this.colorizeStrokeMaskId = null;
+      this.activeStrokePointerId = null;
+      this.activeStrokePointerType = null;
+      this.strokePointerEnded = false;
+      this.last = null;
+      this.colorizeOutputCache.clear();
+      this.q<HTMLElement>('#status').textContent = 'Se canceló el trazo de colorización.';
     }
 
   protected extendColorizeStroke(point: { x: number; y: number }, finalPoint: boolean): void {
@@ -2089,6 +2136,9 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       this.colorizeStroke = null;
       this.colorizeStrokeLayerId = null;
       this.colorizeStrokeMaskId = null;
+      this.activeStrokePointerId = null;
+      this.activeStrokePointerType = null;
+      this.strokePointerEnded = false;
       this.last = null;
       if (stroke && layerId && maskId) {
         this.ctl.updateMask(layerId, maskId, (mask) => mask.type === 'colorize'
@@ -2102,6 +2152,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
     }
 
   protected onPointerMove(e: PointerEvent, finalPoint = false): void {
+      if (!isCurrentStrokePointer(this.activeStrokePointerId, e.pointerId, this.strokePointerEnded)) return;
       if (this.selectionBrushGesture) { this.updateSelectionBrush(this.toDoc(e)); return; }
       if (this.selectionGesture) { this.updateSelectionGesture(this.toDoc(e)); return; }
       if (this.rasterMoveGesture) { this.updateElementMove(this.toDoc(e)); return;}
@@ -2126,6 +2177,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
         return;
       }
       if (!isBrushStrokeToolId(this.strokeTool)) return;
+      const nextSample = readBrushPointerSample(e);
       let p = this.toDoc(e);
       if (!finalPoint && this.brush.smoothing > 0) {
         const blend = 1 - (this.brush.smoothing / 100) * 0.75;
@@ -2136,14 +2188,27 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       if (dist < step && !finalPoint) return;
       const n = Math.max(1, Math.floor(dist / step));
       if (dist > 0) {
-        this.stampInterpolatedSegment(this.last, dx, dy, n);
+        this.stampInterpolatedSegment(this.last, dx, dy, n, this.lastBrushSample, nextSample);
         this.last = p;
       }
+      this.lastBrushSample = nextSample;
     }
 
-  protected stampInterpolatedSegment(start: { x: number; y: number }, dx: number, dy: number, steps: number): void {
+  protected stampInterpolatedSegment(
+      start: { x: number; y: number },
+      dx: number,
+      dy: number,
+      steps: number,
+      startSample: BrushPointerSample = this.lastBrushSample,
+      endSample: BrushPointerSample = this.currentBrushSample,
+    ): void {
       for (let index = 1; index <= steps; index++) {
-        this.pendingBrushDabs.push({ x: start.x + (dx * index) / steps, y: start.y + (dy * index) / steps });
+        const progress = index / steps;
+        this.pendingBrushDabs.push({
+          x: start.x + dx * progress,
+          y: start.y + dy * progress,
+          sample: interpolateBrushPointerSample(startSample, endSample, progress),
+        });
       }
       this.requestRefreshFrame();
     }
@@ -2187,6 +2252,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
 
   private processNextBrushDab(): void {
     const point = this.pendingBrushDabs[this.pendingBrushDabHead++];
+    this.currentBrushSample = point.sample;
     this.stamp(point.x, point.y);
   }
 
@@ -2383,6 +2449,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
   }
 
   protected up(e?: PointerEvent): void {
+      if (e && !isCurrentStrokePointer(this.activeStrokePointerId, e.pointerId)) return;
       if (this.selectionBrushGesture) return this.finishSelectionBrush(e);
       if (this.selectionGesture) return this.finishSelectionGesture(e);
       if (this.rasterMoveGesture) return this.finishElementMove(e);
@@ -2393,6 +2460,16 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
         this.isPanning = false; this.panStart = null; this.applyCanvasView();
         return;
       }
+      if (e?.type === 'pointercancel') {
+        if (this.colorizeStroke) {
+          this.cancelColorizeStroke();
+          return;
+        }
+        if (this.stroke) {
+          this.abortStroke(new Error('El trazo se canceló por el dispositivo de entrada.'));
+          return;
+        }
+      }
       if (this.colorizeStroke) {
         this.finishColorizeStroke();
         return;
@@ -2400,6 +2477,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       if (!this.stroke) { this.clearToolPreview(); return; }
       try {
         this.commitPointerUpAction(e, this.strokeTool);
+        this.strokePointerEnded = true;
         this.finishPendingBrushDabsOrStroke(this.strokeTool);
       } catch (error) {
         this.abortStroke(error);
@@ -2446,6 +2524,8 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
         return;
       }
       this.clearStrokeState();
+      this.currentBrushSample = { pointerType: 'mouse', pressure: 1, tiltX: 0, tiltY: 0 };
+      this.lastBrushSample = this.currentBrushSample;
       this.updateHistoryUI();
       this.requestRefreshFrame();
     }
@@ -2457,11 +2537,16 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
       this.invalidateFilterRender();
       this.q<HTMLElement>('#status').textContent = error instanceof Error ? error.message : String(error);
       this.clearStrokeState();
+      this.currentBrushSample = { pointerType: 'mouse', pressure: 1, tiltX: 0, tiltY: 0 };
+      this.lastBrushSample = this.currentBrushSample;
       this.updateHistoryUI();
       this.requestRefreshFrame();
     }
 
   protected clearStrokeState(): void {
+      this.activeStrokePointerId = null;
+      this.activeStrokePointerType = null;
+      this.strokePointerEnded = false;
       this.stroke = null;
       this.strokeLayer = null;
       this.strokeLayerNodeId = null;
@@ -2526,6 +2611,7 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
         width, height, original, reference, seedX, seedY, seedColor,
         tolerance: this.brush.tolerance, color,
         opacity: this.brush.opacity / 100, contiguous: this.brush.contiguous,
+        texture: this.brush.texture, texturePattern: this.brush.texturePattern, textureSeed: this.brush.textureSeed,
         matchMask: gapClosureRadius !== null
           ? createGapClosedMatchMask(reference, width, height, seedColor, this.brush.tolerance, gapClosureRadius)
           : undefined,
@@ -2561,14 +2647,19 @@ export abstract class AppDrawingFeatures extends AppEventFeatures {
   protected paintFillPixel(operation: FillOperation, result: FillResult, pixel: number): void {
       const offset = pixel * 4;
       const data = result.pixels;
-      const sourceAlpha = operation.opacity;
+      const x = pixel % operation.width;
+      const y = Math.floor(pixel / operation.width);
+      const textureSample = getBrushTextureSample(x + 0.5, y + 0.5, operation.texturePattern, 0.35, operation.textureSeed);
+      const textureStrength = Math.max(0, Math.min(1, operation.texture));
+      const sourceAlpha = operation.opacity * (1 - textureStrength * (1 - textureSample.coverage));
       const oldAlpha = data[offset + 3] / 255;
       const outputAlpha = sourceAlpha + oldAlpha * (1 - sourceAlpha);
       if (outputAlpha > 0) {
         const oldWeight = oldAlpha * (1 - sourceAlpha);
-        data[offset] = Math.round((operation.color[0] * sourceAlpha + data[offset] * oldWeight) / outputAlpha);
-        data[offset + 1] = Math.round((operation.color[1] * sourceAlpha + data[offset + 1] * oldWeight) / outputAlpha);
-        data[offset + 2] = Math.round((operation.color[2] * sourceAlpha + data[offset + 2] * oldWeight) / outputAlpha);
+        const brightness = 1 + (textureSample.brightness - 1) * textureStrength;
+        data[offset] = Math.round((operation.color[0] * brightness * sourceAlpha + data[offset] * oldWeight) / outputAlpha);
+        data[offset + 1] = Math.round((operation.color[1] * brightness * sourceAlpha + data[offset + 1] * oldWeight) / outputAlpha);
+        data[offset + 2] = Math.round((operation.color[2] * brightness * sourceAlpha + data[offset + 2] * oldWeight) / outputAlpha);
         data[offset + 3] = Math.round(outputAlpha * 255);
       }
       result.filled++;

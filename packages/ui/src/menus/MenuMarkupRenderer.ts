@@ -28,6 +28,7 @@ function renderItem(item: MenuItemDefinition, iconRenderer: MenuIconRenderer): s
     const documentAttribute = item.requiresDocument ? ' data-requires-document="true"' : '';
     const actionAttribute = item.menuAction ? ` data-menu-action="${escapeAttribute(item.menuAction)}"` : '';
     const filterAttribute = item.filterKind ? ` data-filter-kind="${escapeAttribute(item.filterKind)}"` : '';
+    const urlAttribute = item.url ? ` data-menu-url="${escapeAttribute(item.url)}"` : '';
     const icon = item.icon ? iconRenderer(item.icon) : '';
     const content = `<span class="menu-item-label">${icon}<span>${escapeAttribute(item.label)}</span></span>`;
     const state = comingSoon ? '<span class="menu-coming-soon">Próximamente</span>' : '';
@@ -41,7 +42,7 @@ function renderItem(item: MenuItemDefinition, iconRenderer: MenuIconRenderer): s
         </div>`;
     }
 
-    return `<button id="${escapeAttribute(elementId)}" class="menu-item${disabled ? ' is-coming-soon' : ''}" role="${role}" type="button" data-menu-item-id="${escapeAttribute(item.id)}"${checkedAttribute}${disabledAttribute}${documentAttribute}${actionAttribute}${filterAttribute}>${content}${shortcut}${checkedMarkup}${state}</button>`;
+    return `<button id="${escapeAttribute(elementId)}" class="menu-item${disabled ? ' is-coming-soon' : ''}" role="${role}" type="button" data-menu-item-id="${escapeAttribute(item.id)}"${checkedAttribute}${disabledAttribute}${documentAttribute}${actionAttribute}${filterAttribute}${urlAttribute}>${content}${shortcut}${checkedMarkup}${state}</button>`;
 }
 
 function renderNodes(nodes: readonly MenuNodeDefinition[], iconRenderer: MenuIconRenderer): string {

@@ -9,22 +9,31 @@ import { wireFilterPanel } from '../panels/FilterPanel';
 import { wireVectorEditorPanel } from '../panels/VectorEditorPanel';
 import { wirePlugins, type PluginApi } from '../panels/PluginsPanel';
 import { createDockLayoutManager } from '../managers/DockLayoutManager';
+import { AnimationFrameLayerManager } from '../managers/AnimationFrameLayerManager';
+import { ToolGroupFlyoutController } from '../managers/ToolGroupFlyoutController';
 import { ComicGuideOverlayController } from '../features/comics/ComicGuideOverlay';
 import { routeLayerMenuAction, type LayerMenuCommand } from './LayerMenuCommandRouter';
 import type { WorkspaceId } from '../workspaces';
 import type { Tool, MenuEntry, PanelVisibilityEntry } from './AppBase';
 import type { ToolTarget } from '../tools/ToolsBase';
 import { readPreferences } from '../panels/PreferencesPanel';
+import { isCurrentStrokePointer, isPenContactSample } from '../tools/TabletInput';
 import { MenuInteractionController } from '../menus/MenuInteractionController';
 import type { FilterKind } from '@nvts/shared';
+import { encodeGif89a, encodePdfCompatibleAi, encodePsdComposite, encodeSvgWithEmbeddedPng } from '@nvts/storage';
 
 export abstract class AppEventFeatures extends AppVectorFeatures {
+  private animationFrameManager: AnimationFrameLayerManager | null = null;
+  protected comicGuideOverlay: ComicGuideOverlayController | null = null;
+
   protected abstract handleTransformSessionKey(event: KeyboardEvent): boolean;
   protected abstract startLayerTransform(): void;
   protected abstract clearSelectionFromMenu(): void;
   protected abstract clearHistoryFromMenu(): void;
 
   protected bind(): void {
+      this.setTabletInputPreferences(readPreferences().tabletInput);
+      this.bindColorSwatches();
       this.bindPluginAndLayerPanels();
       this.wireComicManager();
       this.initializeToolPanels();
@@ -36,9 +45,11 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       this.bindToolAndViewControls();
       this.bindEditorPanels();
       this.bindFileToolbar();
+      this.bindExportWorkflow();
       this.bindMaskControls();
       this.bindCanvasEvents();
       this.bindComicGuideOverlay();
+      this.bindAnimationFrameControls();
       this.bindKeyboardShortcuts();
     }
 
@@ -70,6 +81,33 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
         setBlendMode: (blendMode) => this.setActiveLayerBlendMode(blendMode),
       });
     }
+
+
+  private bindAnimationFrameControls(): void {
+    this.animationFrameManager = new AnimationFrameLayerManager(
+      () => this.ctl,
+      () => this.activeId,
+      (layerId) => { this.activeId = layerId; },
+    );
+    const initialLayer = this.animationFrameManager.initialize();
+    if (initialLayer) this.activeId = initialLayer.id;
+    this.root.addEventListener('nvts:animation-frame-change', (event) => {
+      const detail = (event as CustomEvent<{ frame: number }>).detail;
+      this.activateAnimationFrame(detail?.frame);
+    });
+  }
+
+  private activateAnimationFrame(frame: number): void {
+    if (!this.animationFrameManager || this.stroke || this.colorizeStroke) return;
+    const layer = this.animationFrameManager.selectFrame(frame);
+    if (!layer) return;
+    this.activeId = layer.id;
+    this.colorizeOutputCache.clear();
+    this.ctl.comp.invalidateAll();
+    this.syncUI();
+    this.updateHistoryUI();
+    this.scheduleRefresh();
+  }
 
   protected deleteActiveLayer(): void {
       if (this.stroke) return;
@@ -153,17 +191,25 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
         if (!(target instanceof Element)) return;
         const item = target.closest<HTMLButtonElement>('[data-menu-action]');
         if (!item || item.disabled) return;
-        this.runDeclaredMenuAction(item.dataset.menuAction ?? '', item.dataset.filterKind as FilterKind | undefined);
+        this.runDeclaredMenuAction(item.dataset.menuAction ?? '', item.dataset.filterKind as FilterKind | undefined, item.dataset.menuUrl);
       });
     }
 
-  protected runDeclaredMenuAction(action: string, filterKind?: FilterKind): void {
+  protected runDeclaredMenuAction(action: string, filterKind?: FilterKind, url?: string): void {
       if (action === 'undo') return this.doUndo();
       if (action === 'redo') return this.doRedo();
       if (action === 'clear-history') return this.clearHistoryFromMenu();
       if (action === 'transform-layer') return this.runLayerMenuAction('transform');
       if (action === 'deselect') return this.clearSelectionFromMenu();
       if (action === 'open-filter-panel' && filterKind) this.openFilterPanelForMenu(filterKind);
+      if (action === 'open-url' && url) this.openExternalMenuUrl(url);
+    }
+
+  private openExternalMenuUrl(value: string): void {
+      let url: URL;
+      try { url = new URL(value); } catch { return; }
+      if (url.protocol !== 'https:') return;
+      window.open(url.toString(), '_blank', 'noopener,noreferrer');
     }
 
   protected bindMenuDropdowns(): void {
@@ -451,6 +497,7 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
   }
 
   protected bindToolAndViewControls(): void {
+      new ToolGroupFlyoutController(this.root).mount();
       this.bindToolButtons();
       this.bindZoomButtons();
       this.bindClosePanelControls();
@@ -664,63 +711,236 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       this.q('#b-import-image').onclick = () => { void this.createFileLayer(); };
       this.q('#b-save').onclick = () => { void this.save(false); };
       this.q('#b-save-as').onclick = () => { void this.save(true); };
-      this.q('#b-export-png').onclick = () => { void this.exportVisibleImage('image/png'); };
-      this.q('#b-export-jpeg').onclick = () => { void this.exportVisibleImage('image/jpeg'); };
+      this.q('#b-export').onclick = () => this.openExportPanel();
+      this.q('#b-render-animation').onclick = () => this.openAnimationRenderPanel();
     }
 
-  protected async exportVisibleImage(mimeType: 'image/png' | 'image/jpeg'): Promise<void> {
-      if (this.stroke) return;
+  protected bindExportWorkflow(): void {
+      this.q('#export-panel-close').addEventListener('click', () => this.closeWorkflowPanel('#export-panel'));
+      this.q('#animation-render-close').addEventListener('click', () => this.closeWorkflowPanel('#animation-render-panel'));
+      this.q('#export-format').addEventListener('change', () => this.updateExportFormatDescription());
+      this.q<HTMLInputElement>('#export-quality').addEventListener('input', (event) => {
+        const input = event.currentTarget as HTMLInputElement;
+        this.q<HTMLOutputElement>('#export-quality-value').value = `${input.value}%`;
+      });
+      this.q('#export-choose-folder').addEventListener('click', () => { void this.chooseExportDirectory(); });
+      this.q('#export-confirm').addEventListener('click', () => { void this.exportFromPanel(); });
+      this.q('#animation-open-timeline').addEventListener('click', () => this.openAnimationTimeline());
+      this.updateExportFormatDescription();
+    }
+
+  protected openExportPanel(initialFormat?: string): void {
+      this.closeWorkflowPanel('#animation-render-panel');
+      const panel = this.q<HTMLElement>('#export-panel');
+      const name = this.q<HTMLInputElement>('#export-name');
+      const format = this.q<HTMLSelectElement>('#export-format');
+      if (!name.value || name.value === 'Sin título') name.value = this.ctl.doc.name || 'PhotoMania';
+      if (initialFormat) format.value = initialFormat;
+      panel.hidden = false;
+      this.updateExportFormatDescription();
+      format.focus();
+    }
+
+  protected openAnimationRenderPanel(): void {
+      this.closeWorkflowPanel('#export-panel');
+      this.q<HTMLElement>('#animation-render-panel').hidden = false;
+      this.q<HTMLButtonElement>('#animation-render-disabled').focus();
+    }
+
+  protected closeWorkflowPanel(selector: string): void {
+      const panel = this.root.querySelector<HTMLElement>(selector);
+      if (panel) panel.hidden = true;
+    }
+
+  protected updateExportFormatDescription(): void {
+      const format = this.q<HTMLSelectElement>('#export-format').value;
+      const messages: Record<string, string> = {
+        png: 'PNG conserva transparencia y exporta la composición visible.',
+        jpeg: 'JPEG aplana la transparencia sobre blanco. La calidad se ajusta con el control inferior.',
+        gif: 'GIF exporta una imagen estática de 256 colores. La animación requiere celdas por fotograma en la línea de tiempo.',
+        svg: 'El SVG incluye la composición completa como una imagen PNG incrustada; no convierte las capas rasterizadas en trazados vectoriales.',
+        psd: 'PSD genera un archivo RGB de 8 bits con transparencia y una sola composición aplanada; no conserva las capas editables.',
+        ai: 'AI genera un archivo PDF-compatible que Illustrator puede abrir. La composición se incrusta aplanada, sin capas ni trazados editables.',
+        kra: 'La exportación KRA nativa todavía no está implementada. La importación KRA usa la imagen compuesta del archivo.',
+      };
+      this.q<HTMLElement>('#export-format-info').textContent = messages[format] ?? '';
+      this.q<HTMLElement>('#export-quality-field').hidden = format !== 'jpeg';
+    }
+
+  protected async chooseExportDirectory(): Promise<void> {
+      const fileSystemWindow = window as Window & { showDirectoryPicker?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle> };
+      if (!fileSystemWindow.showDirectoryPicker) {
+        this.q<HTMLElement>('#export-destination-label').textContent = 'Este navegador no permite seleccionar una carpeta. Se abrirá el selector de archivo si está disponible.';
+        return;
+      }
       try {
-        const { width, height, name } = this.ctl.doc;
+        this.exportDirectoryHandle = await fileSystemWindow.showDirectoryPicker({ mode: 'readwrite' });
+        this.q<HTMLElement>('#export-destination-label').textContent = `Carpeta seleccionada: ${this.exportDirectoryHandle.name}`;
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) this.fail(error);
+      }
+    }
+
+  protected async exportFromPanel(): Promise<void> {
+      if (this.stroke || this.blockForUnappliedMaskChanges('exportar')) return;
+      const format = this.q<HTMLSelectElement>('#export-format').value;
+      if (format === 'kra') {
+        this.q<HTMLElement>('#export-format-info').textContent = 'KRA nativo todavía no está disponible; elegí otro formato.';
+        return;
+      }
+      const extension = this.getExportExtension(format);
+      const documentName = this.ctl.doc.name || 'PhotoMania';
+      const baseName = this.q<HTMLInputElement>('#export-name').value.trim() || documentName;
+      const fileName = this.ensureExportExtension(baseName, extension);
+      try {
+        const targetPromise = this.chooseExportFileTarget(fileName, format);
+        const { width, height } = this.ctl.doc;
         const composition = this.createSamplingCanvas(width, height);
         this.composeSamplingLayers(this.ctl.doc.layers, composition, width, height, (layer) => this.ctl.readPixels(layer));
-        const output = mimeType === 'image/jpeg' ? this.flattenOnWhite(composition, width, height) : composition;
-        const blob = await this.encodeCanvas(output, mimeType);
-        this.downloadRaster(blob, name, mimeType);
-        this.q<HTMLElement>('#status').textContent = `Exportado como ${mimeType === 'image/png' ? 'PNG' : 'JPEG'} · ${width}×${height}`;
+        const output = format === 'jpeg' || format === 'ai'
+          ? this.flattenOnWhite(composition, width, height)
+          : composition;
+        const bytes = await this.encodeExportFormat(format, output);
+        const target = await targetPromise;
+        if (target) this.q<HTMLElement>('#export-destination-label').textContent = `Ubicación elegida: ${target.name}`;
+        await this.writeExportTarget(target, fileName, bytes, format);
+        this.q<HTMLElement>('#status').textContent = `Exportado como ${format.toUpperCase()} · ${width}×${height}`;
+        this.closeWorkflowPanel('#export-panel');
       } catch (error) {
-        this.fail(error);
+        if (!(error instanceof DOMException && error.name === 'AbortError')) this.fail(error);
       }
+    }
+
+  protected getExportExtension(format: string): string {
+      const extensions: Record<string, string> = { png: 'png', jpeg: 'jpg', gif: 'gif', svg: 'svg', psd: 'psd', ai: 'ai' };
+      const extension = extensions[format];
+      if (!extension) throw new Error(`Formato de exportación no compatible: ${format}`);
+      return extension;
+    }
+
+  protected ensureExportExtension(fileName: string, extension: string): string {
+      const safeName = fileName.replace(/[\\/:*?"<>|]/g, '_').replace(/\.(png|jpe?g|gif|svg|psd|ai|kra)$/i, '').trim() || 'PhotoMania';
+      return `${safeName}.${extension}`;
+    }
+
+  protected async chooseExportFileTarget(fileName: string, format: string): Promise<FileSystemFileHandle | null> {
+      if (this.exportDirectoryHandle) return null;
+      const fileSystemWindow = window as Window & { showSaveFilePicker?: (options?: SaveFilePickerOptions) => Promise<FileSystemFileHandle> };
+      if (!fileSystemWindow.showSaveFilePicker) return null;
+      const mimeType = this.getExportMimeType(format) as `${string}/${string}`;
+      const fileExtension = `.${this.getExportExtension(format)}` as `.${string}`;
+      const accept: Record<`${string}/${string}`, `.${string}` | `.${string}`[]> = {};
+      accept[mimeType] = [fileExtension];
+
+      return fileSystemWindow.showSaveFilePicker({
+        suggestedName: fileName,
+        types: [{ description: `${format.toUpperCase()} file`, accept }],
+      });
+    }
+
+  protected async encodeExportFormat(format: string, canvas: HTMLCanvasElement): Promise<Uint8Array | Blob> {
+      const { width, height } = canvas;
+      if (format === 'psd' || format === 'ai' || format === 'gif') {
+        const pixels = new Uint8Array(canvas.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, width, height).data);
+        if (format === 'psd') return encodePsdComposite(width, height, pixels);
+        if (format === 'ai') return encodePdfCompatibleAi(width, height, pixels);
+        return encodeGif89a(width, height, pixels);
+      }
+      const mimeType = format === 'jpeg' ? 'image/jpeg' : 'image/png';
+      const blob = await this.encodeCanvas(canvas, mimeType, Number(this.q<HTMLInputElement>('#export-quality').value) / 100);
+      if (format !== 'svg') return blob;
+      const pngBytes = new Uint8Array(await blob.arrayBuffer());
+      return encodeSvgWithEmbeddedPng(width, height, pngBytes);
+    }
+
+  protected encodeCanvas(canvas: HTMLCanvasElement, mimeType: string, quality = 0.92): Promise<Blob> {
+      return new Promise((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (blob) resolve(blob);
+          else reject(new Error(`El navegador no pudo codificar la imagen como ${mimeType}.`));
+        }, mimeType, quality);
+      });
+    }
+
+  protected getExportMimeType(format: string): string {
+      const mimeTypes: Record<string, string> = {
+        png: 'image/png', jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml',
+        psd: 'image/vnd.adobe.photoshop', ai: 'application/pdf',
+      };
+      return mimeTypes[format] ?? 'application/octet-stream';
+    }
+
+  protected async writeExportTarget(
+      handle: FileSystemFileHandle | null,
+      fileName: string,
+      data: Uint8Array | Blob,
+      format: string,
+    ): Promise<void> {
+      const blob = data instanceof Blob ? data : new Blob([data as BlobPart], { type: this.getExportMimeType(format) });
+      if (this.exportDirectoryHandle) {
+        await this.writeExportToDirectory(this.exportDirectoryHandle, fileName, blob);
+        return;
+      }
+      if (handle) {
+        const writable = await handle.createWritable();
+        try { await writable.write(blob); await writable.close(); }
+        catch (error) { await writable.abort(); throw error; }
+        return;
+      }
+      this.downloadExportBlob(blob, fileName);
+      this.q<HTMLElement>('#export-destination-label').textContent = 'El navegador guardó el archivo mediante su mecanismo de descargas.';
+    }
+
+  protected async writeExportToDirectory(directory: FileSystemDirectoryHandle, fileName: string, blob: Blob): Promise<void> {
+      let permission = await directory.queryPermission({ mode: 'readwrite' });
+      if (permission !== 'granted') permission = await directory.requestPermission({ mode: 'readwrite' });
+      if (permission !== 'granted') throw new Error('No se concedió permiso para escribir en la carpeta seleccionada.');
+      let existingFile = false;
+      try { await directory.getFileHandle(fileName); existingFile = true; }
+      catch (error) { if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error; }
+      if (existingFile && !confirm(`Ya existe “${fileName}” en la carpeta elegida. ¿Querés reemplazarlo?`)) {
+        throw new DOMException('Exportación cancelada.', 'AbortError');
+      }
+      const handle = await directory.getFileHandle(fileName, { create: true });
+      const writable = await handle.createWritable();
+      try { await writable.write(blob); await writable.close(); }
+      catch (error) { await writable.abort(); throw error; }
+    }
+
+  protected downloadExportBlob(blob: Blob, fileName: string): void {
+      const url = URL.createObjectURL(blob);
+      const link = Object.assign(document.createElement('a'), { href: url, download: fileName });
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+    }
+
+  protected openAnimationTimeline(): void {
+      this.closeWorkflowPanel('#animation-render-panel');
+      const panel = this.q<HTMLElement>('#animation-timeline-panel');
+      panel.hidden = false;
+      panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
 
   protected flattenOnWhite(source: HTMLCanvasElement, width: number, height: number): HTMLCanvasElement {
       const output = this.createSamplingCanvas(width, height);
       const context = output.getContext('2d');
-      if (!context) throw new Error('No se pudo preparar la exportación JPEG.');
+      if (!context) throw new Error('No se pudo preparar la exportación JPEG/AI.');
       context.fillStyle = '#ffffff';
       context.fillRect(0, 0, width, height);
       context.drawImage(source, 0, 0);
       return output;
     }
 
-  protected encodeCanvas(canvas: HTMLCanvasElement, mimeType: string): Promise<Blob> {
-      return new Promise((resolve, reject) => {
-        canvas.toBlob((blob) => {
-          if (blob) resolve(blob);
-          else reject(new Error(`El navegador no pudo codificar la imagen como ${mimeType}.`));
-        }, mimeType, mimeType === 'image/jpeg' ? 0.92 : undefined);
-      });
-    }
-
-  protected downloadRaster(blob: Blob, documentName: string, mimeType: 'image/png' | 'image/jpeg'): void {
-      const extension = mimeType === 'image/png' ? 'png' : 'jpg';
-      const safeName = documentName.replace(/[\\/:*?"<>|]/g, '_').trim() || 'PhotoMania';
-      const url = URL.createObjectURL(blob);
-      const link = Object.assign(document.createElement('a'), { href: url, download: `${safeName}.${extension}` });
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }
-
   protected bindComicGuideOverlay(): void {
       const canvas = this.root.querySelector<HTMLCanvasElement>('#canvas');
       if (!canvas || !this.root.querySelector('#toggle-comic-guides')) return;
-      new ComicGuideOverlayController(this.root, canvas);
+      this.comicGuideOverlay = new ComicGuideOverlayController(this.root, canvas);
     }
 
   protected bindCanvasEvents(): void {
       const canvas = this.canvas;
       canvas.addEventListener('pointerdown', (event) => this.down(event));
-      canvas.addEventListener('pointermove', (event) => this.onPointerMove(event));
+      canvas.addEventListener('pointermove', (event) => this.handleCanvasPointerMove(event));
       canvas.addEventListener('pointerup', (event) => this.up(event));
       canvas.addEventListener('pointercancel', (event) => this.up(event));
       canvas.addEventListener('contextmenu', (event) => {
@@ -735,6 +955,32 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
         this.scheduleRefresh();
       }).observe(stage);
     }
+
+  private handleCanvasPointerMove(event: PointerEvent): void {
+    if (!isCurrentStrokePointer(this.activeStrokePointerId, event.pointerId, this.strokePointerEnded)) return;
+    if (!isPenContactSample(event.pointerType === 'pen' || event.pointerType === 'touch' ? event.pointerType : 'mouse', event.buttons, event.pressure)) return;
+    if (event.pointerType !== 'pen' || typeof event.getCoalescedEvents !== 'function') {
+      this.onPointerMove(event);
+      return;
+    }
+
+    const coalesced = event.getCoalescedEvents();
+    if (!coalesced.length) {
+      this.onPointerMove(event);
+      return;
+    }
+
+    for (const sample of coalesced) {
+      if (!isCurrentStrokePointer(this.activeStrokePointerId, sample.pointerId, this.strokePointerEnded)) continue;
+      if (!isPenContactSample('pen', sample.buttons, sample.pressure)) continue;
+      this.onPointerMove(sample);
+    }
+
+    const lastSample = coalesced.at(-1);
+    if (lastSample && (lastSample.clientX !== event.clientX || lastSample.clientY !== event.clientY)) {
+      this.onPointerMove(event);
+    }
+  }
 
   private bindCanvasFileDrop(stage: HTMLElement): void {
     stage.addEventListener('dragenter', (event) => this.handleCanvasFileDragEnter(event, stage));
@@ -882,8 +1128,8 @@ export abstract class AppEventFeatures extends AppVectorFeatures {
       if (key === 'o') { event.preventDefault(); void this.open(); return true; }
       if (key === 'n' && !event.shiftKey && !event.altKey) { event.preventDefault(); this.promptNew(); return true; }
       if (key === 'i' && event.altKey) { event.preventDefault(); void this.createFileLayer(); return true; }
-      if (key === 'e' && event.altKey && event.shiftKey) { event.preventDefault(); void this.exportVisibleImage('image/jpeg'); return true; }
-      if (key === 'e' && event.shiftKey) { event.preventDefault(); void this.exportVisibleImage('image/png'); return true; }
+      if (key === 'e' && event.altKey && event.shiftKey) { event.preventDefault(); this.openExportPanel('jpeg'); return true; }
+      if (key === 'e' && event.shiftKey) { event.preventDefault(); this.openExportPanel(); return true; }
       if (key === 'g' && !event.shiftKey && !event.altKey) { event.preventDefault(); this.groupActiveLayer(); return true; }
       if (key === 'j' && !event.shiftKey && !event.altKey) { event.preventDefault(); this.duplicateActiveLayer(); return true; }
       if (key === 'n' && event.shiftKey && !event.altKey) { event.preventDefault(); void this.createLayerOfType('paint'); return true; }

@@ -6,3 +6,4 @@ export * from './effects/LayerStyleRenderer';
 
 export * from './shared-core/SharedCoreImageIO';
 export * from './shared-core/SharedCoreColorManagement';
+export * from './brush/BrushTexture';

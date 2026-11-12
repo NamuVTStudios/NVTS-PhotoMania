@@ -79,12 +79,18 @@ test('selection exposes only the existing deselection action', () => {
   assert.equal(actions[0].menuAction, 'deselect');
 });
 
-test('Help includes a global menu search and keeps external destinations disabled until configured', () => {
+test('Help includes a global menu search and only enables configured external destinations', () => {
   assert.equal(MENU_DEFINITIONS.help.searchable, true);
   const help = flatten(MENU_DEFINITIONS.help.items);
-  for (const id of ['help-discord', 'help-website', 'help-github']) {
-    assert.equal(help.find((item) => item.id === id)?.state, 'comingSoon');
-  }
+  assert.equal(help.find((item) => item.id === 'help-discord')?.state, 'comingSoon');
+  assert.equal(help.find((item) => item.id === 'help-website')?.url, 'https://namuvtstudiosweb.vercel.app/');
+  assert.equal(help.find((item) => item.id === 'help-github')?.url, 'https://github.com/NamuVTStudios/NVTS-PhotoMania');
+  assert.equal(help.find((item) => item.id === 'help-website')?.menuAction, 'open-url');
+  assert.equal(help.find((item) => item.id === 'help-github')?.menuAction, 'open-url');
+  const renderer = readFileSync(new URL('../packages/ui/src/menus/MenuMarkupRenderer.ts', import.meta.url), 'utf8');
+  const actions = readFileSync(new URL('../packages/ui/src/app/AppEventFeatures.ts', import.meta.url), 'utf8');
+  assert.match(renderer, /data-menu-url/);
+  assert.match(actions, /openExternalMenuUrl/);
 });
 
 test('specialized commands are registered as excluded and never enabled', () => {

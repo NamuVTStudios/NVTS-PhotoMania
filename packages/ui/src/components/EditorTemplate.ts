@@ -22,8 +22,8 @@ export const EDITOR_TEMPLATE = `
   <aside class="tools-rail" aria-label="Herramientas">
     <button id="rail-hand" aria-label="Mover lienzo" title="Mover lienzo (H / barra espaciadora)"><span class="tool-icon tool-icon--hand" aria-hidden="true"></span></button>
     <button id="rail-move" aria-label="Mover elementos" title="Mover elementos de píxeles o vectoriales (M)"><span class="tool-icon tool-icon--move" aria-hidden="true"></span></button>
-    <details class="tools-rail-group" id="direct-drawing-group" open>
-      <summary aria-label="Herramientas de dibujo directo" title="Dibujo directo"><span class="tool-icon tool-icon--pencil" aria-hidden="true"></span></summary>
+    <details class="tools-rail-group" id="direct-drawing-group">
+      <summary aria-label="Herramientas de dibujo directo" title="Dibujo directo"><span class="tool-icon tool-icon--group-drawing" aria-hidden="true"></span></summary>
       <div class="tools-rail-group-items">
         <button id="rail-brush" class="selected" aria-label="Pincel" title="Pincel (B)"><span class="tool-icon tool-icon--brush" aria-hidden="true"></span></button>
         <button id="rail-pen" aria-label="Plumilla" title="Plumilla (Q)"><span class="tool-icon tool-icon--pen" aria-hidden="true"></span></button>
@@ -33,7 +33,7 @@ export const EDITOR_TEMPLATE = `
       </div>
     </details>
     <details class="tools-rail-group" id="correction-tools-group">
-      <summary aria-label="Corrección y borrado" title="Corrección y borrado"><span class="tool-icon tool-icon--vector-eraser" aria-hidden="true"></span></summary>
+      <summary aria-label="Corrección y borrado" title="Corrección y borrado"><span class="tool-icon tool-icon--group-correction" aria-hidden="true"></span></summary>
       <div class="tools-rail-group-items">
         <button id="rail-eraser" aria-label="Borrador" title="Borrador (E)"><span class="tool-icon tool-icon--eraser" aria-hidden="true"></span></button>
         <button id="rail-smudge" aria-label="Mezcla de color" title="Mezcla de color (J)"><span class="tool-icon tool-icon--smudge" aria-hidden="true"></span></button>
@@ -45,7 +45,7 @@ export const EDITOR_TEMPLATE = `
       </div>
     </details>
     <details class="tools-rail-group" id="pixel-shapes-group">
-      <summary aria-label="Formas de píxeles" title="Herramientas de formas de píxeles"><span class="tool-icon tool-icon--select-rectangle" aria-hidden="true"></span></summary>
+      <summary aria-label="Formas de píxeles" title="Herramientas de formas de píxeles"><span class="tool-icon tool-icon--group-pixel" aria-hidden="true"></span></summary>
       <div class="tools-rail-group-items">
     <button id="rail-line" aria-label="Línea" title="Línea (L)"><span class="tool-icon tool-icon--line" aria-hidden="true"></span></button>
     <button id="rail-rectangle" aria-label="Rectángulo" title="Rectángulo (R)"><span class="tool-icon tool-icon--rectangle" aria-hidden="true"></span></button>
@@ -59,7 +59,7 @@ export const EDITOR_TEMPLATE = `
       </div>
     </details>
     <details class="tools-rail-group" id="fill-color-group">
-      <summary aria-label="Relleno y color" title="Relleno y color"><span class="tool-icon tool-icon--fill" aria-hidden="true"></span></summary>
+      <summary aria-label="Relleno y color" title="Relleno y color"><span class="tool-icon tool-icon--group-fill" aria-hidden="true"></span></summary>
       <div class="tools-rail-group-items">
         <button id="rail-fill" aria-label="Bote de pintura" title="Relleno (G)"><span class="tool-icon tool-icon--fill" aria-hidden="true"></span></button>
         <button id="rail-gradient" aria-label="Degradado" title="Degradado (D): arrastrá para definir la dirección"><span class="tool-icon tool-icon--gradient" aria-hidden="true"></span></button>
@@ -67,7 +67,7 @@ export const EDITOR_TEMPLATE = `
       </div>
     </details>
     <details class="tools-rail-group" id="selection-tools-group">
-      <summary aria-label="Selección de áreas" title="Selección de áreas"><span class="tool-icon tool-icon--vector-select" aria-hidden="true"></span></summary>
+      <summary aria-label="Selección de áreas" title="Selección de áreas"><span class="tool-icon tool-icon--group-selection" aria-hidden="true"></span></summary>
       <div class="tools-rail-group-items">
         <button id="rail-select-rectangle" aria-label="Selección rectangular" title="Selección rectangular (Shift + R)"><span class="tool-icon tool-icon--select-rectangle" aria-hidden="true"></span></button>
         <button id="rail-select-ellipse" aria-label="Selección elíptica" title="Selección elíptica (Shift + Q)"><span class="tool-icon tool-icon--select-ellipse" aria-hidden="true"></span></button>
@@ -81,9 +81,8 @@ export const EDITOR_TEMPLATE = `
     </details>
     <button id="rail-text" aria-label="Texto" title="Texto (T)"><span class="tool-icon tool-icon--text" aria-hidden="true"></span></button>
     <button id="rail-vector-select" aria-label="Seleccionar objeto vectorial" title="Seleccionar objeto vectorial (V)"><span class="tool-icon tool-icon--vector-select" aria-hidden="true"></span></button>
-    <div class="tools-rail-divider" aria-hidden="true"></div>
     <details class="tools-rail-group" id="vector-shapes-group">
-      <summary aria-label="Formas vectoriales" title="Herramientas de formas vectoriales"><span class="tool-icon tool-icon--vector-rectangle" aria-hidden="true"></span></summary>
+      <summary aria-label="Formas vectoriales" title="Herramientas de formas vectoriales"><span class="tool-icon tool-icon--group-vector" aria-hidden="true"></span></summary>
       <div class="tools-rail-group-items">
     <button id="rail-vector-rectangle" aria-label="Rectángulo vectorial" title="Rectángulo vectorial (7) · arrastrá para crear una forma editable"><span class="tool-icon tool-icon--vector-rectangle" aria-hidden="true"></span></button>
     <button id="rail-vector-rounded-rectangle" aria-label="Rectángulo redondeado vectorial" title="Rectángulo redondeado vectorial (8) · arrastrá para crear una forma editable"><span class="tool-icon tool-icon--vector-rounded-rectangle" aria-hidden="true"></span></button>
@@ -97,9 +96,8 @@ export const EDITOR_TEMPLATE = `
     <button id="rail-vector-freehand" aria-label="Trazo vectorial libre" title="Trazo vectorial libre (Shift + C) · dibujá una ruta editable con el puntero"><span class="tool-icon tool-icon--vector-freehand" aria-hidden="true"></span></button>
       </div>
     </details>
-    <div class="tools-rail-divider" aria-hidden="true"></div>
     <details class="tools-rail-group" id="comic-guides-group">
-      <summary aria-label="Cómic y guías" title="Cómic y guías"><span class="tool-icon tool-icon--comic-panel" aria-hidden="true"></span></summary>
+      <summary aria-label="Cómic y guías" title="Cómic y guías"><span class="tool-icon tool-icon--group-comic" aria-hidden="true"></span></summary>
       <div class="tools-rail-group-items">
         <button id="rail-comic-panel" aria-label="Marco y viñetas de cómic" title="Marco y viñetas (P) · requiere una capa vectorial"><span class="tool-icon tool-icon--comic-panel" aria-hidden="true"></span></button>
         <button id="rail-speech-bubble" aria-label="Bocadillo" title="Bocadillo (Shift + W) · crea un globo vectorial"><span class="tool-icon tool-icon--speech-bubble" aria-hidden="true"></span></button>
@@ -108,9 +106,10 @@ export const EDITOR_TEMPLATE = `
         <button id="rail-vector-radial-lines" aria-label="Líneas radiales" title="Líneas radiales (Shift + P)"><span class="tool-icon tool-icon--vector-radial-lines" aria-hidden="true"></span></button>
       </div>
     </details>
-    <div class="swatches"><span id="foreground-swatch"></span><span id="secondary-swatch"></span></div>
+    <div class="swatches" role="group" aria-label="Colores de dibujo"><button id="foreground-swatch" type="button" aria-label="Elegir color principal" title="Color principal"></button><button id="secondary-swatch" type="button" aria-label="Elegir color secundario" title="Color secundario"></button><button id="swap-colors" type="button" aria-label="Intercambiar colores" title="Intercambiar colores">⇄</button><input id="foreground-color-picker" type="color" value="#000000" tabindex="-1" aria-hidden="true"><input id="background-color-picker" type="color" value="#ffffff" tabindex="-1" aria-hidden="true"></div>
   </aside>
-  <section class="canvas-area"><div class="canvas-label"><span id="canvas-name">Sin título</span><span id="canvas-meta">1280 × 720 px · RGB/8</span></div><div id="canvas-preview-toolbar" class="canvas-preview-toolbar" hidden><span class="canvas-preview-toolbar__title">Vista previa de efectos y máscaras</span><label id="mask-preview-control" class="mask-preview-control"><span class="sr-only">Modo de comparación</span><select id="mask-preview-mode" aria-label="Comparación de máscaras"><option value="before">Antes de modificar</option><option value="split">Dividir antes/después</option><option value="after">Después de modificar</option></select></label></div><div class="canvas-stage"><canvas id="canvas"></canvas><canvas id="tool-preview" aria-hidden="true"></canvas><canvas id="selection-preview" aria-hidden="true"></canvas><div id="mask-before-preview-clip" hidden aria-hidden="true"><canvas id="mask-before-preview"></canvas></div><div id="mask-preview-before-label" class="mask-preview-label mask-preview-label--before" hidden aria-hidden="true">Antes</div><div id="mask-preview-after-label" class="mask-preview-label mask-preview-label--after" hidden aria-hidden="true">Después</div><div id="mask-preview-divider" hidden aria-hidden="true"></div></div><div class="zoom-controls"><button id="zoom-out" title="Alejar" aria-label="Alejar"><span class="tool-icon tool-icon--zoom-out" aria-hidden="true"></span></button><span id="zoom-value">Ajustar</span><button id="zoom-in" title="Acercar" aria-label="Acercar"><span class="tool-icon tool-icon--zoom-in" aria-hidden="true"></span></button><button id="zoom-fit" title="Ajustar al lienzo"><span class="tool-icon tool-icon--zoom-fit" aria-hidden="true"></span><span>Ajustar</span></button><button id="toggle-comic-guides" type="button" aria-pressed="false" title="Mostrar guías editoriales">Guías</button><button id="toggle-comic-symmetry-vertical" class="symmetry-toggle" type="button" aria-pressed="false" title="Activar o desactivar la simetría respecto del eje vertical">Simetría V</button><button id="toggle-comic-symmetry-horizontal" class="symmetry-toggle" type="button" aria-pressed="false" title="Activar o desactivar la simetría respecto del eje horizontal">Simetría H</button><label class="ruler-mode-control" for="ruler-guide-mode">Regla <select id="ruler-guide-mode" aria-label="Tipo de regla"><option value="linear">Lineal</option><option value="curved">Curva</option><option value="perspective">Perspectiva</option><option value="fisheye">Ojo de pez</option><option value="parallel">Paralelas</option><option value="radial">Radial</option><option value="concentric">Concéntrica</option></select></label><button id="toggle-ruler-guides" type="button" aria-pressed="false" title="Mostrar u ocultar la regla seleccionada">Regla</button></div></section>
+  <div id="tool-group-flyout-host" aria-live="off"></div>
+  <section class="canvas-area"><div class="canvas-label"><span id="canvas-name">Sin título</span><span id="canvas-meta">1280 × 720 px · RGB/8</span></div><div id="canvas-preview-toolbar" class="canvas-preview-toolbar" hidden><span class="canvas-preview-toolbar__title">Vista previa de efectos y máscaras</span><label id="mask-preview-control" class="mask-preview-control"><span class="sr-only">Modo de comparación</span><select id="mask-preview-mode" aria-label="Comparación de máscaras"><option value="before">Antes de modificar</option><option value="split">Dividir antes/después</option><option value="after">Después de modificar</option></select></label></div><div class="canvas-stage"><canvas id="canvas"></canvas><canvas id="tool-preview" aria-hidden="true"></canvas><canvas id="selection-preview" aria-hidden="true"></canvas><div id="mask-before-preview-clip" hidden aria-hidden="true"><canvas id="mask-before-preview"></canvas></div><div id="mask-preview-before-label" class="mask-preview-label mask-preview-label--before" hidden aria-hidden="true">Antes</div><div id="mask-preview-after-label" class="mask-preview-label mask-preview-label--after" hidden aria-hidden="true">Después</div><div id="mask-preview-divider" hidden></div></div><div class="zoom-controls"><button id="zoom-out" title="Alejar" aria-label="Alejar"><span class="tool-icon tool-icon--zoom-out" aria-hidden="true"></span></button><span id="zoom-value">Ajustar</span><button id="zoom-in" title="Acercar" aria-label="Acercar"><span class="tool-icon tool-icon--zoom-in" aria-hidden="true"></span></button><button id="zoom-fit" title="Ajustar al lienzo"><span class="tool-icon tool-icon--zoom-fit" aria-hidden="true"></span><span>Ajustar</span></button><button id="toggle-comic-guides" type="button" aria-pressed="false" title="Mostrar guías editoriales">Guías</button><button id="toggle-comic-symmetry-vertical" class="symmetry-toggle" type="button" aria-pressed="false" title="Activar o desactivar la simetría respecto del eje vertical">Simetría V</button><button id="toggle-comic-symmetry-horizontal" class="symmetry-toggle" type="button" aria-pressed="false" title="Activar o desactivar la simetría respecto del eje horizontal">Simetría H</button><label class="ruler-mode-control" for="ruler-guide-mode">Regla <select id="ruler-guide-mode" aria-label="Tipo de regla"><option value="linear">Lineal</option><option value="curved">Curva</option><option value="perspective">Perspectiva</option><option value="fisheye">Ojo de pez</option><option value="parallel">Paralelas</option><option value="radial">Radial</option><option value="concentric">Concéntrica</option></select></label><button id="toggle-ruler-guides" type="button" aria-pressed="false" title="Mostrar u ocultar la regla seleccionada">Regla</button></div></section>
   <aside class="right-dock">
 ${ADVANCED_TOOL_OPTIONS_PANEL_TEMPLATE}
 ${HISTORY_PANEL_TEMPLATE}
@@ -124,4 +123,26 @@ ${FILTER_PANEL_TEMPLATE}
   </aside>
   <aside class="animation-timeline-dock" aria-label="Panel inferior de animación"></aside>
 </main>
-${VECTOR_EDITOR_PANEL_TEMPLATE}`;
+${VECTOR_EDITOR_PANEL_TEMPLATE}
+<aside id="export-panel" class="workflow-panel" hidden aria-label="Panel de exportación">
+  <header class="workflow-panel__header"><div><span class="workflow-panel__eyebrow">ARCHIVO</span><h2>Exportar documento</h2></div><button id="export-panel-close" type="button" aria-label="Cerrar panel">×</button></header>
+  <div class="workflow-panel__body">
+    <label class="workflow-field" for="export-format"><span>Formato</span><select id="export-format">
+      <option value="png">PNG · Transparencia</option><option value="jpeg">JPEG · Imagen comprimida</option><option value="gif">GIF · Imagen estática</option><option value="svg">SVG · Contenedor vectorial con imagen rasterizada</option><option value="psd">PSD · Composición aplanada</option><option value="ai">AI · PDF compatible, composición aplanada</option><option value="kra" disabled>KRA · Exportación nativa no disponible</option>
+    </select></label>
+    <p id="export-format-info" class="workflow-panel__hint">PNG conserva la transparencia del lienzo.</p>
+    <label class="workflow-field" for="export-name"><span>Nombre del archivo</span><input id="export-name" type="text" value="Sin título" autocomplete="off" /></label>
+    <label id="export-quality-field" class="workflow-field" for="export-quality"><span>Calidad JPEG <output id="export-quality-value">92%</output></span><input id="export-quality" type="range" min="10" max="100" value="92" /></label>
+    <div class="workflow-destination"><div><strong>Destino</strong><p id="export-destination-label">Se abrirá el selector de ubicación al exportar.</p></div><button id="export-choose-folder" type="button">Elegir carpeta…</button></div>
+    <p class="workflow-panel__hint">El selector de guardado permite elegir una carpeta o ubicación sin depender de la carpeta de Descargas configurada en el navegador. En navegadores sin acceso al sistema de archivos, se usará la descarga normal.</p>
+    <div class="workflow-panel__actions"><button id="export-confirm" class="workflow-primary" type="button">Exportar archivo</button></div>
+  </div>
+</aside>
+<aside id="animation-render-panel" class="workflow-panel" hidden aria-label="Renderizado de animación">
+  <header class="workflow-panel__header"><div><span class="workflow-panel__eyebrow">ANIMACIÓN</span><h2>Renderizar animación</h2></div><button id="animation-render-close" type="button" aria-label="Cerrar panel">×</button></header>
+  <div class="workflow-panel__body">
+    <div class="workflow-notice"><strong>La línea de tiempo todavía no contiene fotogramas de imagen.</strong><p>Actualmente guarda pistas y marcas de fotogramas clave, pero no conserva una imagen distinta por fotograma. Para evitar un GIF que repita la misma imagen y parezca animado sin estarlo, el renderizado queda bloqueado hasta incorporar celdas de animación reales.</p></div>
+    <p class="workflow-panel__hint">La exportación de GIF estático sí está disponible desde el panel Exportar. La salida animada se habilitará cuando la línea de tiempo pueda almacenar y recuperar el contenido de cada fotograma.</p>
+    <div class="workflow-panel__actions"><button id="animation-open-timeline" class="workflow-secondary" type="button">Abrir línea de tiempo</button><button id="animation-render-disabled" class="workflow-primary" type="button" disabled>Renderizar animación</button></div>
+  </div>
+</aside>`;

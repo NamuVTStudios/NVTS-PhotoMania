@@ -1,67 +1,113 @@
-# Publica apps/web en GitHub Pages en cada push a main.
-# Requisito: Settings -> Pages -> Source = "GitHub Actions".
-name: Deploy NVTS Photomania to GitHub Pages
+name: Deploy NVTS PhotoMania to GitHub Pages
 
 on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
   pages: write
   id-token: write
 
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout código
-        uses: actions/checkout@v4
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    defaults:
+      run:
+        working-directory: NVTS-PhotoMania
 
-      - name: Configurar Node.js
+    steps:
+      - name: Checkout PhotoMania
+        uses: actions/checkout@v4
+        with:
+          path: NVTS-PhotoMania
+          persist-credentials: false
+
+      - name: Checkout Shared Core
+        uses: actions/checkout@v4
+        with:
+          repository: NamuVTStudios/NVTS-Shared-Core
+          ref: main
+          path: NVTS-Shared-Core
+          token: ${{ secrets.NVTS_SHARED_REPOS_READ_TOKEN || github.token }}
+          persist-credentials: false
+
+      - name: Checkout Shared UI
+        uses: actions/checkout@v4
+        with:
+          repository: NamuVTStudios/NVTS-Shared-UI
+          ref: main
+          path: NVTS-Shared-UI
+          token: ${{ secrets.NVTS_SHARED_REPOS_READ_TOKEN || github.token }}
+          persist-credentials: false
+
+      - name: Verify shared package links and exports
+        run: node tools/verify-shared-dependencies.mjs
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+          run_install: false
+
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: NVTS-PhotoMania/pnpm-lock.yaml
 
-      - name: Habilitar pnpm
-        run: |
-          corepack enable
-          corepack prepare pnpm@12.9.1 --activate
+      - name: Test Shared Core before consuming it
+        run: node --test tests/libraries/*.test.mjs tests/templates/*.test.mjs
+        working-directory: NVTS-Shared-Core
 
-      - name: Instalar dependencias del monorrepo
+      - name: Test Shared UI before consuming it
+        run: node --test tests/*.test.mjs
+        working-directory: NVTS-Shared-UI
+
+      - name: Install PhotoMania and shared dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Configurar Emscripten (SDK para Wasm)
+      - name: Setup Emscripten SDK
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 'latest'
+          version: latest
 
-      - name: Compilar motor C++ a WebAssembly y copiar assets
-        run: pnpm build:wasm
+      - name: Build WebAssembly engine
+        run: pnpm run build:wasm
 
-      - name: Verificar tipos TypeScript
-        run: pnpm typecheck
+      - name: TypeScript validation
+        run: pnpm run typecheck
 
-      - name: Ejecutar pruebas de regresión (secuenciales)
-        run: pnpm test
+      - name: Run regression tests
+        run: node --test --test-concurrency=1
 
-      - name: Compilar aplicación frontend (Vite)
+      - name: Build PhotoMania web application
         run: pnpm --filter @nvts/web build
 
-      - name: Verificar carpeta de salida
+      - name: Verify production output
         run: |
           test -d apps/web/dist
           test -f apps/web/dist/index.html
-          ls -la apps/web/dist
+          test -s apps/web/dist/index.html
 
-      - name: Configurar Entorno de GitHub Pages
+      - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
-      - name: Subir Artifact de Producción
+      - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: apps/web/dist
+          path: NVTS-PhotoMania/apps/web/dist
 
-      - name: Desplegar en GitHub Pages
+      - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4

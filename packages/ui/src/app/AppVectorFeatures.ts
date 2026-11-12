@@ -16,6 +16,7 @@ export abstract class AppVectorFeatures extends AppLayerPanelFeatures {
       this.vectorSelectedId = this.vectorDraft[0]?.id ?? null;
       this.q<HTMLElement>('#vector-layer-name').textContent = layer.name;
       this.renderVectorEditor();
+      this.dockLayout?.setPanelDraggingEnabled(false);
       this.q<HTMLElement>('#vector-panel').hidden = false;
     }
 
@@ -343,15 +344,17 @@ export abstract class AppVectorFeatures extends AppLayerPanelFeatures {
 
   protected applyVectorEditor(): void {
       const layer = this.vectorEditLayerId ? this.ctl.find(this.vectorEditLayerId) : undefined;
-      if (!layer || layer.type !== 'vector') { this.q<HTMLElement>('#vector-panel').hidden = true; return; }
+      if (!layer || layer.type !== 'vector') { this.q<HTMLElement>('#vector-panel').hidden = true; this.dockLayout?.setPanelDraggingEnabled(true); return; }
       this.updateVectorShapeFromFields();
       this.commitVectorShapes(layer, cloneVectorShapes(this.vectorDraft));
       this.q<HTMLElement>('#vector-panel').hidden = true;
+      this.dockLayout?.setPanelDraggingEnabled(true);
       this.vectorEditLayerId = null; this.vectorSelectedId = null; this.vectorDraft = [];
     }
 
   protected cancelVectorEditor(): void {
       this.q<HTMLElement>('#vector-panel').hidden = true;
+      this.dockLayout?.setPanelDraggingEnabled(true);
       this.vectorEditLayerId = null; this.vectorSelectedId = null; this.vectorDraft = [];
     }
 

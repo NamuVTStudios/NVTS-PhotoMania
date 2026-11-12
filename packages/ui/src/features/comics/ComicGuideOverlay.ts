@@ -1,6 +1,6 @@
 import { calculatePrintGuideRects, millimetresToPixels, type PrintBoundsMm } from '@nvts/templates';
 import { symmetryManager, type SymmetryAxis } from '../../managers/SymmetryManager';
-import { createRulerGeometry, type RulerMode } from './RulerGeometry';
+import { createRulerGeometry, snapPointToRuler, type RulerMode, type RulerPoint } from './RulerGeometry';
 
 export interface ComicGuideOptions {
   dpi: number;
@@ -268,6 +268,14 @@ export class ComicGuideOverlayController {
     const settings = symmetryManager.getSettings();
     this.verticalSymmetryButton.setAttribute('aria-pressed', String(settings.verticalAxis));
     this.horizontalSymmetryButton.setAttribute('aria-pressed', String(settings.horizontalAxis));
+  }
+
+  snapPoint(point: RulerPoint, tolerance: number): RulerPoint {
+    if (!this.showRulers) return point;
+    const width = this.sourceCanvas.width;
+    const height = this.sourceCanvas.height;
+    const geometry = createRulerGeometry(this.rulerMode, width, height, width * 0.5, height * 0.5);
+    return snapPointToRuler(point, geometry, tolerance);
   }
 
   private syncCanvasView(): void {

@@ -25,3 +25,5 @@ export { DEFAULT_COMIC_GUIDE_OPTIONS, ComicGuideOverlayController, createPrintCa
 export type { ComicGuideOptions } from './features/comics/ComicGuideOverlay';
 
 export * from './panels/Panel';
+
+export { createRulerGeometry, snapPointToRuler } from './features/comics/RulerGeometry';

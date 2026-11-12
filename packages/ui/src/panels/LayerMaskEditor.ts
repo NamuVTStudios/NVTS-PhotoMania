@@ -156,7 +156,7 @@ function createTransparentColorControl(mask: Extract<LayerMask, { type: 'coloriz
 function appendColorizeActions(section: HTMLElement, mask: Extract<LayerMask, { type: 'colorize' }>): void {
   const note = document.createElement('p');
   note.className = 'hint';
-  note.textContent = `Trazos de color guardados: ${mask.strokes.length}.`;
+  note.textContent = `Trazos guardados: ${mask.strokes.length}. Usan el color principal para rellenar regiones; no se pintan sobre la imagen.`;
   const update = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Actualizar colorización' });
   update.dataset.updateColorize = mask.id;
   const clear = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Borrar trazos' });

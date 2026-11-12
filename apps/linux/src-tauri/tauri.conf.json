@@ -21,10 +21,59 @@
         ],
         "security": {
             "csp": null
-        }
+        },
+        "withGlobalTauri": true
     },
     "bundle": {
         "active": true,
-        "targets": "all"
+        "targets": "all",
+        "fileAssociations": [
+            {
+                "ext": [
+                    "nvtsphoto"
+                ],
+                "name": "NVTS-PhotoMania.nvtsphoto",
+                "description": "Proyecto NVTS PhotoMania (.nvtsphoto)",
+                "mimeType": "application/x-nvtsphoto",
+                "role": "Editor",
+                "rank": "Owner",
+                "exportedType": {
+                    "identifier": "com.namuvt.nvts.photomania.project",
+                    "conformsTo": [
+                        "public.data"
+                    ]
+                }
+            }
+        ],
+        "resources": {
+            "../../web/public/branding/file-types/nvtsphoto-pmd.ico": "nvtsphoto-pmd.ico",
+            "../../web/public/branding/file-types/nvtsphoto-pmd.png": "nvtsphoto-pmd.png"
+        },
+        "linux": {
+            "deb": {
+                "files": {
+                    "/usr/share/mime/packages/nvtsphoto.xml": "../../web/public/branding/file-types/nvtsphoto-mime.xml",
+                    "/usr/share/icons/hicolor/128x128/mimetypes/application-x-nvtsphoto.png": "../../web/public/branding/file-types/nvtsphoto-pmd-128.png",
+                    "/usr/share/icons/hicolor/256x256/mimetypes/application-x-nvtsphoto.png": "../../web/public/branding/file-types/nvtsphoto-pmd-256.png",
+                    "/usr/share/icons/hicolor/512x512/mimetypes/application-x-nvtsphoto.png": "../../web/public/branding/file-types/nvtsphoto-pmd-512.png"
+                }
+            },
+            "rpm": {
+                "files": {
+                    "/usr/share/mime/packages/nvtsphoto.xml": "../../web/public/branding/file-types/nvtsphoto-mime.xml",
+                    "/usr/share/icons/hicolor/128x128/mimetypes/application-x-nvtsphoto.png": "../../web/public/branding/file-types/nvtsphoto-pmd-128.png",
+                    "/usr/share/icons/hicolor/256x256/mimetypes/application-x-nvtsphoto.png": "../../web/public/branding/file-types/nvtsphoto-pmd-256.png",
+                    "/usr/share/icons/hicolor/512x512/mimetypes/application-x-nvtsphoto.png": "../../web/public/branding/file-types/nvtsphoto-pmd-512.png"
+                }
+            },
+            "appimage": {
+                "files": {
+                    "/usr/share/mime/packages/nvtsphoto.xml": "../../web/public/branding/file-types/nvtsphoto-mime.xml",
+                    "/usr/share/icons/hicolor/128x128/mimetypes/application-x-nvtsphoto.png": "../../web/public/branding/file-types/nvtsphoto-pmd-128.png",
+                    "/usr/share/icons/hicolor/256x256/mimetypes/application-x-nvtsphoto.png": "../../web/public/branding/file-types/nvtsphoto-pmd-256.png",
+                    "/usr/share/icons/hicolor/512x512/mimetypes/application-x-nvtsphoto.png": "../../web/public/branding/file-types/nvtsphoto-pmd-512.png"
+                }
+            }
+        }
     }
 }

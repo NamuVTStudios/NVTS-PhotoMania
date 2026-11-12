@@ -3,6 +3,7 @@ import { MENU_DEFINITIONS } from '../menus/MenuDefinitions.mjs';
 import { renderDeclaredMenu } from '../menus/MenuMarkupRenderer';
 export const LOGO_URL = `${import.meta.env.BASE_URL}branding/nvts-photo-mania-icon.svg`;
 export const LOGO_PNG_URL = `${import.meta.env.BASE_URL}branding/nvts-photo-mania-icon.png`;
+export const NVTS_PHOTO_FILE_ICON_URL = `${import.meta.env.BASE_URL}branding/file-types/nvtsphoto-pmd.png`;
 
 export function logoImageMarkup(className = '', alt = ''): string {
   const classAttribute = className ? ` class=\"${className}\"` : '';
@@ -30,8 +31,8 @@ export const MAIN_MENU = `<nav class="menus" aria-label="Menú principal">
         <button id="b-save" class="menu-item" role="menuitem" type="button">${menuLabel('save', 'Guardar')}<kbd>Ctrl+S</kbd></button>
         <button id="b-save-as" class="menu-item" role="menuitem" type="button">${menuLabel('save-as', 'Guardar como…')}<kbd>Ctrl+Shift+S</kbd></button>
         <div class="menu-divider" role="separator"></div>
-        <button id="b-export-png" class="menu-item" role="menuitem" type="button">${menuLabel('export-png', 'Exportar composición como PNG…')}<kbd>Ctrl+Shift+E</kbd></button>
-        <button id="b-export-jpeg" class="menu-item" role="menuitem" type="button">${menuLabel('export-jpeg', 'Exportar composición como JPEG…')}<kbd>Ctrl+Alt+Shift+E</kbd></button>
+        <button id="b-export" class="menu-item" role="menuitem" type="button">${menuLabel('export', 'Exportar…')}<kbd>Ctrl+Shift+E</kbd></button>
+        <button id="b-render-animation" class="menu-item" role="menuitem" type="button">${menuLabel('timeline', 'Renderizar animación…')}</button>
       </div>
     </div>
     ${renderDeclaredMenu(MENU_DEFINITIONS.edit, uiIcon)}
@@ -140,7 +141,7 @@ export const HOME_TEMPLATE = `
         </section>
         <section data-home-view="open" class="home-view" hidden>
           <div class="home-section-head"><h2>Abrir archivo</h2><span>Continuá trabajando en una imagen</span></div>
-          <div id="home-dropzone" class="home-dropzone"><div class="home-download-icon">${uiIcon('open-file')}</div><h3>Arrastrá una imagen o <span>seleccioná un archivo</span></h3><p>También podés examinar tu dispositivo</p><button id="home-browse" class="home-secondary">${uiIcon('browse')}<span>Examinar archivos</span></button><div class="home-filetypes"><span>.nvtsphoto</span><span>.png</span><span>.jpg</span><span>.webp</span><span>.gif</span><span>.tif</span><span>.bmp</span><span>.tga</span><span>.ppm</span></div><input id="home-file-input" type="file" accept="image/*,.nvtsphoto,.tga,.ppm" hidden /></div>
+          <div id="home-dropzone" class="home-dropzone"><div class="home-download-icon home-download-icon--filetype"><img src="${NVTS_PHOTO_FILE_ICON_URL}" alt="Icono del formato PMD de PhotoMania" /></div><h3>Arrastrá una imagen o <span>seleccioná un archivo</span></h3><p>También podés examinar tu dispositivo</p><button id="home-browse" class="home-secondary">${uiIcon('browse')}<span>Examinar archivos</span></button><div class="home-filetypes"><span class="native-filetype-chip">PMD · .nvtsphoto</span><span>.psd</span><span>.ai</span><span>.kra</span><span>.png</span><span>.jpg</span><span>.gif</span><span>.svg</span><span>.webp</span><span>.tif</span><span>.bmp</span><span>.tga</span><span>.ppm</span></div><input id="home-file-input" type="file" accept="image/*,.nvtsphoto,.psd,.ai,.kra,.tga,.ppm" hidden /></div>
         </section>
         <section data-home-view="recent" class="home-view" hidden><div class="home-section-head"><h2>Proyectos recientes</h2><span>Seguí donde lo dejaste</span></div><div id="home-recents" class="home-recent-grid"></div></section>
         <p id="home-status" class="home-status" role="status"></p>

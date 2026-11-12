@@ -7,7 +7,7 @@ import { renderHistoryPanel } from '../panels/HistoryPanel';
 import { readPreferences } from '../panels/PreferencesPanel';
 import { documentFormats, rememberRecentProject } from '@nvts/storage';
 import type { Tool, TextToolSettings } from './AppBase';
-import { BRUSH_PRESETS, BRUSH_CATEGORY_LABELS, findBrushPreset } from '../tools/BrushPresetCatalog';
+import { BRUSH_PRESETS, BRUSH_CATEGORY_LABELS, findBrushPreset, resolveBrushMaterial } from '../tools/BrushPresetCatalog';
 import { getCanvasFitSize } from '../tools/CanvasViewGeometry';
 import type { RendererBackend } from '@nvts/renderer';
 
@@ -15,6 +15,10 @@ function getRendererLabel(kind: RendererBackend['kind']): string {
   if (kind === 'webgpu') return 'WebGPU';
   if (kind === 'canvaskit') return 'CanvasKit';
   return 'WebGL2';
+}
+
+function toHexColor(rgb: readonly number[]): string {
+  return `#${rgb.map((value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0')).join('')}`;
 }
 
 export abstract class AppLayerStateFeatures extends AppComicFeatures {
@@ -162,10 +166,7 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
         '#rail-vector-line', '#rail-vector-polyline', '#rail-vector-pen', '#rail-vector-polygon', '#rail-vector-line-correction',
         '#rail-vector-star', '#rail-vector-spiral', '#rail-vector-freehand', '#rail-comic-panel', '#rail-speech-bubble', '#rail-flash', '#rail-vector-parallel-lines', '#rail-vector-radial-lines',
       ], false);
-      const swatch = this.root.querySelector<HTMLElement>('#foreground-swatch');
-      if (swatch) swatch.style.background = this.foregroundHex();
-      const secondarySwatch = this.root.querySelector<HTMLElement>('#secondary-swatch');
-      if (secondarySwatch) secondarySwatch.style.background = '#ffffff';
+      this.syncColorSwatches();
     }
 
   private hasEditableVectorLayer(nodes: LayerNode[]): boolean {
@@ -184,7 +185,53 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
     }
 
   protected foregroundHex(): string {
-      return `#${this.brush.rgb.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('')}`;
+      return toHexColor(this.brush.rgb);
+    }
+
+  protected backgroundHex(): string {
+      return toHexColor(this.secondaryRgb);
+    }
+
+  protected syncColorSwatches(): void {
+      const foreground = this.root.querySelector<HTMLButtonElement>('#foreground-swatch');
+      const background = this.root.querySelector<HTMLButtonElement>('#secondary-swatch');
+      if (foreground) foreground.style.backgroundColor = this.foregroundHex();
+      if (background) background.style.backgroundColor = this.backgroundHex();
+      const foregroundInput = this.root.querySelector<HTMLInputElement>('#foreground-color-picker');
+      const backgroundInput = this.root.querySelector<HTMLInputElement>('#background-color-picker');
+      if (foregroundInput) foregroundInput.value = this.foregroundHex();
+      if (backgroundInput) backgroundInput.value = this.backgroundHex();
+    }
+
+  protected setBackgroundHex(hex: string): void {
+      if (!/^#[0-9a-f]{6}$/i.test(hex)) return;
+      this.secondaryRgb = [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+      this.syncColorSwatches();
+    }
+
+  protected swapForegroundAndBackground(): void {
+      const foreground = [...this.brush.rgb] as [number, number, number];
+      this.brush.rgb = [...this.secondaryRgb];
+      this.secondaryRgb = foreground;
+      this.syncColorSwatches();
+      const toolbarColor = this.root.querySelector<HTMLInputElement>('#tb-color');
+      if (toolbarColor) toolbarColor.value = this.foregroundHex();
+      const toolColor = this.root.querySelector<HTMLInputElement>('#tool-color');
+      if (toolColor) toolColor.value = this.foregroundHex();
+    }
+
+  protected bindColorSwatches(): void {
+      const foreground = this.root.querySelector<HTMLButtonElement>('#foreground-swatch');
+      const background = this.root.querySelector<HTMLButtonElement>('#secondary-swatch');
+      const foregroundInput = this.root.querySelector<HTMLInputElement>('#foreground-color-picker');
+      const backgroundInput = this.root.querySelector<HTMLInputElement>('#background-color-picker');
+      const swap = this.root.querySelector<HTMLButtonElement>('#swap-colors');
+      foreground?.addEventListener('click', () => foregroundInput?.click());
+      background?.addEventListener('click', () => backgroundInput?.click());
+      foregroundInput?.addEventListener('input', () => foregroundInput.value && this.setForegroundHex(foregroundInput.value));
+      backgroundInput?.addEventListener('input', () => backgroundInput.value && this.setBackgroundHex(backgroundInput.value));
+      swap?.addEventListener('click', () => this.swapForegroundAndBackground());
+      this.syncColorSwatches();
     }
 
   protected setForegroundHex(hex: string): void {
@@ -192,8 +239,9 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       this.brush.rgb = [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
       const colorInput = this.root.querySelector<HTMLInputElement>('#tool-color');
       if (colorInput) colorInput.value = hex;
-      const swatch = this.root.querySelector<HTMLElement>('#foreground-swatch');
-      if (swatch) swatch.style.background = hex;
+      const toolbarColor = this.root.querySelector<HTMLInputElement>('#tb-color');
+      if (toolbarColor) toolbarColor.value = hex;
+      this.syncColorSwatches();
     }
 
   protected renderToolOptions(): void {
@@ -306,7 +354,21 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
   }
 
   private createFillToolMarkup(color: string): string {
-    return `${color}<label class="tool-setting">Tolerancia <input id="tool-tolerance" type="range" min="0" max="255" value="${this.brush.tolerance}"/><output id="tool-tolerance-value">${this.brush.tolerance}</output></label><label class="tool-setting">Opacidad <input id="tool-opacity" type="range" min="1" max="100" value="${this.brush.opacity}"/><output id="tool-opacity-value">${this.brush.opacity}%</output></label>`;
+    return `${color}${this.createFillBrushPresetMarkup()}<label class="tool-setting">Tolerancia <input id="tool-tolerance" type="range" min="0" max="255" value="${this.brush.tolerance}"/><output id="tool-tolerance-value">${this.brush.tolerance}</output></label><label class="tool-setting">Opacidad <input id="tool-opacity" type="range" min="1" max="100" value="${this.brush.opacity}"/><output id="tool-opacity-value">${this.brush.opacity}%</output></label><span class="tool-help">El bote de pintura aplica el material y la textura del preajuste seleccionado dentro de la región rellenada.</span>`;
+  }
+
+  private createFillBrushPresetMarkup(): string {
+    const groups = this.createBrushPresetOptionsMarkup(this.brush.presetId);
+    const customSelected = findBrushPreset(this.brush.presetId) ? '' : 'selected';
+    return `<label class="tool-setting">Preajuste de relleno <select id="tool-fill-brush-preset"><option value="custom" ${customSelected}>Personalizado</option>${groups}</select></label>`;
+  }
+
+  private createBrushPresetOptionsMarkup(selectedPresetId: string): string {
+    return (['sketch', 'inking', 'decoration', 'texture', 'painting', 'paper'] as const).map((category) => {
+      const options = BRUSH_PRESETS.filter((preset) => preset.category === category).map((preset) =>
+        `<option value="${preset.id}" ${selectedPresetId === preset.id ? 'selected' : ''}>${preset.name}</option>`).join('');
+      return `<optgroup label="${BRUSH_CATEGORY_LABELS[category]}">${options}</optgroup>`;
+    }).join('');
   }
 
   protected createTextToolMarkup(fontOptions: string): string {
@@ -329,12 +391,8 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
     }
 
   private createBrushPresetMarkup(): string {
-    const groups = (['sketch', 'inking', 'decoration', 'texture', 'painting'] as const).map((category) => {
-      const options = BRUSH_PRESETS.filter((preset) => preset.category === category).map((preset) =>
-        `<option value="${preset.id}" ${this.brush.presetId === preset.id ? 'selected' : ''}>${preset.name}</option>`).join('');
-      return `<optgroup label="${BRUSH_CATEGORY_LABELS[category]}">${options}</optgroup>`;
-    }).join('');
     const customSelected = findBrushPreset(this.brush.presetId) ? '' : 'selected';
+    const groups = this.createBrushPresetOptionsMarkup(this.brush.presetId);
     return `<label class="tool-setting">Preajuste <select id="tool-brush-preset"><option value="custom" ${customSelected}>Personalizado</option>${groups}</select></label>`;
   }
 
@@ -345,9 +403,14 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
   }
 
   private applyBrushPreset(presetId: string): void {
+    if (presetId === 'custom') {
+      this.brush.presetId = 'custom';
+      this.renderToolOptions();
+      return;
+    }
     const preset = findBrushPreset(presetId);
     if (!preset) return;
-    this.brush = { ...this.brush, ...preset, presetId: preset.id };
+    this.brush = { ...this.brush, ...preset, material: resolveBrushMaterial(preset), presetId: preset.id };
     this.renderToolOptions();
     this.renderAdvancedToolOptions();
     this.scheduleRefresh();
@@ -362,14 +425,14 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
     const preset = findBrushPreset(presetId);
     if (!preset) return;
     const current = findBrushPreset(this.brush.presetId);
-    if (current?.category === preset.category) return;
-    const { id, size, opacity, hardness, spacing, smoothing, tipShape, texture } = preset;
-    this.brush = { ...this.brush, presetId: id, size, opacity, hardness, spacing, smoothing, tipShape, texture };
+    if (current?.category === preset.category || current?.category === 'paper') return;
+    const { id, size, opacity, hardness, spacing, smoothing, tipShape, texture, texturePattern, textureSeed } = preset;
+    this.brush = { ...this.brush, presetId: id, size, opacity, hardness, spacing, smoothing, tipShape, texture, texturePattern, textureSeed, material: resolveBrushMaterial(preset) };
   }
 
   private markBrushSettingsCustom(host: HTMLElement): void {
     this.brush.presetId = 'custom';
-    const preset = host.querySelector<HTMLSelectElement>('#tool-brush-preset');
+    const preset = host.querySelector<HTMLSelectElement>('#tool-brush-preset, #tool-fill-brush-preset');
     if (preset) preset.value = 'custom';
   }
 
@@ -400,11 +463,13 @@ export abstract class AppLayerStateFeatures extends AppComicFeatures {
       this.setForegroundHex('#000000');
       const toolbarColor = this.root.querySelector<HTMLInputElement>('#tb-color');
       if (toolbarColor) toolbarColor.value = '#000000';
-      const secondarySwatch = this.root.querySelector<HTMLElement>('#secondary-swatch');
-      if (secondarySwatch) secondarySwatch.style.background = '#ffffff';
+      this.secondaryRgb = [255, 255, 255];
+      this.syncColorSwatches();
     }
 
   protected bindFillToolControls(host: HTMLElement): void {
+      const fillPreset = host.querySelector<HTMLSelectElement>('#tool-fill-brush-preset');
+      if (fillPreset) fillPreset.onchange = () => this.applyBrushPreset(fillPreset.value);
       const shapeFill = host.querySelector<HTMLInputElement>('#tool-shape-fill');
       if (shapeFill) shapeFill.onchange = () => {
         this.brush.shapeFill = shapeFill.checked;

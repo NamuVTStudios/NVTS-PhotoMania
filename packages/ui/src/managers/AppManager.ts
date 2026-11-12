@@ -14,11 +14,12 @@ export type LaunchProject = (
 export class AppManager {
   private homeScreen: HomeScreenController | null = null;
 
-  async start(root: HTMLElement, wasmBaseUrl: string, launchProject: LaunchProject): Promise<void> {
+  async start(root: HTMLElement, wasmBaseUrl: string, launchProject: LaunchProject, initialFile?: File): Promise<void> {
     await initializePreferences();
     this.homeScreen = new HomeScreenController(root, (name, width, height, file) =>
       launchProject(root, wasmBaseUrl, name, width, height, file),
     );
     this.homeScreen.mount();
+    if (initialFile) await this.homeScreen.openStartupFile(initialFile);
   }
 }

@@ -492,13 +492,13 @@ export class DocumentController extends DocumentObject {
     return true;
   }
 
-  setProps(id: string, patch: LayerPatch): boolean {
+  setProps(id: string, patch: LayerPatch, recordHistory = true): boolean {
     const node = this.nodes.get(id);
     if (!node) return false;
     const before = clonePatch(node);
     this.applyPatchRaw(id, patch);
     const after = clonePatch(node);
-    if (!this.replaying && JSON.stringify(before) !== JSON.stringify(after)) {
+    if (recordHistory && !this.replaying && JSON.stringify(before) !== JSON.stringify(after)) {
       const label = getLayerPatchLabel(node, before, patch);
       this.recordStructure(label, () => this.applyPatchRaw(id, before), () => this.applyPatchRaw(id, after), this.metadataBytes({ before, after }) + 128, 'properties');
     }

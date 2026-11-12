@@ -62,7 +62,7 @@ export class MenuInteractionController {
             binding.dropdown.addEventListener('click', (event) => {
                 const item = (event.target as HTMLElement).closest<HTMLButtonElement>('button[role^="menuitem"]');
                 if (!item || item.classList.contains('submenu-trigger')) return;
-                this.closeMenu(binding);
+                this.closeAllMenus();
             });
             binding.dropdown.addEventListener('keydown', (event) => this.handleMenuKeydown(binding, event));
         });
@@ -88,15 +88,31 @@ export class MenuInteractionController {
         const selectors = ['#edit-menu-dropdown', '#image-menu-dropdown', '#select-menu-dropdown'];
         selectors.forEach((selector) => {
             this.root.querySelector<HTMLElement>(selector)?.querySelectorAll<HTMLButtonElement>('.submenu-trigger[aria-controls]').forEach((trigger) => {
+                const parentMenu = trigger.closest<HTMLElement>('.file-menu-dropdown');
+                const menusLayer = this.root.querySelector<HTMLElement>('.menus');
+                const dropdown = this.getControlledDropdown(trigger);
+                if (!parentMenu || !menusLayer || !dropdown) return;
+
+                dropdown.dataset.rootMenuId = parentMenu.id;
+                menusLayer.append(dropdown);
+                const rootTrigger = this.root.querySelector<HTMLButtonElement>(`[aria-controls="${CSS.escape(parentMenu.id)}"]`);
+                const owner: MenuBinding = rootTrigger
+                    ? { trigger: rootTrigger, dropdown: parentMenu }
+                    : { trigger, dropdown: parentMenu };
+
+                dropdown.addEventListener('keydown', (event) => this.handleMenuKeydown(owner, event));
+                dropdown.addEventListener('click', (event) => {
+                    const item = (event.target as HTMLElement).closest<HTMLButtonElement>('button[role^="menuitem"]');
+                    if (item && !item.classList.contains('submenu-trigger')) this.closeAllMenus();
+                });
+
                 trigger.addEventListener('click', (event) => {
                     event.preventDefault();
                     event.stopPropagation();
-                    const dropdown = this.getControlledDropdown(trigger);
-                    if (!dropdown) return;
                     const opening = dropdown.hidden;
                     dropdown.hidden = !opening;
                     trigger.setAttribute('aria-expanded', String(opening));
-                    if (opening) this.focusFirstMenuItem(dropdown);
+                    if (opening) { this.positionSubmenu(trigger, dropdown); this.focusFirstMenuItem(dropdown); }
                 });
             });
         });
@@ -242,7 +258,11 @@ export class MenuInteractionController {
     private handleMenuKeydown(binding: MenuBinding, event: KeyboardEvent): void {
         const target = event.target as HTMLElement;
         const activeDropdown = target.closest<HTMLElement>('.file-menu-dropdown');
-        if (!activeDropdown || !binding.dropdown.contains(activeDropdown)) return;
+        if (!activeDropdown || !this.root.contains(activeDropdown)) return;
+        const belongsToBinding = activeDropdown === binding.dropdown
+            || binding.dropdown.contains(activeDropdown)
+            || activeDropdown.dataset.rootMenuId === binding.dropdown.id;
+        if (!belongsToBinding) return;
 
         if (event.key === 'Escape') {
             event.preventDefault();
@@ -261,6 +281,7 @@ export class MenuInteractionController {
             if (submenu) {
                 submenu.hidden = false;
                 currentItem.setAttribute('aria-expanded', 'true');
+                this.positionSubmenu(currentItem, submenu);
                 this.focusFirstMenuItem(submenu);
             }
             return;
@@ -292,6 +313,25 @@ export class MenuInteractionController {
             .filter((button) => button.closest('.file-menu-dropdown') === dropdown && !button.disabled && !isHiddenByAncestor(button));
     }
 
+    private positionSubmenu(trigger: HTMLButtonElement, dropdown: HTMLElement): void {
+        dropdown.style.position = 'fixed';
+        dropdown.style.left = '0px';
+        dropdown.style.top = '0px';
+        const triggerRect = trigger.getBoundingClientRect();
+        const submenuRect = dropdown.getBoundingClientRect();
+        const gap = 6;
+        const preferredLeft = triggerRect.right + gap;
+        const fitsRight = preferredLeft + Math.max(submenuRect.width, 250) <= window.innerWidth - 8;
+        const left = fitsRight
+            ? preferredLeft
+            : Math.max(8, triggerRect.left - Math.max(submenuRect.width, 250) - gap);
+        const estimatedHeight = Math.min(submenuRect.height || 360, window.innerHeight - 16);
+        const top = Math.max(8, Math.min(triggerRect.top - 4, window.innerHeight - estimatedHeight - 8));
+        dropdown.style.left = `${left}px`;
+        dropdown.style.top = `${top}px`;
+        dropdown.style.maxHeight = `${Math.max(120, window.innerHeight - top - 8)}px`;
+    }
+
     private focusFirstMenuItem(dropdown: HTMLElement): void {
         this.getDirectEnabledItems(dropdown)[0]?.focus();
     }
@@ -308,12 +348,18 @@ export class MenuInteractionController {
         let dropdown = target.closest<HTMLElement>('.file-menu-dropdown');
         while (dropdown) {
             ancestors.push(dropdown);
-            dropdown = dropdown.parentElement?.closest<HTMLElement>('.file-menu-dropdown') ?? null;
+            const rootMenuId = dropdown.dataset.rootMenuId;
+            dropdown = rootMenuId
+                ? this.root.querySelector<HTMLElement>(`#${CSS.escape(rootMenuId)}`)
+                : dropdown.parentElement?.closest<HTMLElement>('.file-menu-dropdown') ?? null;
+            if (dropdown && ancestors.includes(dropdown)) break;
         }
         ancestors.reverse().forEach((entry) => {
             entry.hidden = false;
             const trigger = this.root.querySelector<HTMLButtonElement>(`[aria-controls="${CSS.escape(entry.id)}"]`);
             trigger?.setAttribute('aria-expanded', 'true');
+            if (!trigger) return;
+            if (entry.classList.contains('submenu-dropdown')) this.positionSubmenu(trigger, entry);
         });
     }
 
@@ -350,6 +396,11 @@ export class MenuInteractionController {
 
     private closeAllManagedMenus(): void {
         this.bindings.forEach((binding) => this.closeMenu(binding));
+        this.root.querySelectorAll<HTMLElement>('.menus > .submenu-dropdown').forEach((dropdown) => {
+            dropdown.hidden = true;
+            const trigger = this.root.querySelector<HTMLButtonElement>(`[aria-controls="${CSS.escape(dropdown.id)}"]`);
+            trigger?.setAttribute('aria-expanded', 'false');
+        });
     }
 
     private getControlledDropdown(trigger: HTMLButtonElement): HTMLElement | null {

@@ -1,6 +1,7 @@
 // Layer operations and linked image management.
 import { AppLayerStateFeatures } from './AppLayerStateFeatures';
 import { decodeImageWithSharedCore, renderFilteredImage } from '@nvts/image-processing';
+import { decodePdfCompatibleAi, decodePsdComposite, extractAiRasterPreview, extractKraMergedImage } from '@nvts/storage';
 import { runEdit, type LayerNode } from '@nvts/document-model';
 import { cloneLayerMasks, cloneLayerStyles, createLayerMask, FILTER_KINDS, getLayerMaskLabel, isPixelLayerType, type FilterKind, type LayerMask, type LayerStyles, type LayerType } from '@nvts/shared';
 import { renderLayersPanel } from '../panels/LayersPanel';
@@ -1212,9 +1213,20 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
         source.file.lastModified, source.file.size, this.activeId,
       );
       this.activateCreatedLayer(node); this.syncUI(); this.updateHistoryUI(); this.scheduleRefresh();
-      this.q<HTMLElement>('#status').textContent = sourceLinkId
-        ? `Capa de archivo vinculada: ${source.file.name}`
-        : `Capa de archivo importada: ${source.file.name} (sin vínculo externo en este navegador)`;
+      this.q<HTMLElement>('#status').textContent = this.describeImportedImage(source.file, Boolean(sourceLinkId));
+    }
+
+  protected describeImportedImage(file: File, linked: boolean): string {
+      const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+      const linkStatus = linked ? 'con vínculo externo' : 'sin vínculo externo en este navegador';
+      const notes: Record<string, string> = {
+        psd: 'PSD importado como composición aplanada; no se reconstruyen sus capas.',
+        kra: 'KRA importado desde mergedimage.png; no se reconstruyen sus capas nativas.',
+        ai: 'AI importado desde su vista previa rasterizada o desde un AI PDF-compatible de PhotoMania.',
+        svg: 'SVG importado como imagen rasterizada; no se convierte en una capa vectorial editable.',
+        gif: 'GIF importado como imagen estática usando su primer fotograma.',
+      };
+      return notes[extension] ? `${notes[extension]} (${linkStatus})` : `Capa de archivo importada: ${file.name} (${linkStatus})`;
     }
 
   protected async rememberLinkedFileSafely(linkId: string, handle: FileSystemFileHandle): Promise<boolean> {
@@ -1241,6 +1253,7 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
             'image/png': ['.png'], 'image/jpeg': ['.jpg', '.jpeg'], 'image/webp': ['.webp'],
             'image/gif': ['.gif'], 'image/bmp': ['.bmp'], 'image/tiff': ['.tif', '.tiff'],
             'image/x-tga': ['.tga'], 'image/x-portable-pixmap': ['.ppm'], 'image/svg+xml': ['.svg'],
+            'application/octet-stream': ['.psd', '.ai', '.kra'],
           } }],
         });
         return this.readPickedImage(handle);
@@ -1256,7 +1269,7 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
     }
 
   protected validatePickedImage(file: File, handle: FileSystemFileHandle): { file: File; handle: FileSystemFileHandle } {
-      if (!file.type.startsWith('image/') && !/\.(png|jpe?g|webp|gif|bmp|tiff?|tga|ppm|svg)$/i.test(file.name)) {
+      if (!file.type.startsWith('image/') && !/\.(png|jpe?g|webp|gif|bmp|tiff?|tga|ppm|svg|psd|ai|kra)$/i.test(file.name)) {
         throw new Error('El archivo seleccionado no parece ser una imagen compatible.');
       }
       return { file, handle };
@@ -1267,7 +1280,63 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
       throw error;
     }
 
+  protected async getImageFileDimensions(file: File): Promise<{ width: number; height: number }> {
+      const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+      if (extension === 'psd') {
+        const decoded = decodePsdComposite(new Uint8Array(await file.arrayBuffer()));
+        return this.validateImportedImageDimensions(decoded.width, decoded.height);
+      }
+      if (extension === 'kra') {
+        const bytes = extractKraMergedImage(new Uint8Array(await file.arrayBuffer()));
+        return this.getImageBlobDimensions(new Blob([bytes as BlobPart], { type: 'image/png' }));
+      }
+      if (extension === 'ai') {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const decoded = decodePdfCompatibleAi(bytes);
+        if (decoded) return this.validateImportedImageDimensions(decoded.width, decoded.height);
+        const preview = extractAiRasterPreview(bytes);
+        return this.getImageBlobDimensions(new Blob([preview as BlobPart], { type: 'image/jpeg' }));
+      }
+      return this.getImageBlobDimensions(file);
+    }
+
+  private async getImageBlobDimensions(blob: Blob): Promise<{ width: number; height: number }> {
+      let bitmap: ImageBitmap;
+      try { bitmap = await createImageBitmap(blob); }
+      catch (browserDecodeError) {
+        if (!(blob instanceof File)) throw browserDecodeError;
+        const decoded = await decodeImageWithSharedCore(blob);
+        if (!decoded) throw browserDecodeError;
+        return this.validateImportedImageDimensions(decoded.width, decoded.height);
+      }
+      try { return this.validateImportedImageDimensions(bitmap.width, bitmap.height); }
+      finally { bitmap.close(); }
+    }
+
+  private validateImportedImageDimensions(width: number, height: number): { width: number; height: number } {
+      if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 || width * height > 100_000_000) {
+        throw new Error('La imagen supera el límite de dimensiones de importación de PhotoMania.');
+      }
+      return { width, height };
+    }
+
   protected async imageFileToDocumentPixels(file: File): Promise<Uint8Array> {
+      const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+      if (extension === 'psd') {
+        const decoded = decodePsdComposite(new Uint8Array(await file.arrayBuffer()));
+        return this.renderDecodedImageToDocumentPixels(decoded.width, decoded.height, decoded.pixels);
+      }
+      if (extension === 'kra') {
+        const png = extractKraMergedImage(new Uint8Array(await file.arrayBuffer()));
+        return this.imageBlobToDocumentPixels(new Blob([png as BlobPart], { type: 'image/png' }));
+      }
+      if (extension === 'ai') {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const decoded = decodePdfCompatibleAi(bytes);
+        if (decoded) return this.renderDecodedImageToDocumentPixels(decoded.width, decoded.height, decoded.pixels);
+        const preview = extractAiRasterPreview(bytes);
+        return this.imageBlobToDocumentPixels(new Blob([preview as BlobPart], { type: 'image/jpeg' }));
+      }
       try {
         const bitmap = await createImageBitmap(file);
         try {
@@ -1281,6 +1350,12 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
         return this.renderDecodedImageToDocumentPixels(decoded.width, decoded.height, decoded.pixels);
       }
     }
+
+  private async imageBlobToDocumentPixels(blob: Blob): Promise<Uint8Array> {
+    const bitmap = await createImageBitmap(blob);
+    try { return this.renderBitmapToDocumentPixels(bitmap); }
+    finally { bitmap.close(); }
+  }
 
   private renderDecodedImageToDocumentPixels(sourceWidth: number, sourceHeight: number, pixels: Uint8Array): Uint8Array {
     const bitmapCanvas = document.createElement('canvas');
@@ -1406,7 +1481,7 @@ export abstract class AppLayerPanelFeatures extends AppLayerStateFeatures {
     }
 
   protected pickImageFile(): Promise<File | null> {
-      const input = Object.assign(document.createElement('input'), { type: 'file', accept: 'image/*' });
+      const input = Object.assign(document.createElement('input'), { type: 'file', accept: 'image/*,.psd,.ai,.kra' });
       return new Promise((resolve) => {
         input.onchange = () => resolve(input.files?.[0] ?? null);
         input.addEventListener('cancel', () => resolve(null), { once: true });

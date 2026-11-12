@@ -27,7 +27,7 @@ function getColorizeBounds(source: Uint8Array, mask: ColorizeMask, width: number
   if (!mask.limitToLayerBounds) return { left: 0, top: 0, width, height };
   const bounds = { left: width, top: height, right: -1, bottom: -1 };
   for (let pixel = 0; pixel < width * height; pixel++) updateBoundsFromPixel(source, pixel, width, bounds);
-  for (const stroke of mask.strokes) includeStrokeBounds(stroke.points, mask.gapClose, bounds);
+  for (const stroke of mask.strokes) includeStrokeBounds(stroke.points, mask.gapClose + Math.max(1, stroke.radius), bounds);
   return createBoundedRegion(bounds, width, height);
 }
 
@@ -245,9 +245,18 @@ function applyPalettePixel(source: Uint8Array, output: Uint8Array, owner: Int32A
     output.fill(0, offset, offset + 4);
     return;
   }
+  const sourceAlpha = source[offset + 3];
+  if (sourceAlpha < 16) {
+    // Transparent interior pixels have no luminance information; use the seed color directly.
+    output[offset] = color[0];
+    output[offset + 1] = color[1];
+    output[offset + 2] = color[2];
+    output[offset + 3] = 255;
+    return;
+  }
   const luminance = getLuminance(source[offset], source[offset + 1], source[offset + 2]) / 255;
   output[offset] = Math.round(color[0] * luminance);
   output[offset + 1] = Math.round(color[1] * luminance);
   output[offset + 2] = Math.round(color[2] * luminance);
-  output[offset + 3] = 255;
+  output[offset + 3] = sourceAlpha;
 }

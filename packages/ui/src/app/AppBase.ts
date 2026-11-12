@@ -15,16 +15,19 @@ import { type LayerEffectsPanelController } from '../panels/LayerEffectsPanel';
 import { type FilterPanelController } from '../panels/FilterPanel';
 import { type PluginApi } from '../panels/PluginsPanel';
 import { type DockLayoutController } from '../managers/DockLayoutManager';
-import { openFromDisk } from '@nvts/storage';
 import type { WorkspaceDefinition, WorkspaceId } from '../workspaces';
 import { readComicConfig } from './AppUtilities';
+import type { BrushMaterial } from '../tools/BrushPresetCatalog';
+import type { BrushTexturePattern } from '@nvts/image-processing';
+import type { BrushPointerSample, TabletInputPreferences, TabletPointerType } from '../tools/TabletInput';
+import { DEFAULT_TABLET_INPUT_PREFERENCES } from '../tools/TabletInput';
 
 export type Tool = ToolId;
-export type ToolSettings = { presetId: string; tipShape: 'round' | 'square' | 'diamond' | 'star' | 'flower' | 'leaf' | 'lace'; texture: number; size: number; opacity: number; hardness: number; spacing: number; smoothing: number; tolerance: number; contiguous: boolean; sampleMerged: boolean; sampleRadius: 1 | 3 | 5; gapClosure: 0 | 1 | 2; shapeFill: boolean; shapeCornerRadius: number; polygonSides: number; starPoints: number; spiralTurns: number; lineCap: CanvasLineCap; lineJoin: CanvasLineJoin; smudgeMode: 'smudge' | 'blur' | 'mixer' | 'wet'; gradientType: 'linear' | 'radial' | 'contour'; gradientReverse: boolean; panSensitivity: number; zoomIncrement: number; vectorKeepAspectRatio: boolean };
+export type ToolSettings = { presetId: string; material: BrushMaterial; texturePattern: BrushTexturePattern; textureSeed: number; tipShape: 'round' | 'square' | 'diamond' | 'star' | 'flower' | 'leaf' | 'lace'; texture: number; size: number; opacity: number; hardness: number; spacing: number; smoothing: number; tolerance: number; contiguous: boolean; sampleMerged: boolean; sampleRadius: 1 | 3 | 5; gapClosure: 0 | 1 | 2; shapeFill: boolean; shapeCornerRadius: number; polygonSides: number; starPoints: number; spiralTurns: number; lineCap: CanvasLineCap; lineJoin: CanvasLineJoin; smudgeMode: 'smudge' | 'blur' | 'mixer' | 'wet'; gradientType: 'linear' | 'radial' | 'contour'; gradientReverse: boolean; panSensitivity: number; zoomIncrement: number; vectorKeepAspectRatio: boolean };
 export type FillOperation = {
   width: number; height: number; original: Uint8Array; reference: Uint8Array; seedX: number; seedY: number;
   seedColor: readonly [number, number, number, number]; tolerance: number; color: readonly [number, number, number];
-  opacity: number; contiguous: boolean; matchMask?: Uint8Array;
+  opacity: number; contiguous: boolean; texture: number; texturePattern: BrushTexturePattern; textureSeed: number; matchMask?: Uint8Array;
 };
 export type FillResult = { pixels: Uint8Array; filled: number; minX: number; minY: number; maxX: number; maxY: number };
 export type WorkspacePanelElements = { advanced: HTMLElement; history: HTMLElement; layers: HTMLElement; comic: HTMLElement; storyboard: HTMLElement; timeline: HTMLElement; dock: HTMLElement };
@@ -42,6 +45,7 @@ export abstract class AppBase extends ApplicationObject {
   protected documentUnsubscribe: (() => void) | null = null;
   protected ctx!: EngineCtx;
   protected fileHandle: FileSystemFileHandle | null = null;
+  protected exportDirectoryHandle: FileSystemDirectoryHandle | null = null;
   protected readonly workspaceManager = new WorkspaceManager();
   protected workspace: WorkspaceId = this.workspaceManager.getCurrent();
   protected readonly documentLifecycle = new DocumentLifecycleManager();
@@ -68,7 +72,14 @@ export abstract class AppBase extends ApplicationObject {
   protected vectorDrawGesture: { layerId: string; id: string; tool: VectorDrawingToolId; startPoint: { x: number; y: number }; currentPoint: { x: number; y: number }; points: Array<{ x: number; y: number }> } | null = null;
   protected pixelShapePoints: Array<{ x: number; y: number }> = [];
   protected vectorGesture: { layerId: string; shapeId: string; mode: 'move' | 'resize'; startPoint: { x: number; y: number }; original: VectorShape; latest: VectorShape; moved: boolean } | null = null;
-  protected brush: ToolSettings & { rgb: [number, number, number] } = { rgb: [0, 0, 0], presetId: 'custom', tipShape: 'round', texture: 0, size: 24, opacity: 100, hardness: 80, spacing: 15, smoothing: 0, tolerance: 24, contiguous: true, sampleMerged: false, sampleRadius: 1, gapClosure: 0, shapeFill: false, shapeCornerRadius: 20, polygonSides: 6, starPoints: 5, spiralTurns: 4, lineCap: 'round', lineJoin: 'round', smudgeMode: 'smudge', gradientType: 'linear', gradientReverse: false, panSensitivity: 100, zoomIncrement: 1.1, vectorKeepAspectRatio: false };
+  protected brush: ToolSettings & { rgb: [number, number, number] } = { rgb: [0, 0, 0], presetId: 'custom', material: 'generic', texturePattern: 'none', textureSeed: 0, tipShape: 'round', texture: 0, size: 24, opacity: 100, hardness: 80, spacing: 15, smoothing: 0, tolerance: 24, contiguous: true, sampleMerged: false, sampleRadius: 1, gapClosure: 0, shapeFill: false, shapeCornerRadius: 20, polygonSides: 6, starPoints: 5, spiralTurns: 4, lineCap: 'round', lineJoin: 'round', smudgeMode: 'smudge', gradientType: 'linear', gradientReverse: false, panSensitivity: 100, zoomIncrement: 1.1, vectorKeepAspectRatio: false };
+  protected secondaryRgb: [number, number, number] = [255, 255, 255];
+  protected tabletInputPreferences: TabletInputPreferences = { ...DEFAULT_TABLET_INPUT_PREFERENCES };
+  protected currentBrushSample: BrushPointerSample = { pointerType: 'mouse', pressure: 1, tiltX: 0, tiltY: 0 };
+  protected lastBrushSample: BrushPointerSample = { pointerType: 'mouse', pressure: 1, tiltX: 0, tiltY: 0 };
+  protected activeStrokePointerId: number | null = null;
+  protected activeStrokePointerType: TabletPointerType | null = null;
+  protected strokePointerEnded = false;
   protected stroke: StrokeSession | null = null;
   protected strokeLayer: ReturnType<DocumentController['layerPixels']> = null;
   protected strokeTool: Tool | null = null;
@@ -82,7 +93,7 @@ export abstract class AppBase extends ApplicationObject {
   protected cachedHasNonDestructiveEffects: boolean | null = null;
   protected cachedFilterTilePadding: number | null = null;
   protected stampPixelsScratch = new Uint8Array(0);
-  protected readonly pendingBrushDabs: Array<{ x: number; y: number }> = [];
+  protected readonly pendingBrushDabs: Array<{ x: number; y: number; sample: BrushPointerSample }> = [];
   protected pendingBrushDabHead = 0;
   protected pendingStrokeFinish: { tool: Tool | null } | null = null;
   protected strokeLayerNodeId: string | null = null;
@@ -119,6 +130,10 @@ export abstract class AppBase extends ApplicationObject {
     protected readonly renderer: RendererBackend,
   ) {
     super('photomania.editor', 'PhotoMania Editor');
+  }
+
+  protected setTabletInputPreferences(preferences: TabletInputPreferences): void {
+    this.tabletInputPreferences = { ...preferences };
   }
 
   protected activateCreatedLayer(layer: LayerNode): void {
@@ -168,7 +183,6 @@ export abstract class AppBase extends ApplicationObject {
   protected abstract compositeFilterRaster(node: LayerNode, targetCtx: CanvasRenderingContext2D, depth: number, tile: FilterTile, pools: FilterCanvasPools): void;
   protected abstract applyColorizeMasksToTile(node: LayerNode, image: ImageData, tile: FilterTile): void;
   protected abstract getColorizeOutput(node: LayerNode, mask: Extract<LayerMask, { type: 'colorize' }>): Uint8Array | null;
-  protected abstract drawColorizeStrokes(source: Uint8Array, mask: Extract<LayerMask, { type: 'colorize' }>): Uint8Array;
   protected abstract applyTransformMasksToTile(node: LayerNode, backing: TiledLayer, tile: FilterTile, rgba: Uint8Array): Uint8Array;
   protected abstract combineTransformMasks(masks: Array<Extract<LayerMask, { type: 'transform' }>>): DOMMatrix;
   protected abstract inverseTransformBounds(matrix: DOMMatrix, tile: FilterTile): { x: number; y: number; width: number; height: number };
@@ -435,10 +449,8 @@ export abstract class AppBase extends ApplicationObject {
   protected abstract bindEditorPanels(): void;
   protected abstract clearVectorEditor(): void;
   protected abstract bindFileToolbar(): void;
-  protected abstract exportVisibleImage(mimeType: 'image/png' | 'image/jpeg'): Promise<void>;
   protected abstract flattenOnWhite(source: HTMLCanvasElement, width: number, height: number): HTMLCanvasElement;
   protected abstract encodeCanvas(canvas: HTMLCanvasElement, mimeType: string): Promise<Blob>;
-  protected abstract downloadRaster(blob: Blob, documentName: string, mimeType: 'image/png' | 'image/jpeg'): void;
   protected abstract bindCanvasEvents(): void;
   protected abstract handleCanvasWheel(event: WheelEvent): void;
   protected abstract bindKeyboardShortcuts(): void;
@@ -532,7 +544,6 @@ export abstract class AppBase extends ApplicationObject {
   protected abstract rememberSavedProject(doc: DocumentController['doc'], bytes: Uint8Array): Promise<void>;
   protected abstract open(): Promise<void>;
   protected abstract openDocument(): Promise<void>;
-  protected abstract applyOpenedFileName(result: Awaited<ReturnType<typeof openFromDisk>> & {}): void;
   protected abstract commitPointerUpAction(e: PointerEvent | undefined, tool: Tool | null): void;
   protected abstract fail(e: unknown): void;
   protected abstract q<T extends HTMLElement = HTMLElement>(sel: string): T;

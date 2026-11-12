@@ -6,18 +6,23 @@ import { AppStartupManager } from './managers/AppStartupManager';
 import { wirePreferences } from './panels/PreferencesPanel';
 
 export class App extends AppFileFeatures {
-  static async start(root: HTMLElement, wasmBase = '/wasm/'): Promise<void> {
+  static async start(root: HTMLElement, wasmBase = '/wasm/', initialFile?: File): Promise<void> {
     const startup = new AppStartupManager(
       (appRoot, canvas, engine, renderer) => new App(appRoot, canvas, engine, renderer),
       () => { void App.start(root, wasmBase); },
     );
-    await new AppManager().start(root, wasmBase, (projectRoot, baseUrl, name, width, height, file) =>
-      startup.launchProject(projectRoot, baseUrl, name, width, height, file),
+    await new AppManager().start(
+      root,
+      wasmBase,
+      (projectRoot, baseUrl, name, width, height, file) =>
+        startup.launchProject(projectRoot, baseUrl, name, width, height, file),
+      initialFile,
     );
   }
 
   bindEditorPreferences(root: HTMLElement): void {
     wirePreferences(root, async (next, previous) => {
+      this.setTabletInputPreferences(next.tabletInput);
       if (!previous.rememberRecentProjects && next.rememberRecentProjects) {
         this.queueRecentSnapshot();
       }

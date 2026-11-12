@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Fragment>
+        <DirectoryRef Id="INSTALLDIR">
+            <Component Id="NVTSPhotoTypeIconRegistry" Guid="A51A6A3D-5B42-4F9A-9A3D-8C64A1D9C501">
+                <RegistryKey Root="HKCR" Key="NVTS-PhotoMania.nvtsphoto\DefaultIcon">
+                    <RegistryValue Type="string" Value="&quot;[INSTALLDIR]nvtsphoto-pmd.ico&quot;" KeyPath="yes" />
+                </RegistryKey>
+            </Component>
+        </DirectoryRef>
+    </Fragment>
+</Wix>

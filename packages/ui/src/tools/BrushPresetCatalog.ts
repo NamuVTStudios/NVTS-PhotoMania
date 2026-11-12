@@ -1,5 +1,8 @@
-export type BrushCategory = 'sketch' | 'inking' | 'decoration' | 'texture' | 'painting';
+export type BrushCategory = 'sketch' | 'inking' | 'decoration' | 'texture' | 'painting' | 'paper';
+export type BrushMaterial = 'generic' | 'oil' | 'watercolor' | 'acrylic' | 'graphite' | 'charcoal' | 'ink' | 'airbrush' | 'pastel' | 'chalk' | 'marker' | 'colored-pencil' | 'sanguine';
 export type BrushTipShape = 'round' | 'square' | 'diamond' | 'star' | 'flower' | 'leaf' | 'lace';
+export type { BrushTexturePattern } from '@nvts/image-processing';
+import type { BrushTexturePattern } from '@nvts/image-processing';
 
 export interface BrushPreset {
   id: string;
@@ -12,9 +15,12 @@ export interface BrushPreset {
   smoothing: number;
   tipShape: BrushTipShape;
   texture: number;
+  material?: BrushMaterial;
+  texturePattern: BrushTexturePattern;
+  textureSeed: number;
 }
 
-export const BRUSH_PRESETS: readonly BrushPreset[] = [
+const BRUSH_PRESET_BASE: readonly Omit<BrushPreset, 'texturePattern' | 'textureSeed'>[] = [
   { id: 'graphite-hb', name: 'Grafito HB', category: 'sketch', size: 9, opacity: 48, hardness: 54, spacing: 12, smoothing: 8, tipShape: 'round', texture: 0.32 },
   { id: 'graphite-2b', name: 'Grafito 2B', category: 'sketch', size: 13, opacity: 62, hardness: 48, spacing: 10, smoothing: 6, tipShape: 'round', texture: 0.45 },
   { id: 'soft-pencil', name: 'Lápiz suave', category: 'sketch', size: 18, opacity: 42, hardness: 28, spacing: 8, smoothing: 5, tipShape: 'round', texture: 0.2 },
@@ -86,8 +92,138 @@ export const BRUSH_PRESETS: readonly BrushPreset[] = [
   { id: 'rough-stone', name: 'Piedra erosionada', category: 'texture', size: 47, opacity: 68, hardness: 44, spacing: 28, smoothing: 0, tipShape: 'diamond', texture: 0.97 },
   { id: 'pastel-blender', name: 'Difuminador pastel', category: 'painting', size: 29, opacity: 42, hardness: 18, spacing: 5, smoothing: 12, tipShape: 'round', texture: 0.34 },
   { id: 'acrylic-bristle', name: 'Acrílico de cerdas', category: 'painting', size: 32, opacity: 88, hardness: 78, spacing: 20, smoothing: 0, tipShape: 'square', texture: 0.62 },
-  { id: 'soft-glaze', name: 'Veladura suave', category: 'painting', size: 58, opacity: 18, hardness: 8, spacing: 6, smoothing: 18, tipShape: 'round', texture: 0.06 },
-] as const;
+  { id: 'soft-glaze', name: 'Veladura suave', category: 'painting', size: 58, opacity: 18, hardness: 8, spacing: 6, smoothing: 18, tipShape: 'round', texture: 0.06, material: 'watercolor' },
+  { id: 'paper-hb-smooth', name: 'Lápiz HB · papel liso', category: 'paper', size: 5, opacity: 74, hardness: 68, spacing: 5, smoothing: 12, tipShape: 'round', texture: 0.24, material: 'graphite' },
+  { id: 'paper-graphite-2b', name: 'Grafito 2B · papel grano fino', category: 'paper', size: 11, opacity: 69, hardness: 48, spacing: 7, smoothing: 5, tipShape: 'round', texture: 0.56, material: 'graphite' },
+  { id: 'paper-graphite-6b', name: 'Grafito 6B · papel rugoso', category: 'paper', size: 23, opacity: 77, hardness: 33, spacing: 6, smoothing: 1, tipShape: 'square', texture: 0.92, material: 'graphite' },
+  { id: 'paper-charcoal', name: 'Carboncillo · papel artístico', category: 'paper', size: 31, opacity: 74, hardness: 32, spacing: 8, smoothing: 0, tipShape: 'square', texture: 0.96, material: 'charcoal' },
+  { id: 'paper-sanguine', name: 'Sanguina · papel crema', category: 'paper', size: 16, opacity: 70, hardness: 44, spacing: 9, smoothing: 2, tipShape: 'diamond', texture: 0.8, material: 'sanguine' },
+  { id: 'paper-ink', name: 'Tinta · papel de algodón', category: 'paper', size: 4, opacity: 98, hardness: 95, spacing: 4, smoothing: 18, tipShape: 'round', texture: 0.18, material: 'ink' },
+  { id: 'paper-watercolor-cold', name: 'Acuarela · papel algodón frío', category: 'paper', size: 34, opacity: 45, hardness: 17, spacing: 7, smoothing: 1, tipShape: 'round', texture: 0.94, material: 'watercolor' },
+  { id: 'paper-watercolor-hot', name: 'Acuarela · papel satinado', category: 'paper', size: 29, opacity: 37, hardness: 24, spacing: 8, smoothing: 4, tipShape: 'round', texture: 0.38, material: 'watercolor' },
+  { id: 'paper-marker', name: 'Marcador · papel de ilustración', category: 'paper', size: 17, opacity: 86, hardness: 77, spacing: 6, smoothing: 13, tipShape: 'square', texture: 0.3, material: 'marker' },
+  { id: 'paper-pastel', name: 'Pastel · papel de grano', category: 'paper', size: 27, opacity: 78, hardness: 37, spacing: 10, smoothing: 0, tipShape: 'square', texture: 0.98, material: 'pastel' },
+  { id: 'paper-colored-pencil', name: 'Lápiz de color · papel', category: 'paper', size: 8, opacity: 82, hardness: 69, spacing: 10, smoothing: 4, tipShape: 'round', texture: 0.68, material: 'colored-pencil' },
+  { id: 'manga-draft-pencil', name: 'Boceto de manga · lápiz azul', category: 'paper', size: 6, opacity: 48, hardness: 60, spacing: 5, smoothing: 13, tipShape: 'round', texture: 0.62, material: 'graphite' },
+  { id: 'manga-layout-hb', name: 'Manga · portaminas de layout', category: 'paper', size: 2, opacity: 86, hardness: 94, spacing: 3, smoothing: 20, tipShape: 'round', texture: 0.18, material: 'graphite' },
+  { id: 'manga-rough-2b', name: 'Manga · grafito 2B rugoso', category: 'paper', size: 12, opacity: 72, hardness: 46, spacing: 6, smoothing: 3, tipShape: 'square', texture: 0.84, material: 'graphite' },
+  { id: 'manga-g-pen-paper', name: 'Manga · plumilla G sobre papel', category: 'paper', size: 5, opacity: 100, hardness: 100, spacing: 3, smoothing: 24, tipShape: 'round', texture: 0.12, material: 'ink' },
+  { id: 'manga-maru-paper', name: 'Manga · plumilla Maru', category: 'paper', size: 2, opacity: 100, hardness: 100, spacing: 2, smoothing: 28, tipShape: 'round', texture: 0.08, material: 'ink' },
+  { id: 'manga-screentone-fine', name: 'Manga · trama fina', category: 'paper', size: 18, opacity: 74, hardness: 100, spacing: 95, smoothing: 0, tipShape: 'round', texture: 0.72, material: 'ink' },
+  { id: 'manga-screentone-coarse', name: 'Manga · trama gruesa', category: 'paper', size: 24, opacity: 68, hardness: 100, spacing: 125, smoothing: 0, tipShape: 'round', texture: 0.9, material: 'ink' },
+  { id: 'manga-hatching', name: 'Manga · rayado cruzado', category: 'paper', size: 3, opacity: 92, hardness: 86, spacing: 12, smoothing: 5, tipShape: 'square', texture: 0.48, material: 'ink' },
+  { id: 'manga-paper-cotton', name: 'Manga · papel blanco de algodón', category: 'paper', size: 7, opacity: 78, hardness: 78, spacing: 8, smoothing: 6, tipShape: 'round', texture: 0.36, material: 'graphite' },
+];
+
+const BRUSH_TEXTURE_PATTERNS: Readonly<Record<string, BrushTexturePattern>> = {
+  'graphite-hb': 'graphite-fine',
+  'graphite-2b': 'graphite-tooth',
+  'soft-pencil': 'paper-smooth',
+  'colored-pencil': 'colored-pencil-wax',
+  'charcoal': 'charcoal-coarse',
+  'g-pen': 'ink-smooth',
+  'maru-pen': 'micro-ink',
+  'saji-pen': 'saji-fiber',
+  'technical-pen': 'ink-smooth',
+  'comic-ink': 'comic-hatching',
+  'star-stamp': 'star-stamp',
+  'flower-stamp': 'flower-stamp',
+  'leaf-stamp': 'leaf-stamp',
+  'lace-stamp': 'lace-pattern',
+  'canvas-grain': 'canvas-weave',
+  'dry-brush': 'dry-bristle',
+  'spray-grain': 'spray-speckle',
+  'paper-chalk': 'chalk-dust',
+  'watercolor': 'watercolor-hot-press',
+  'oil-paint': 'oil-impasto',
+  'acrylic': 'acrylic-bristle',
+  'soft-airbrush': 'airbrush-soft',
+  'rough-pencil': 'graphite-rough',
+  'blue-pencil': 'layout-pencil',
+  'mapping-pen': 'ink-smooth',
+  'dry-ink': 'ink-dry',
+  'confetti-stamp': 'stamp-scatter',
+  'petal-stamp': 'flower-stamp',
+  'stone-texture': 'stone-grain',
+  'fabric-texture': 'fabric-weave',
+  'cloud-brush': 'cloud-soft',
+  'wet-watercolor': 'watercolor-cold-press',
+  'soft-graphite-6b': 'graphite-rough',
+  'blue-pencil-rough': 'layout-pencil',
+  'comic-hatching': 'comic-hatching',
+  'fine-liner': 'micro-ink',
+  'stippling': 'spray-speckle',
+  'petal-chain': 'petal-chain',
+  'sponge-grain': 'sponge-cell',
+  'sand-grain': 'stone-grain',
+  'watercolor-edge': 'watercolor-edge',
+  'opaque-gouache': 'gouache-tooth',
+  'sanguine-pencil': 'sanguine-paper',
+  'rough-charcoal': 'charcoal-coarse',
+  'mechanical-pencil': 'graphite-fine',
+  'soft-crayon': 'crayon-wax',
+  'g-pen-taper': 'ink-smooth',
+  'mapping-pen-hard': 'micro-ink',
+  'brush-pen': 'ink-brush',
+  'screen-tone-dots': 'screen-tone',
+  'sparkle-stamp': 'star-stamp',
+  'lace-border': 'lace-pattern',
+  'rough-pastel': 'soft-pastel',
+  'paper-fiber': 'paper-fiber',
+  'granite-speckle': 'granite-speckle',
+  'wet-oil-blend': 'wet-pigment',
+  'flat-acrylic': 'flat-paint',
+  'gestural-pencil': 'graphite-tooth',
+  'rough-conte': 'sanguine-paper',
+  'blue-layout-pencil': 'layout-pencil',
+  'maru-micro-pen': 'micro-ink',
+  'saji-dry-pen': 'saji-fiber',
+  'comic-brush-pen': 'ink-brush',
+  'rose-vine-stamp': 'petal-chain',
+  'lace-flower-stamp': 'lace-pattern',
+  'starburst-stamp': 'star-stamp',
+  'crosshatch-paper': 'comic-hatching',
+  'chalk-dust': 'chalk-dust',
+  'rough-stone': 'stone-grain',
+  'pastel-blender': 'soft-pastel',
+  'acrylic-bristle': 'acrylic-bristle',
+  'soft-glaze': 'oil-glaze',
+  'paper-hb-smooth': 'paper-smooth',
+  'paper-graphite-2b': 'graphite-tooth',
+  'paper-graphite-6b': 'graphite-rough',
+  'paper-charcoal': 'charcoal-coarse',
+  'paper-sanguine': 'sanguine-paper',
+  'paper-ink': 'paper-cotton',
+  'paper-watercolor-cold': 'watercolor-cold-press',
+  'paper-watercolor-hot': 'watercolor-hot-press',
+  'paper-marker': 'marker-streak',
+  'paper-pastel': 'pastel-paper',
+  'paper-colored-pencil': 'colored-pencil-wax',
+  'manga-draft-pencil': 'layout-pencil',
+  'manga-layout-hb': 'paper-smooth',
+  'manga-rough-2b': 'graphite-rough',
+  'manga-g-pen-paper': 'ink-smooth',
+  'manga-maru-paper': 'micro-ink',
+  'manga-screentone-fine': 'paper-screen-tone',
+  'manga-screentone-coarse': 'screen-tone',
+  'manga-hatching': 'comic-hatching',
+  'manga-paper-cotton': 'paper-cotton'
+};
+
+function getPresetTextureSeed(id: string): number {
+  let seed = 2166136261;
+  for (let index = 0; index < id.length; index += 1) {
+    seed ^= id.charCodeAt(index);
+    seed = Math.imul(seed, 16777619);
+  }
+  return seed >>> 0;
+}
+
+export const BRUSH_PRESETS: readonly BrushPreset[] = BRUSH_PRESET_BASE.map((preset) => {
+  const texturePattern = BRUSH_TEXTURE_PATTERNS[preset.id];
+  if (!texturePattern) throw new Error(`El preajuste ${preset.id} no tiene una textura asignada.`);
+  return { ...preset, texturePattern, textureSeed: getPresetTextureSeed(preset.id) };
+});
 
 export const BRUSH_CATEGORY_LABELS: Record<BrushCategory, string> = {
   sketch: 'Boceto',
@@ -95,7 +231,27 @@ export const BRUSH_CATEGORY_LABELS: Record<BrushCategory, string> = {
   decoration: 'Decoración',
   texture: 'Texturas',
   painting: 'Pintura',
+  paper: 'Dibujo en papel',
 };
+
+export function resolveBrushMaterial(preset: BrushPreset): BrushMaterial {
+  if (preset.material) return preset.material;
+  if (/oil/.test(preset.id)) return 'oil';
+  if (/watercolor/.test(preset.id)) return 'watercolor';
+  if (/acrylic|gouache/.test(preset.id)) return 'acrylic';
+  if (/charcoal/.test(preset.id)) return 'charcoal';
+  if (/graphite|pencil|conte/.test(preset.id) || preset.category === 'sketch') return 'graphite';
+  if (/pastel|chalk|crayon/.test(preset.id)) return preset.id.includes('chalk') ? 'chalk' : 'pastel';
+  if (/airbrush|spray/.test(preset.id)) return 'airbrush';
+  if (/marker/.test(preset.id)) return 'marker';
+  if (/sanguine/.test(preset.id)) return 'sanguine';
+  if (/colored/.test(preset.id)) return 'colored-pencil';
+  if (/pen|ink|liner/.test(preset.id) || preset.category === 'inking') return 'ink';
+  if (preset.category === 'decoration') return 'colored-pencil';
+  if (preset.category === 'texture') return 'charcoal';
+  if (preset.category === 'painting') return 'acrylic';
+  return 'generic';
+}
 
 export function findBrushPreset(id: string): BrushPreset | undefined {
   return BRUSH_PRESETS.find((preset) => preset.id === id);

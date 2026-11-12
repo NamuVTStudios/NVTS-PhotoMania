@@ -1,3 +1,7 @@
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
 export type LayerMaskPreviewMode = 'before' | 'split' | 'after';
 type PreviewSnapshot = { width: number; height: number; pixels: Uint8Array };
 type SnapshotProvider = () => Promise<PreviewSnapshot>;
@@ -16,6 +20,8 @@ export class LayerMaskPreviewController {
   private panelVisible = false;
   private snapshotReady = false;
   private captureGeneration = 0;
+  private splitRatio = 0.5;
+  private dividerDragging = false;
 
   constructor(
     private readonly root: HTMLElement,
@@ -34,6 +40,8 @@ export class LayerMaskPreviewController {
 
   mount(): void {
     this.modeControl.addEventListener('change', () => this.setMode(this.modeControl.value as LayerMaskPreviewMode));
+    this.bindDividerPointer();
+    this.bindDividerKeyboard();
   }
 
   setPanelVisible(visible: boolean): void {
@@ -80,7 +88,8 @@ export class LayerMaskPreviewController {
     const canShowBefore = previewVisible && this.snapshotReady;
     const showSnapshot = canShowBefore && selectedMode !== 'after';
     const showSplit = showSnapshot && selectedMode === 'split';
-    const clipPath = showSplit ? 'inset(0 50% 0 0)' : 'none';
+    const rightInset = `${100 - this.splitRatio * 100}%`;
+    const clipPath = showSplit ? `inset(0 ${rightInset} 0 0)` : 'none';
 
     this.modeControl.value = selectedMode;
     this.toolbar.hidden = !previewVisible;
@@ -94,10 +103,70 @@ export class LayerMaskPreviewController {
     this.previewClip.style.setProperty('-webkit-clip-path', clipPath);
     this.previewCanvas.style.visibility = showSnapshot ? 'visible' : 'hidden';
     this.divider.hidden = !showSplit;
+    if (this.divider.style) this.divider.style.left = `${this.splitRatio * 100}%`;
+    this.setDividerAttribute('aria-valuenow', String(Math.round(this.splitRatio * 100)));
+    this.setDividerAttribute('aria-valuetext', `Antes ${Math.round(this.splitRatio * 100)} por ciento`);
     this.beforeLabel.hidden = !canShowBefore || (selectedMode !== 'split' && selectedMode !== 'before');
     this.afterLabel.hidden = !previewVisible || selectedMode === 'before';
     this.stage.classList.toggle('mask-preview-before', selectedMode === 'before' && canShowBefore);
     this.stage.classList.toggle('mask-preview-split', showSplit);
+  }
+
+  private bindDividerPointer(): void {
+    this.setDividerAttribute('role', 'slider');
+    this.setDividerAttribute('tabindex', '0');
+    this.setDividerAttribute('aria-label', 'Divisor antes y después');
+    this.setDividerAttribute('aria-valuemin', '5');
+    this.setDividerAttribute('aria-valuemax', '95');
+    this.addDividerListener('pointerdown', (event: PointerEvent) => {
+      if (this.divider.hidden || event.button !== 0) return;
+      this.dividerDragging = true;
+      this.divider.setPointerCapture?.(event.pointerId);
+      this.updateSplitFromPointer(event.clientX);
+      event.preventDefault();
+    });
+    this.addDividerListener('pointermove', (event: PointerEvent) => {
+      if (!this.dividerDragging) return;
+      this.updateSplitFromPointer(event.clientX);
+    });
+    const stop = () => { this.dividerDragging = false; };
+    this.addDividerListener('pointerup', stop);
+    this.addDividerListener('pointercancel', stop);
+    this.addDividerListener('lostpointercapture', stop);
+  }
+
+  private addDividerListener(eventName: string, listener: (event: any) => void): void {
+    const divider = this.divider as HTMLElement & {
+      addEventListener?: (type: string, callback: (event: any) => void) => void;
+    };
+    divider.addEventListener?.(eventName, listener);
+  }
+
+  private setDividerAttribute(name: string, value: string): void {
+    const divider = this.divider as HTMLElement & { setAttribute?: (attribute: string, attributeValue: string) => void };
+    divider.setAttribute?.(name, value);
+  }
+
+  private bindDividerKeyboard(): void {
+    this.addDividerListener('keydown', (event: KeyboardEvent) => {
+      const step = event.shiftKey ? 0.05 : 0.01;
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home' || event.key === 'End') {
+        event.preventDefault();
+        if (event.key === 'ArrowLeft') this.splitRatio -= step;
+        if (event.key === 'ArrowRight') this.splitRatio += step;
+        if (event.key === 'Home') this.splitRatio = 0.05;
+        if (event.key === 'End') this.splitRatio = 0.95;
+        this.splitRatio = clamp(this.splitRatio, 0.05, 0.95);
+        this.setMode(this.modeControl.value as LayerMaskPreviewMode);
+      }
+    });
+  }
+
+  private updateSplitFromPointer(clientX: number): void {
+    const bounds = this.stage.getBoundingClientRect();
+    if (bounds.width <= 0) return;
+    this.splitRatio = clamp((clientX - bounds.left) / bounds.width, 0.05, 0.95);
+    this.setMode('split');
   }
 
   syncCanvasTransform(): void {

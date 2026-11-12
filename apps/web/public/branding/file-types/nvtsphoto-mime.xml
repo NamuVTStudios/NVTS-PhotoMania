@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+    <mime-type type="application/x-nvtsphoto">
+        <comment>NVTS PhotoMania project</comment>
+        <sub-class-of type="application/zip"/>
+        <glob pattern="*.nvtsphoto" weight="100"/>
+    </mime-type>
+</mime-info>

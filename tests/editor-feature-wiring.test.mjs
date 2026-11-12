@@ -48,18 +48,47 @@ test('new text and standard layers are not inserted into hidden or locked groups
   assert.ok(layers.includes("this.ctl.addLayer(type, name)"));
 });
 
-test('import and raster export shortcuts call the same commands as the file menu', async () => {
+test('import and export shortcuts open the matching file workflows', async () => {
   const events = await read('packages/ui/src/app/AppEventFeatures.ts');
   const menu = await read('packages/ui/src/components/ShellTemplates.ts');
   assert.ok(events.includes("key === 'i' && event.altKey"));
   assert.ok(events.includes("void this.createFileLayer()"));
   assert.ok(events.includes("key === 'e' && event.altKey && event.shiftKey"));
-  assert.ok(events.includes("void this.exportVisibleImage('image/jpeg')"));
+  assert.ok(events.includes("this.openExportPanel('jpeg')"));
   assert.ok(events.includes("key === 'e' && event.shiftKey"));
-  assert.ok(events.includes("void this.exportVisibleImage('image/png')"));
+  assert.ok(events.includes('this.openExportPanel()'));
   assert.ok(menu.includes('Ctrl+Alt+I'));
   assert.ok(menu.includes('Ctrl+Shift+E'));
-  assert.ok(menu.includes('Ctrl+Alt+Shift+E'));
+  assert.ok(menu.includes('id="b-render-animation"'));
+  assert.ok(menu.includes('Renderizar animación'));
+});
+
+
+test('file export menu routes into the format and destination panel', async () => {
+  const menu = await read('packages/ui/src/components/ShellTemplates.ts');
+  const template = await read('packages/ui/src/components/EditorTemplate.ts');
+  const events = await read('packages/ui/src/app/AppEventFeatures.ts');
+  for (const format of ['png', 'jpeg', 'gif', 'svg', 'psd', 'ai', 'kra']) {
+    assert.ok(template.includes(`value="${format}"`), `missing export format ${format}`);
+  }
+  assert.ok(template.includes('id="export-choose-folder"'));
+  assert.ok(template.includes('id="export-confirm"'));
+  assert.ok(template.includes('id="animation-render-panel"'));
+  assert.ok(menu.includes('id="b-export"'));
+  assert.ok(menu.includes('id="b-render-animation"'));
+  assert.ok(events.includes('showDirectoryPicker'));
+  assert.ok(events.includes('showSaveFilePicker'));
+  assert.ok(events.includes('this.writeExportToDirectory'));
+  const fileOperations = await read('packages/ui/src/app/AppFileFeatures.ts');
+  const layerImports = await read('packages/ui/src/app/AppLayerPanelFeatures.ts');
+  assert.ok(fileOperations.includes("accept: '.nvtsphoto,image/*,.psd,.ai,.kra'"));
+  assert.ok(fileOperations.includes('openImageAsDocument(selected.file)'));
+  assert.ok(fileOperations.includes('this.pickDocumentFile()'));
+  assert.ok(layerImports.includes('decodePsdComposite'));
+  assert.ok(layerImports.includes('extractKraMergedImage'));
+  assert.ok(layerImports.includes('decodePdfCompatibleAi'));
+  assert.equal(menu.includes('b-export-png'), false);
+  assert.equal(menu.includes('b-export-jpeg'), false);
 });
 
 test('text tool exposes an action to create additional independent text layers', async () => {

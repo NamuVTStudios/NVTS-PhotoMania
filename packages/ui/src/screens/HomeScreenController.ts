@@ -354,6 +354,10 @@ export class HomeScreenController {
     };
   }
 
+  async openStartupFile(file: File): Promise<void> {
+    await this.launchFile(file, 'No se pudo abrir el proyecto .nvtsphoto recibido del sistema operativo.');
+  }
+
   private async launchFile(file: File, imageErrorMessage: string): Promise<void> {
     if (/\.nvtsphoto$/i.test(file.name)) {
       const name = file.name.replace(/\.[^.]+$/, '') || 'Proyecto';

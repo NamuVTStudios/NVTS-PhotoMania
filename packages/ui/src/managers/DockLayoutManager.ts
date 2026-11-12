@@ -48,6 +48,7 @@ export interface DockLayoutController {
   refreshVisibility(): void;
   resetWorkspace(workspace: string): void;
   save(): void;
+  setPanelDraggingEnabled(enabled: boolean): void;
 }
 
 /** Keeps non-dock editor overlays attached when the dock slot list is rebuilt. */
@@ -94,7 +95,7 @@ export function createDockLayoutManager(root: HTMLElement, initialWorkspace: str
 }
 
 function createEmptyDockController(): DockLayoutController {
-  return { saveCurrentWorkspace() {}, applyWorkspace() {}, refreshVisibility() {}, resetWorkspace() {}, save() {} };
+  return { saveCurrentWorkspace() {}, applyWorkspace() {}, refreshVisibility() {}, resetWorkspace() {}, save() {}, setPanelDraggingEnabled() {} };
 }
 
 /** Owns dock state; individual interactions are separated into small methods. */
@@ -103,6 +104,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
   private activeWorkspace: string;
   private order: DockablePanelId[] = [];
   private restoring = false;
+  private panelDraggingEnabled = true;
   private readonly items = new Map<DockablePanelId, PanelItem>();
   private readonly floatingLayer = document.createElement('div');
   private readonly widthResizer = document.createElement('div');
@@ -122,8 +124,51 @@ class DockLayoutManagerImpl implements DockLayoutController {
     this.initializePanelSlots();
     this.initializePanelHeights();
     this.bindWidthResizer();
+    this.installDockGeometryGuard();
     this.restoreInitialWorkspace();
     window.addEventListener('resize', () => this.handleWindowResize());
+  }
+
+  setPanelDraggingEnabled(enabled: boolean): void {
+    this.panelDraggingEnabled = enabled;
+    this.workspaceElement.classList.toggle('dock-layout-locked', !enabled);
+    this.dock.classList.toggle('dock-layout-locked', !enabled);
+    this.widthResizer.tabIndex = enabled ? 0 : -1;
+    this.widthResizer.setAttribute('aria-disabled', String(!enabled));
+    this.bottomResizer.tabIndex = enabled ? 0 : -1;
+    this.bottomResizer.setAttribute('aria-disabled', String(!enabled));
+    this.items.forEach((item) => {
+      item.panel.classList.toggle('dock-drag-disabled', !enabled);
+      item.dockToggle.disabled = !enabled;
+      if (item.resizeHandle) {
+        item.resizeHandle.tabIndex = enabled ? 0 : -1;
+        item.resizeHandle.setAttribute('aria-disabled', String(!enabled));
+      }
+      item.floatingWindow?.classList.toggle('dock-layout-locked', !enabled);
+    });
+    this.floatingLayer.classList.toggle('dock-layout-locked', !enabled);
+  }
+
+  private isDockInteractionLocked(): boolean {
+    const vectorPanel = this.root.querySelector<HTMLElement>('#vector-panel');
+    return !this.panelDraggingEnabled || Boolean(vectorPanel && !vectorPanel.hidden);
+  }
+
+  private installDockGeometryGuard(): void {
+    const selector = [
+      '.dock-panel-drag-handle', '.dock-panel-resizer', '.floating-panel-resize',
+      '.dock-width-resizer', '.timeline-dock-resizer', '.panel-float-toggle',
+    ].join(',');
+    const guard = (event: Event): void => {
+      if (!this.isDockInteractionLocked()) return;
+      const target = event.target;
+      if (!(target instanceof Element) || !target.closest(selector)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    this.root.addEventListener('pointerdown', guard, true);
+    this.root.addEventListener('keydown', guard, true);
+    this.root.addEventListener('dragstart', guard, true);
   }
 
   save(): void {
@@ -277,7 +322,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private startFloatingResize(item: PanelItem, event: PointerEvent): void {
-    if (!item.floatingWindow || event.button !== 0) return;
+    if (this.isDockInteractionLocked() || !item.floatingWindow || event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     const startX = event.clientX;
@@ -291,6 +336,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private resizeFloatingPanel(item: PanelItem, startX: number, startY: number, startWidth: number, startHeight: number, event: PointerEvent): void {
+    if (this.isDockInteractionLocked()) return;
     const panel = item.floatingWindow;
     if (!panel) return;
     const workspace = this.getFloatingLayerRect();
@@ -439,6 +485,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private createHeaderDragState(item: PanelItem, event: PointerEvent): HeaderDragState | null {
+    if (this.isDockInteractionLocked()) return null;
     const target = event.target as HTMLElement | null;
     if (event.button !== 0 || target?.closest('button, input, select, textarea, a, [contenteditable="true"]')) return null;
     if (item.panel.hidden) return null;
@@ -455,6 +502,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private moveHeaderDrag(item: PanelItem, drag: HeaderDragState, event: PointerEvent): void {
+    if (this.isDockInteractionLocked()) return;
     const dx = event.clientX - drag.startX;
     const dy = event.clientY - drag.startY;
     if (!drag.moved && Math.hypot(dx, dy) < 5) return;
@@ -489,7 +537,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private finishHeaderDrag(item: PanelItem, drag: HeaderDragState, event: PointerEvent): void {
-    if (!drag.moved) return;
+    if (this.isDockInteractionLocked() || !drag.moved) return;
     const dockRect = this.dock.getBoundingClientRect();
     const droppedOverDock = event.clientX >= dockRect.left - 12
       && event.clientY >= dockRect.top && event.clientY <= dockRect.bottom;
@@ -516,7 +564,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private startDockResize(item: PanelItem, event: PointerEvent): void {
-    if (event.button !== 0 || item.floating || item.id === 'timeline') return;
+    if (this.isDockInteractionLocked() || event.button !== 0 || item.floating || item.id === 'timeline') return;
     event.preventDefault();
     event.stopPropagation();
     const startY = event.clientY;
@@ -544,7 +592,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private resizeDockFromKeyboard(item: PanelItem, event: KeyboardEvent): void {
-    if (item.id === 'timeline' || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    if (this.isDockInteractionLocked() || item.id === 'timeline' || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
     event.preventDefault();
     const height = item.slot.getBoundingClientRect().height;
     this.resizeDockPanel(item, height + (event.key === 'ArrowDown' ? 12 : -12));
@@ -552,7 +600,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private startTimelineResize(event: PointerEvent): void {
-    if (event.button !== 0) return;
+    if (this.isDockInteractionLocked() || event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     const startY = event.clientY;
@@ -581,7 +629,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private resizeTimelineFromKeyboard(event: KeyboardEvent): void {
-    if (!['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+    if (this.isDockInteractionLocked() || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
     event.preventDefault();
     const current = this.bottomDock.getBoundingClientRect().height;
     this.setTimelineDockHeight(current + (event.key === 'ArrowUp' ? 12 : -12));
@@ -847,7 +895,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private startDockWidthResize(event: PointerEvent): void {
-    if (event.button !== 0) return;
+    if (this.isDockInteractionLocked() || event.button !== 0) return;
     event.preventDefault();
     const startX = event.clientX;
     const startWidth = this.dock.getBoundingClientRect().width;
@@ -869,7 +917,7 @@ class DockLayoutManagerImpl implements DockLayoutController {
   }
 
   private resizeDockWidthFromKeyboard(event: KeyboardEvent): void {
-    if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    if (this.isDockInteractionLocked() || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
     event.preventDefault();
     const direction = event.key === 'ArrowLeft' ? 12 : -12;
     const width = this.dock.getBoundingClientRect().width + direction;

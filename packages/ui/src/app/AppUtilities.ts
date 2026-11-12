@@ -142,7 +142,7 @@ export function isNotFoundError(error: unknown): boolean {
 
 export function documentNameFromFile(fileName: string): string {
   const leaf = fileName.split(/[\\/]/).pop() ?? fileName;
-  return leaf.replace(/\.(nvtsphoto|png|jpe?g|webp|gif|bmp|tiff?)$/i, '').trim() || 'Sin título';
+  return leaf.replace(/\.(nvtsphoto|png|jpe?g|webp|gif|bmp|tiff?|svg|psd|ai|kra|tga|ppm)$/i, '').trim() || 'Sin título';
 }
 
 export const CANVAS_BLEND_OPERATIONS: Record<LayerNode['blendMode'], GlobalCompositeOperation> = {

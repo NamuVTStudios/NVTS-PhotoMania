@@ -192,8 +192,8 @@ export const MENU_DEFINITIONS = {
         searchable: true,
         items: [
             soon('help-discord', 'Únase al Discord…', { urlKey: 'discord' }),
-            soon('help-website', 'Sitio web de NamuVT Studios', { urlKey: 'website' }),
-            soon('help-github', 'PhotoMania en GitHub', { urlKey: 'github' }),
+            action('help-website', 'Sitio web de NamuVT Studios', { url: 'https://namuvtstudiosweb.vercel.app/', menuAction: 'open-url' }),
+            action('help-github', 'PhotoMania en GitHub', { url: 'https://github.com/NamuVTStudios/NVTS-PhotoMania', menuAction: 'open-url' }),
             separator('help-report-separator'),
             soon('help-report-issue', 'Informar de un problema…'),
             soon('help-check-updates', 'Buscar actualizaciones…'),

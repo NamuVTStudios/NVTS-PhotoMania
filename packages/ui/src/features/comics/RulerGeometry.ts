@@ -149,3 +149,36 @@ function sampleQuadraticCurve(start: RulerPoint, control: RulerPoint, end: Ruler
 
 function createPath(points: RulerPoint[]): RulerPath { return { points }; }
 function clamp(value: number, minimum: number, maximum: number): number { return Math.max(minimum, Math.min(maximum, value)); }
+
+
+export function snapPointToRuler(
+  point: RulerPoint,
+  geometry: RulerGeometry,
+  tolerance: number,
+): RulerPoint {
+  let closest = point;
+  let closestDistance = tolerance;
+  for (const path of geometry.paths) {
+    const segments = path.points.length - 1 + (path.closed ? 1 : 0);
+    for (let index = 0; index < segments; index += 1) {
+      const start = path.points[index];
+      const end = path.points[(index + 1) % path.points.length];
+      const candidate = projectPointToSegment(point, start, end);
+      const distance = Math.hypot(candidate.x - point.x, candidate.y - point.y);
+      if (distance < closestDistance) {
+        closest = candidate;
+        closestDistance = distance;
+      }
+    }
+  }
+  return closest;
+}
+
+function projectPointToSegment(point: RulerPoint, start: RulerPoint, end: RulerPoint): RulerPoint {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared <= 0.0001) return start;
+  const progress = clamp(((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared, 0, 1);
+  return { x: start.x + dx * progress, y: start.y + dy * progress };
+}

@@ -21,10 +21,46 @@
         ],
         "security": {
             "csp": null
-        }
+        },
+        "withGlobalTauri": true
     },
     "bundle": {
         "active": true,
-        "targets": "all"
+        "targets": "all",
+        "fileAssociations": [
+            {
+                "ext": [
+                    "nvtsphoto"
+                ],
+                "name": "NVTS-PhotoMania.nvtsphoto",
+                "description": "Proyecto NVTS PhotoMania (.nvtsphoto)",
+                "mimeType": "application/x-nvtsphoto",
+                "role": "Editor",
+                "rank": "Owner",
+                "exportedType": {
+                    "identifier": "com.namuvt.nvts.photomania.project",
+                    "conformsTo": [
+                        "public.data"
+                    ]
+                }
+            }
+        ],
+        "resources": {
+            "../../web/public/branding/file-types/nvtsphoto-pmd.ico": "nvtsphoto-pmd.ico",
+            "../../web/public/branding/file-types/nvtsphoto-pmd.png": "nvtsphoto-pmd.png"
+        },
+        "windows": {
+            "nsis": {
+                "installerHooks": "filetype-icon.nsh"
+            },
+            "wix": {
+                "fragmentPaths": [
+                    "filetype-icon.wxs"
+                ],
+                "componentRefs": [
+                    "NVTSPhotoTypeIconRegistry"
+                ]
+            }
+        }
     }
 }

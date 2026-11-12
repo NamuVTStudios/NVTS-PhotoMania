@@ -17,6 +17,7 @@ export interface MenuItemDefinition {
     filterKind?: string;
     requiresDocument?: boolean;
     urlKey?: string;
+    url?: string;
     submenu?: readonly MenuNodeDefinition[];
 }
 export type MenuNodeDefinition = MenuSeparatorDefinition | MenuItemDefinition;
