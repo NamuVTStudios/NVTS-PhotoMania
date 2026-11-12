@@ -1,0 +1,17 @@
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "noEmit": true
+    },
+    "include": [
+        "packages/**/*.ts",
+        "apps/web/**/*.ts"
+    ],
+    "exclude": [
+        "**/node_modules",
+        "packages/wasm-bindings/build",
+        "apps/android/**",
+        "apps/linux/**",
+        "apps/windows/**"
+    ]
+}

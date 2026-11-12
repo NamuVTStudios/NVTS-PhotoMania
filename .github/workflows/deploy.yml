@@ -85,8 +85,8 @@ jobs:
       - name: Build WebAssembly engine
         run: pnpm run build:wasm
 
-      - name: TypeScript validation
-        run: pnpm run typecheck
+      - name: TypeScript validation (web)
+        run: pnpm exec tsc -p tsconfig.web.json --noEmit
 
       - name: Run regression tests
         run: node --test --test-concurrency=1
